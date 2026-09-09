@@ -1,12 +1,107 @@
 # Database Design
 
+
 ## Purpose, status and derivation
 
 This is the logical production database design derived after the [domain model](../architecture/DOMAIN_MODEL.md), [campaign engine](../architecture/CAMPAIGN_ENGINE.md), state machines, scheduler, workers/queues, rate limiting, events, reply synchronization and suppression specifications. It refines [SYSTEM_ARCHITECTURE](../architecture/SYSTEM_ARCHITECTURE.md); it does not create or execute SQL.
 
-**Review status:** complete proposed logical design, subject to the explicitly listed product/security decisions. It is not an approved migration. `supabase/migrations/` remains the only schema-evolution mechanism. SQLAlchemy provides runtime access, never Alembic or ORM auto-create. No initial migration is created by this task.
+**Review status:** the five unapplied drafts in `supabase/migrations/` have been corrected under the approved migration review. [MIGRATION_REVIEW](MIGRATION_REVIEW.md) records the table/requirement matrix, per-file changes and static-only validation limits. SQLAlchemy owns runtime access; Alembic/ORM auto-create remain prohibited. No migration was applied.
 
-The existing `USER_ROLES.md` contains user flows, not grants, and `USER_FLOWS.md` is missing. RLS grant details and owner lifecycle cannot be finalized by pretending that role matrix exists. This design defines enforceable tenant boundaries with permission grants denied until approved.
+The approved [role matrix](../product/USER_ROLES.md) now owns permissions and ownership policy; [USER_FLOWS](../product/USER_FLOWS.md) preserves journeys. The contracts below refine the earlier logical catalogue.
+
+## Approved migration/runtime contracts
+
+The five-file source of truth is `supabase/migrations/`. The following contracts
+are approved refinements of the catalogue, not implemented backend commands.
+
+| Capability | Dedicated runtime responsibility |
+|---|---|
+| app_api | Verified user, selected workspace, current membership and approved action matrix; ordinary commands |
+| app_connection | Verified user + Manager-or-higher mailbox permission; protected OAuth/connection operations |
+| app_worker_general | Selected workspace imports, capture/planning, outcome processing, notification fanout; no credentials |
+| app_worker_send | Selected workspace provider invocation/evidence and capacity accounting; protected credentials |
+| app_worker_sync | Selected workspace provider receipts, inbox sync/reconciliation and protected credentials |
+| app_scheduler | Selected workspace due scheduling, claims and recovery; no credentials |
+| app_outbox_relay | Selected workspace work publication/recovery metadata only |
+| app_rate_controller | Global readiness/reconstruction and retained accounting reads; cannot alter configured global limits |
+
+`app_foundation_reader` and `app_integrity_guard` are NOLOGIN, isolated function
+owners. Runtime identities never inherit/assume them. Provision a dedicated LOGIN
+per runtime capability, without ownership, SUPERUSER, BYPASSRLS, CREATE, CREATEROLE
+or membership in unrelated capabilities. No one pooled application login should
+be granted all service roles. Role names here are capabilities, not credentials;
+login/TLS/secret provisioning is deployment work, outside the migrations.
+
+For each API/connection transaction: verify JWT externally, BEGIN READ COMMITTED,
+SET LOCAL ROLE to the identity's one capability, bind
+`set_config('app.user_id', subject, true)` and
+`set_config('app.workspace_id', authorized_workspace, true)`, then recheck current
+membership/action/resource and expected versions. Workers bind only the trusted
+workspace context; audit them as SYSTEM. COMMIT or ROLLBACK on every path, including
+cancellation and errors. Never use session-wide user/workspace context or reuse a
+transaction for another principal. Supabase browser roles are denied. GUCs do not
+provide authentication against arbitrary SQL executed in a compromised backend.
+
+Worker discovery must use trusted workspace routing, not unscoped product reads.
+Global scheduler/relay tenant discovery, public unsubscribe digest resolution,
+workspace bootstrap, invitation acceptance, ownership transfer and operator commands
+need narrowly scoped audited command interfaces in their backend milestones. Add
+such interfaces through `supabase/migrations/` when implemented; do not solve missing
+lock/discovery access by giving the runtime table ownership or broad global grants.
+In particular final send/suppression commands must provide restricted row-lock
+access to the documented platform → rate-control → workspace → recipient → campaign
+→ enrollment → mailbox → message → rate-scope gates. Ordinary SELECT grants alone
+do not authorize PostgreSQL locking clauses. These command interfaces are still
+required before sending is enabled.
+
+Schema-specific refinements:
+
+- Normalization v1 is defined by SUPPRESSION.md. SQL checks the canonical ASCII
+  storage shape; full mailbox parsing, IDNA, labels and length policy are backend
+  validation. Recipient identity is immutable. Original input remains separate.
+- `campaign_audiences.selection_manifest` is a bounded object with numeric
+  `version: 1`, `lists: []` and `leads: []`; entries are selected UUIDs, sorted and
+  validated by the backend. Persist before processing. Capture freezes list
+  membership using database counters; contact fields are sampled in bounded batches.
+  Captured source revisions and the completed manifest digest support recovery.
+- Current campaign settings reference an immutable owning version. Activation
+  freezes audience/content; paused-only schedule/limit edits append a version then
+  update the pointer and schedule generation. No activated mailbox reassignment in
+  this MVP. RUNNING pauses before archive; completed outreach is duplicated.
+- `connected_generation` references an actual connection only while CONNECTED.
+  Refresh creates a new encrypted generation and conditionally advances the mailbox
+  pointer under its lock. Disconnect increments the fencing generation and clears
+  the pointer before destroying secrets. Retained generations are never reused.
+- OAuth CLAIMED state carries owner/expiry/generation. API and callback must use
+  the protected connection identity and current actor checks; terminal callbacks
+  clear leases/verifier material. Exact provider verification stays in the adapter.
+- PLANNED messages can omit render content. Before scheduling/dispatch, persist
+  destination, sender address/name, subject/body, digest and rendered time together;
+  signature is already included in frozen body HTML. Later mailbox/template/lead
+  changes cannot alter a rendered send. Stable RFC identity is generated before I/O.
+- Independent suppression reason rows may be reactivated. Every observation has
+  an immutable source. MANUAL release records a current Admin/Owner audit action
+  `suppression.release_manual`, target type `suppression`, matching target/actor,
+  nonempty reason and request/effect identity. Clearing a release pointer during
+  reactivation does not delete its old audit event.
+- Audit idempotency uses `(workspace_id, request_id, effect_key)`, allowing multiple
+  effects in a request. Domain-event version uniqueness also includes event type.
+- Rate identities include unit/window. Tenant calendar-day policies have explicit
+  timezone and are separate from rolling windows. `window_seconds = 86400` identifies
+  the calendar-day policy, not elapsed DST day length. Debit scope bucket boundaries
+  are UTC instants; immutable policy snapshots include all applicable limit, pacing,
+  cooldown, timezone and identity values. Debit/scopes share unit/quantity/time.
+- Absent rate control, RECOVERING or absent reconstruction evidence deny capacity.
+  The backend additionally compares Redis generation/expiry and locks the global
+  gate. Only the dedicated rate-controller transitions reconstruction readiness.
+- External notification acceptance uncertainty is UNKNOWN, never implicit SENT.
+  Reclaiming an expired SENDING lease requires reconciliation before retry. Auth
+  email resolution is an internal Auth-service operation, not an ordinary profile
+  column or browser query.
+
+The table catalogue describes storage ownership. The review matrix and regression
+scenarios map implementation, remaining backend safety work and explicit deferrals.
+Billing, CRM, AI, open/click tracking and optional inbox unread state are deferred.
 
 ## Common conventions applying to every catalogue entry
 
@@ -273,7 +368,7 @@ Archive referenced campaigns, leads, templates, mailboxes and conversations. Imm
 
 Begin with ordinary indexed PostgreSQL tables and bounded keyset queries. No speculative partitioning/sharding, warehouse, custom roles framework or generalized workflow store. Validate due-query and suppression lookup plans with production-shaped synthetic data before adding indexes. Index every FK used for fanout where its existing unique/PK index does not cover the needed prefix. Enforce aggregate limits through state/locks, not analytics caches.
 
-Future migration sequence after review: identity/tenancy/RLS foundation → leads/lists/suppression → mailboxes/credentials → minimal controlled-send messages/attempts/work transport/accounting → controlled Gmail milestone → templates/campaign snapshots and campaign-specific message relationships → inbound/outcomes and remaining operational modules according to MVP dependencies. Introduce campaign links by later additive migration instead of requiring campaigns for the controlled-send milestone. No forward FK to an absent table is created in an earlier incremental migration; optional later evidence links follow their owning feature. Do not turn the first migration into this entire catalogue. Explain each migration's objects, constraints, RLS, existing-data impact and rollback/recovery; apply shared-environment migrations only on explicit instruction.
+Approved draft migration sequence: 0001 identity/security → 0002 contacts/content → 0003 mailboxes/campaign snapshots → 0004 messages/events/inbox → 0005 operations/capacity. Apply the full schema chain before runtime traffic. Backend implementation still starts with authentication/bootstrap/authorization and the controlled Gmail milestone before campaign execution; a controlled message has no campaign dependency in its row shape. No forward FK to an absent table is created in an earlier incremental migration; optional later evidence links follow their owning feature. Do not turn the first migration into this entire catalogue. Explain each migration's objects, constraints, RLS, existing-data impact and rollback/recovery; apply shared-environment migrations only on explicit instruction.
 
 ## Open Decisions and source conflicts
 

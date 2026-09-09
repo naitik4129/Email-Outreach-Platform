@@ -1,5 +1,12 @@
 # Suppression
 
+## Approved migration review decisions
+
+Normalization v1 trims outer whitespace, validates exactly one ASCII-local-part mailbox, rejects controls/display-name ambiguity, lowercases the local part and validated IDNA domain, and preserves original display. Dots and plus tags are unchanged. Canonical identity is immutable in recipient_addresses. Workspace unsubscribe applies across the workspace. Members and above add/import MANUAL blocks; only Admin/Owner release MANUAL with audit. Other releases are denied. Full parsing/IDNA belongs to the backend; SQL enforces the bounded canonical storage shape.
+
+These decisions supersede corresponding proposals/Open Decisions below. Other release-policy decisions remain open.
+
+
 ## Purpose and authority
 
 Suppression is a shared backend domain service enforcing durable address prohibitions for every customer outreach path, including controlled test sends and retries. It implements [MVP §§13, 27–29](../product/MVP.md), [PROJECT_CONTEXT §§39, 70–71](../product/PROJECT_CONTEXT.md), and [SYSTEM_ARCHITECTURE §§51–55](SYSTEM_ARCHITECTURE.md). Campaign selection, mailbox adapters, imports and frontend controls cannot override it.
@@ -60,6 +67,6 @@ Log workspace/address-gate/suppression/source IDs, reason, actor and result; nev
 
 ## Open Decisions, testing and definition of done
 
-Approve normalization, workspace-wide unsubscribe scope, reason-specific release permissions/evidence, global-block escalation, one-click UX/token policy and retention. Recommended defaults are conservative and do not fabricate the missing role matrix. Until approved, no suppression-removal grant is assumed.
+Normalization v1, workspace-wide unsubscribe scope and MANUAL release authority/evidence are approved above and in USER_ROLES.md. Global-block escalation, one-click UX/token policy and retention still require explicit operator/product decisions; no customer platform-block release is permitted.
 
 Tests must cover absent-row suppression/send race, both transaction orders, duplicate sources, independent active reasons, release racing complaint, new suppression between retry attempts, lead/list deletion and reimport, address changes, Unicode/CRLF/alias inputs, cross-tenant tokens/IDs, global-block isolation, database failure during unsubscribe, stale queued tasks, Redis flush and cancellation task loss. Verify no provider or test-send path bypasses the shared service. Related: [events](EVENT_SYSTEM.md), [database](../database/DATABASE.md), [security](../security/SECURITY_ARCHITECTURE.md).

@@ -1,8 +1,14 @@
 # Campaign Engine
 
+## Approved migration review decisions
+
+Activation freezes audience/content. Captures persist their list/manual selection manifest before processing; list membership is fixed under capture gates, contact fields are sampled during bounded capture. Current settings reference an immutable version. Only PAUSED activated campaigns may change schedule/limits. No activated sender reassignment in this MVP. Completed/archived campaigns are duplicated for new outreach.
+
+These decisions supersede corresponding proposals/Open Decisions below. Other release-policy decisions remain open.
+
 ## Purpose, ownership and scope
 
-The backend campaigns module orchestrates authorized intent into recipient progress and durable message work. It implements the Email/Wait MVP in [MVP §§19–22](../product/MVP.md), existing [UF-13–UF-30 flows](../product/USER_ROLES.md), and [SYSTEM_ARCHITECTURE §§31–35, 118–120](SYSTEM_ARCHITECTURE.md). See [DOMAIN_MODEL](DOMAIN_MODEL.md) for the source-file discrepancy and design status.
+The backend campaigns module orchestrates authorized intent into recipient progress and durable message work. It implements the Email/Wait MVP in [MVP §§19–22](../product/MVP.md), existing [UF-13–UF-30 flows](../product/USER_FLOWS.md), and [SYSTEM_ARCHITECTURE §§31–35, 118–120](SYSTEM_ARCHITECTURE.md). See [DOMAIN_MODEL](DOMAIN_MODEL.md) for the source-file discrepancy and design status.
 
 The engine owns configuration validation, audience capture, enrollment, sequence interpretation, activation, pause/resume, completion and recovery. It delegates transport to providers, due discovery to scheduler, sending authorization to messages, and address prohibitions to suppression. It does not implement Gmail conditionals, HTTP bulk sending, arbitrary workflows, analytics-dependent decisions or a second worker domain model.
 

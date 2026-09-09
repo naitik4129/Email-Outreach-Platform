@@ -1,10 +1,11 @@
 # Security Architecture
 
+
 ## Purpose and authority
 
 This document consolidates the security design required by [SYSTEM_ARCHITECTURE §§23–25, 42–43, 77–85](../architecture/SYSTEM_ARCHITECTURE.md), [MVP release criteria](../product/MVP.md), and [DATABASE](../database/DATABASE.md). It defines controls and test obligations, not a claim that controls are implemented or an assertion of legal compliance.
 
-The existing `USER_ROLES.md` is mislabeled user-flow content and has no exact permission matrix. No customer role is granted capabilities by this document. Missing grants deny by default. The product owner must approve RBAC and ownership transitions before dependent implementation.
+The approved [USER_ROLES](../product/USER_ROLES.md) is the permission authority. [USER_FLOWS](../product/USER_FLOWS.md) owns journeys. Unknown actions deny. Database capabilities and the transaction/connection contract are defined in [DATABASE](../database/DATABASE.md); backend implementation and runtime verification remain required.
 
 ## Trust boundaries
 

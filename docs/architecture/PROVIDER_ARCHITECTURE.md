@@ -1,5 +1,11 @@
 # Provider Architecture
 
+## Approved migration review decisions
+
+One provider account may be active in only one workspace. Protected connection commands use a dedicated user-scoped connection role, not ordinary app_api. Refresh creates a new encrypted generation and conditionally moves the current pointer; disconnect invalidates the pointer/generation before secret destruction. Nonsecret generation history survives.
+
+These decisions supersede corresponding proposals/Open Decisions below. Other release-policy decisions remain open.
+
 ## Purpose and boundaries
 
 The backend provider package implements transport and account capabilities behind ports consumed by mailbox, messages and conversations services. Preserve Gmail → Microsoft → Custom SMTP implementation order, as required by [MVP §§16–18](../product/MVP.md) and [SYSTEM_ARCHITECTURE §§36–44](SYSTEM_ARCHITECTURE.md). Adapters do not decide campaign lifecycle, suppression, tenant authorization or retry eligibility; they supply evidence for those decisions.

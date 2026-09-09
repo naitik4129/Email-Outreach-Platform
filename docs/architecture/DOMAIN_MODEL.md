@@ -1,10 +1,11 @@
 # Domain Model
 
+
 ## Purpose and authority
 
 This is the conceptual model for the MVP, derived from [PROJECT_CONTEXT](../product/PROJECT_CONTEXT.md), [MVP](../product/MVP.md), [PAGE_MAP](../product/PAGE_MAP.md), and [SYSTEM_ARCHITECTURE](SYSTEM_ARCHITECTURE.md). It defines business ownership, not SQL. Detailed technical rules below are the design produced by this documentation phase; they are not claims of prior approval. Explicit Open Decisions require owner resolution before dependent implementation.
 
-**Source discrepancy:** `docs/product/USER_ROLES.md` actually contains the complete “User Flows” specification (UF-01–UF-37) and expressly defers role permissions. `USER_FLOWS.md` is absent. References to [existing flows](../product/USER_ROLES.md) mean that content, not a permission matrix. No role-to-permission grants can be inferred from its filename. Preserve it pending product-document repair.
+The product documentation has been repaired: [USER_FLOWS](../product/USER_FLOWS.md) preserves UF-01–UF-37, and [USER_ROLES](../product/USER_ROLES.md) is the approved permission matrix. Approved migration contracts are recorded in [DATABASE](../database/DATABASE.md).
 
 ## Domain map
 

@@ -2,7 +2,7 @@
 
 ## Purpose and ownership
 
-The backend conversations/mailbox services turn provider mailbox changes into normalized inbound messages, defensible outreach associations and recipient stopping effects. Worker-sync supplies runtime execution. This fulfills [MVP §§25–26](../product/MVP.md), [existing UF-25–UF-26](../product/USER_ROLES.md) and [SYSTEM_ARCHITECTURE §§47, 56](SYSTEM_ARCHITECTURE.md). It does not implement a complete mail client, send automatic replies or infer campaign attribution from subject similarity.
+The backend conversations/mailbox services turn provider mailbox changes into normalized inbound messages, defensible outreach associations and recipient stopping effects. Worker-sync supplies runtime execution. This fulfills [MVP §§25–26](../product/MVP.md), [existing UF-25–UF-26](../product/USER_FLOWS.md) and [SYSTEM_ARCHITECTURE §§47, 56](SYSTEM_ARCHITECTURE.md). It does not implement a complete mail client, send automatic replies or infer campaign attribution from subject similarity.
 
 ## Provider sync contract
 

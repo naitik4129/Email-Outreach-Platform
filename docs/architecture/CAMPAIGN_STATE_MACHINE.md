@@ -1,8 +1,15 @@
 # Campaign State Machine
 
+## Approved migration review decisions
+
+No reopening COMPLETED/ARCHIVED; no activated audience/content mutation; RUNNING requires pause before archive. Exact role grants now live in USER_ROLES.md. Command transactions remain backend-owned.
+
+These decisions supersede corresponding proposals/Open Decisions below. Other release-policy decisions remain open.
+
+
 ## Purpose and authority
 
-This is the sole campaign transition specification. It refines [SYSTEM_ARCHITECTURE](SYSTEM_ARCHITECTURE.md), [MVP §19](../product/MVP.md), and [existing UF-18–UF-20, UF-30, UF-35](../product/USER_ROLES.md). The seven names come from PROJECT_CONTEXT §9; its §30 `ACTIVE` pseudocode is interpreted as RUNNING, not an eighth persisted state. This terminology inconsistency is explicitly recorded here.
+This is the sole campaign transition specification. It refines [SYSTEM_ARCHITECTURE](SYSTEM_ARCHITECTURE.md), [MVP §19](../product/MVP.md), and [existing UF-18–UF-20, UF-30, UF-35](../product/USER_FLOWS.md). The seven names come from PROJECT_CONTEXT §9; its §30 `ACTIVE` pseudocode is interpreted as RUNNING, not an eighth persisted state. This terminology inconsistency is explicitly recorded here.
 
 This documentation phase specifies technical transitions; product choices flagged under Open Decisions require review. [CAMPAIGN_ENGINE](CAMPAIGN_ENGINE.md) owns planning/enrollment and edit semantics. Message execution is independently governed by [MESSAGE_STATE_MACHINE](MESSAGE_STATE_MACHINE.md).
 
