@@ -27,4 +27,5 @@ workers/.mypy_cache/
 workers/.ruff_cache/
 workers/.pytest_cache/
 *.log
+*.tsbuildinfo
 .DS_Store
