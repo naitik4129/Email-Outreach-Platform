@@ -10,6 +10,8 @@ from app.db.session import reset_engine_cache
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("SUPABASE_URL", "https://test-project.supabase.co")
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +19,8 @@ def clean_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("SUPABASE_URL", "https://test-project.supabase.co")
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
     reset_settings_cache()
     reset_engine_cache()
     yield

@@ -1,6 +1,7 @@
 import { Activity, Database, Server, Waypoints } from "lucide-react";
 
 import { BackendStatus } from "./backend-status";
+import { WorkspaceSettings } from "./workspace-settings";
 
 const foundationItems = [
   { label: "FastAPI", icon: Server, value: "API boundary" },
@@ -45,6 +46,8 @@ export default function DashboardPage() {
           );
         })}
       </section>
+
+      <WorkspaceSettings />
 
       <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
         <div className="max-w-3xl">

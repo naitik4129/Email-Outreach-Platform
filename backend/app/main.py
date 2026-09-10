@@ -45,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Content-Type",
             "X-Request-ID",
             "X-Correlation-ID",
+            "Idempotency-Key",
         ],
     )
     app.middleware("http")(request_id_middleware)
