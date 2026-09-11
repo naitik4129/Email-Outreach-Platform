@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
 
+_created_engines: list[Engine] = []
+
 
 @lru_cache
 def get_engine(
@@ -28,7 +30,9 @@ def get_engine(
                 "pool_timeout": pool_timeout,
             }
         )
-    return create_engine(database_url, **kwargs)
+    engine = create_engine(database_url, **kwargs)
+    _created_engines.append(engine)
+    return engine
 
 
 def engine_from_settings(settings: Settings) -> Engine:
@@ -67,4 +71,7 @@ def dispose_engine(settings: Settings) -> None:
 
 
 def reset_engine_cache() -> None:
+    for engine in _created_engines:
+        engine.dispose()
+    _created_engines.clear()
     get_engine.cache_clear()

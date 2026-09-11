@@ -2,16 +2,29 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const push = vi.fn();
-const refresh = vi.fn();
-const signInWithPassword = vi.fn();
+const {
+  clearLocalAuthSession,
+  getSession,
+  push,
+  refresh,
+  replace,
+  signInWithPassword,
+} = vi.hoisted(() => ({
+  clearLocalAuthSession: vi.fn(),
+  getSession: vi.fn(),
+  push: vi.fn(),
+  refresh: vi.fn(),
+  replace: vi.fn(),
+  signInWithPassword: vi.fn(),
+}));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push, refresh }),
+  useRouter: () => ({ push, replace, refresh }),
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({ auth: { signInWithPassword } }),
+  clearLocalAuthSession,
+  createClient: () => ({ auth: { signInWithPassword, getSession } }),
 }));
 
 import LoginPage from "@/app/auth/login/page";
@@ -45,10 +58,17 @@ describe("LoginPage", () => {
     expect(await screen.findByText("Invalid email or password.")).toBeInTheDocument();
     expect(screen.queryByText(/user not found/i)).not.toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("navigates to /app on successful sign in", async () => {
-    signInWithPassword.mockResolvedValue({ error: null });
+    signInWithPassword.mockResolvedValue({
+      data: { session: { access_token: "token" } },
+      error: null,
+    });
+    getSession.mockResolvedValue({
+      data: { session: { access_token: "token" } },
+    });
     const user = userEvent.setup();
     render(<LoginPage />);
 
@@ -56,6 +76,27 @@ describe("LoginPage", () => {
     await user.type(screen.getByLabelText(/password/i), "correct-password");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/app"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/app"));
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("does not enter the app when Supabase fails to persist the session", async () => {
+    signInWithPassword.mockResolvedValue({
+      data: { session: { access_token: "token" } },
+      error: null,
+    });
+    getSession.mockResolvedValue({ data: { session: null } });
+    const user = userEvent.setup();
+    render(<LoginPage />);
+
+    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/password/i), "correct-password");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(
+      await screen.findByText("Sign in did not persist a browser session. Please try again."),
+    ).toBeInTheDocument();
+    expect(clearLocalAuthSession).toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

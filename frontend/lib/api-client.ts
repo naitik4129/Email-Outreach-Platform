@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/client";
+import { clearLocalAuthSession, createClient } from "@/lib/supabase/client";
 
 export type BackendHealth = {
   status: "ok";
@@ -31,9 +31,16 @@ function apiUrl(path: string): string {
 
 let redirectingToLogin = false;
 
-function redirectToLogin() {
+async function redirectToLogin() {
   if (redirectingToLogin || typeof window === "undefined") return;
   redirectingToLogin = true;
+  try {
+    await clearLocalAuthSession();
+  } catch {
+    // If local/session cleanup fails, still leave the protected route. The
+    // backend has already rejected the token, so showing authenticated UI
+    // would be misleading.
+  }
   window.location.href = "/auth/login";
 }
 
@@ -43,11 +50,25 @@ async function getAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+let refreshInFlight: Promise<string | null> | null = null;
+
+/**
+ * Shared across concurrent callers: if several requests 401 at the same
+ * moment, they all await the same refresh instead of each calling
+ * `refreshSession()` independently, which would risk Supabase's
+ * refresh-token rotation invalidating a sibling in-flight refresh.
+ */
 async function refreshAccessToken(): Promise<string | null> {
-  const supabase = createClient();
-  const { data, error } = await supabase.auth.refreshSession();
-  if (error) return null;
-  return data.session?.access_token ?? null;
+  if (!refreshInFlight) {
+    const supabase = createClient();
+    refreshInFlight = supabase.auth
+      .refreshSession()
+      .then(({ data, error }) => (error ? null : data.session?.access_token ?? null))
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
 }
 
 type ApiRequestInit = Omit<RequestInit, "headers"> & {
@@ -81,7 +102,10 @@ export async function apiRequest<T>(
   const token = await getAccessToken();
   let response = await doFetch(token);
 
-  if (response.status === 401 && token) {
+  if (response.status === 401) {
+    // A missing token right after sign-in can just mean the session is
+    // still settling into storage -- give it one fair retry via refresh
+    // before treating this as an unrecoverable auth failure.
     const refreshed = await refreshAccessToken();
     response = refreshed ? await doFetch(refreshed) : response;
   }
@@ -99,7 +123,7 @@ export async function apiRequest<T>(
       message = response.statusText || message;
     }
     if (response.status === 401) {
-      redirectToLogin();
+      void redirectToLogin();
     }
     throw new ApiError(message, response.status, code, requestId);
   }

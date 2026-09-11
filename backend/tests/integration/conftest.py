@@ -176,6 +176,25 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
 
     for workspace_id in workspace_ids:
         session.execute(
+            text(
+                "DELETE FROM lead_list_memberships "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM leads WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM lead_lists WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM recipient_addresses WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
             text("DELETE FROM audit_events WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )

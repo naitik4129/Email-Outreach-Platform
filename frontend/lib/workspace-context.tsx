@@ -13,6 +13,7 @@ type WorkspaceContextValue = {
   activeWorkspaceId: string | null;
   activeWorkspace: WorkspaceListItem | null;
   isLoading: boolean;
+  error: Error | null;
   switchWorkspace: (workspaceId: string) => void;
 };
 
@@ -41,7 +42,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     null,
   );
 
-  const { data: workspaces = [], isLoading } = useQuery({
+  const { data: workspaces = [], error, isLoading } = useQuery({
     queryKey: ["workspaces"],
     queryFn: listWorkspaces,
   });
@@ -81,6 +82,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         activeWorkspaceId,
         activeWorkspace,
         isLoading,
+        error,
         switchWorkspace,
       }}
     >

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from app.core.config import Settings
+from app.db import session as db_session
 from app.db.session import session_scope
 
 
@@ -21,4 +22,19 @@ def test_session_scope_rolls_back_on_exception() -> None:
         result = session.execute(text("select count(*) from phase0_probe")).scalar_one()
 
     assert result == 0
+
+
+def test_reset_engine_cache_disposes_created_engines() -> None:
+    disposed: list[str] = []
+
+    class StubEngine:
+        def dispose(self) -> None:
+            disposed.append("disposed")
+
+    db_session._created_engines.extend([StubEngine(), StubEngine()])  # type: ignore[list-item]
+
+    db_session.reset_engine_cache()
+
+    assert disposed == ["disposed", "disposed"]
+    assert db_session._created_engines == []
 

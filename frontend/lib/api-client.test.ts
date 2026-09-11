@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const getSession = vi.fn();
-const refreshSession = vi.fn();
+const { getSession, refreshSession, signOut } = vi.hoisted(() => ({
+  getSession: vi.fn(),
+  refreshSession: vi.fn(),
+  signOut: vi.fn(),
+}));
 
 vi.mock("@/lib/supabase/client", () => ({
+  clearLocalAuthSession: signOut,
   createClient: () => ({
-    auth: { getSession, refreshSession },
+    auth: { getSession, refreshSession, signOut },
   }),
 }));
 
@@ -22,6 +26,9 @@ describe("apiRequest", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    getSession.mockReset();
+    refreshSession.mockReset();
+    signOut.mockReset();
   });
 
   it("attaches the current access token as a bearer credential", async () => {
@@ -67,6 +74,61 @@ describe("apiRequest", () => {
     expect(result.data).toEqual({ ok: true });
   });
 
+  it("retries via refresh on 401 even when there was no initial token", async () => {
+    getSession.mockResolvedValue({ data: { session: null } });
+    refreshSession.mockResolvedValue({
+      data: { session: { access_token: "fresh" } },
+      error: null,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(401, { error: { code: "unauthenticated", message: "no session" } }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await apiRequest("/api/v1/me");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer fresh");
+    expect(result.data).toEqual({ ok: true });
+  });
+
+  it("shares a single in-flight refresh across concurrent 401s", async () => {
+    getSession.mockResolvedValue({ data: { session: { access_token: "expired" } } });
+    let resolveRefresh!: (value: {
+      data: { session: { access_token: string } | null };
+      error: null;
+    }) => void;
+    refreshSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    );
+    const fetchMock = vi.fn().mockImplementation((url, init) => {
+      const auth = init.headers.Authorization;
+      if (auth === "Bearer fresh") return Promise.resolve(jsonResponse(200, { ok: true }));
+      return Promise.resolve(
+        jsonResponse(401, { error: { code: "unauthenticated", message: "expired" } }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = apiRequest("/api/v1/me");
+    const second = apiRequest("/api/v1/workspaces");
+    await Promise.resolve();
+    await Promise.resolve();
+    resolveRefresh({ data: { session: { access_token: "fresh" } }, error: null });
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(firstResult.data).toEqual({ ok: true });
+    expect(secondResult.data).toEqual({ ok: true });
+  });
+
   it("throws ApiError with the server message when refresh also fails", async () => {
     getSession.mockResolvedValue({ data: { session: { access_token: "expired" } } });
     refreshSession.mockResolvedValue({ data: { session: null }, error: new Error("no") });
@@ -82,6 +144,7 @@ describe("apiRequest", () => {
       status: 401,
       message: "Invalid or expired session",
     });
+    await vi.waitFor(() => expect(signOut).toHaveBeenCalled());
   });
 
   it("attaches the Idempotency-Key header when provided", async () => {

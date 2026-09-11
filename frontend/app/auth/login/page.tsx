@@ -13,7 +13,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { createClient } from "@/lib/supabase/client";
+import { clearLocalAuthSession, createClient } from "@/lib/supabase/client";
 
 const schema = z.object({
   email: z.string().min(1, "Email is required").email("Enter a valid email"),
@@ -35,7 +35,7 @@ export default function LoginPage() {
   async function onSubmit(values: FormValues) {
     setFormError(null);
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword(values);
+    const { data, error } = await supabase.auth.signInWithPassword(values);
     if (error) {
       setFormError(
         error.status === 400
@@ -44,7 +44,18 @@ export default function LoginPage() {
       );
       return;
     }
-    router.push("/app");
+    if (!data.session?.access_token) {
+      await clearLocalAuthSession();
+      setFormError("Sign in did not return a usable session. Please try again.");
+      return;
+    }
+    const { data: persisted } = await supabase.auth.getSession();
+    if (!persisted.session?.access_token) {
+      await clearLocalAuthSession();
+      setFormError("Sign in did not persist a browser session. Please try again.");
+      return;
+    }
+    router.replace("/app");
     router.refresh();
   }
 

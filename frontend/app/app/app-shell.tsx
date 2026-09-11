@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Bell,
+  Contact,
   HelpCircle,
   LayoutDashboard,
   Loader2,
@@ -16,11 +17,13 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { createClient } from "@/lib/supabase/client";
+import { ApiError } from "@/lib/api-client";
+import { signOutCurrentBrowser } from "@/lib/supabase/client";
 import { useWorkspace, WorkspaceProvider } from "@/lib/workspace-context";
 
 const navigation = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/leads", label: "Leads", icon: Contact },
   { href: "/app/team", label: "Team", icon: Users },
 ];
 
@@ -33,15 +36,22 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     activeWorkspaceId,
     activeWorkspace,
     isLoading,
+    error: workspaceError,
     switchWorkspace,
   } = useWorkspace();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && workspaces.length === 0) {
+    if (!isLoading && !workspaceError && workspaces.length === 0) {
       router.replace("/onboarding/workspace");
     }
-  }, [isLoading, workspaces.length, router]);
+  }, [isLoading, workspaceError, workspaces.length, router]);
+
+  // No separate 401-recovery effect here: apiRequest (lib/api-client.ts)
+  // already clears the session and hard-redirects to /auth/login the
+  // moment the underlying request 401s. A second, independent recovery
+  // flow here would race that one. The card below is just the interim UI
+  // while that redirect is in flight.
 
   if (isLoading) {
     return (
@@ -54,6 +64,35 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     );
   }
 
+  if (workspaceError) {
+    const sessionExpired =
+      workspaceError instanceof ApiError && workspaceError.status === 401;
+    return (
+      <div className="grid min-h-screen place-items-center bg-slate-50 px-4">
+        <div className="w-full max-w-sm rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+          <h1 className="text-base font-semibold text-slate-950">
+            {sessionExpired ? "Session expired" : "Unable to load workspace"}
+          </h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {sessionExpired
+              ? "Sign in again to continue."
+              : "Refresh the page or try again in a moment."}
+          </p>
+          <Button
+            type="button"
+            className="mt-4 w-full"
+            onClick={() => {
+              router.push(sessionExpired ? "/auth/login" : "/app");
+              router.refresh();
+            }}
+          >
+            {sessionExpired ? "Sign in" : "Retry"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (workspaces.length === 0) {
     // The redirect effect above will navigate away; render nothing meanwhile
     // rather than flashing an empty authenticated shell.
@@ -61,8 +100,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   }
 
   async function handleLogout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await signOutCurrentBrowser();
     // Clear every cached response so a subsequent sign-in never shows a
     // previous session's (or workspace's) stale data.
     queryClient.clear();
