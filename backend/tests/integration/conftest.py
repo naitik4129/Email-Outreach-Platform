@@ -195,6 +195,21 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
             {"workspace_id": workspace_id},
         )
         session.execute(
+            text(
+                "UPDATE templates SET current_version_id = NULL "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM template_versions WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM templates WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
             text("DELETE FROM audit_events WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )

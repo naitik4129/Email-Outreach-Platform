@@ -222,3 +222,64 @@ export type SuppressionPage = {
   items: Suppression[];
   next_cursor: string | null;
 };
+
+// --- Templates ---
+
+export type TemplateMode = "STANDARD";
+
+export type TemplateListItem = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  current_version_id: string | null;
+  mode: TemplateMode;
+  archived_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  current_revision: number | null;
+  subject: string | null;
+};
+
+export type TemplateDetail = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  current_version_id: string | null;
+  mode: TemplateMode;
+  archived_at: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  current_revision: number | null;
+  subject: string;
+  body_html: string;
+  variable_schema: Record<string, unknown>;
+  content_digest: string;
+  renderer_version: number;
+  version_created_at: string | null;
+};
+
+export type TemplatePage = {
+  items: TemplateListItem[];
+  next_cursor: string | null;
+};
+
+export type TemplateVersion = {
+  id: string;
+  template_id: string;
+  revision: number;
+  subject: string;
+  body_html: string;
+  variable_schema: Record<string, unknown>;
+  content_digest: string;
+  renderer_version: number;
+  created_at: string;
+};
+
+export type TemplatePreviewResult = {
+  subject: string;
+  body_html: string;
+  detected_variables: string[];
+  missing_variables: string[];
+};

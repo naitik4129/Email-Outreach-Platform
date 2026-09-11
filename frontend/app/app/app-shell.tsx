@@ -16,6 +16,7 @@ import {
   Users,
   UploadCloud,
   Ban,
+  FileText,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import { useWorkspace, WorkspaceProvider } from "@/lib/workspace-context";
 const navigation = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/leads", label: "Leads", icon: Contact },
+  { href: "/app/templates", label: "Templates", icon: FileText },
   { href: "/app/leads/imports", label: "Imports", icon: UploadCloud },
   { href: "/app/leads/suppression", label: "Suppression", icon: Ban },
   { href: "/app/team", label: "Team", icon: Users },
