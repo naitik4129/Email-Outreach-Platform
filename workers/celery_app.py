@@ -27,3 +27,4 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
 celery_app = create_celery_app()
 
 import workers.tasks  # noqa: F401
+import workers.imports  # noqa: F401

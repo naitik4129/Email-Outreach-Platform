@@ -27,6 +27,8 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in .env}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
       SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:-authenticated}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-imports}
     ports:
       - "8000:8000"
     depends_on:
@@ -59,6 +61,9 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in .env}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-imports}
     command:
       [
         "celery",
@@ -66,7 +71,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=maintenance",
+        "--queues=maintenance,imports",
       ]
     depends_on:
       redis:

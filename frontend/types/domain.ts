@@ -121,3 +121,104 @@ export type LeadListMemberPage = {
   items: LeadListMember[];
   next_cursor: string | null;
 };
+
+// --- Imports ---
+
+export type ImportKind = "LEADS" | "SUPPRESSION";
+export type ImportStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "COMPLETED_WITH_ERRORS"
+  | "FAILED";
+export type ImportRowStatus = "ACCEPTED" | "DUPLICATE" | "REJECTED";
+
+export type ImportJob = {
+  id: string;
+  workspace_id: string;
+  initiator_id: string;
+  import_kind: ImportKind;
+  mapping: Record<string, string>;
+  list_id: string | null;
+  status: ImportStatus;
+  total_rows: number | null;
+  processed_rows: number;
+  accepted_rows: number;
+  duplicate_rows: number;
+  rejected_rows: number;
+  failure_summary: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ImportJobPage = {
+  items: ImportJob[];
+  next_cursor: string | null;
+};
+
+export type ImportRowResult = {
+  row_number: number;
+  status: ImportRowStatus;
+  lead_id: string | null;
+  suppression_id: string | null;
+  validation_reason: string | null;
+};
+
+export type ImportRowResultPage = {
+  items: ImportRowResult[];
+  next_cursor: string | null;
+};
+
+export type ImportUploadOut = {
+  storage_object_key: string;
+  storage_object_version: string;
+  storage_object_digest: string;
+  headers: string[];
+  sample_rows: Record<string, string>[];
+  detected_total_rows: number;
+  warnings: string[];
+};
+
+export type ImportCreateIn = {
+  storage_object_key: string;
+  storage_object_version: string;
+  storage_object_digest: string;
+  import_kind: ImportKind;
+  mapping: {
+    columns: Record<string, string>;
+    source_filename?: string | null;
+  };
+  list_id?: string | null;
+};
+
+// --- Suppression ---
+
+export type SuppressionReason =
+  | "MANUAL"
+  | "UNSUBSCRIBE"
+  | "HARD_BOUNCE"
+  | "COMPLAINT";
+export type SuppressionStatus = "ACTIVE" | "RELEASED";
+
+export type Suppression = {
+  id: string;
+  workspace_id: string;
+  email: string;
+  canonical_address: string;
+  reason: SuppressionReason;
+  status: SuppressionStatus;
+  first_observed_at: string;
+  last_observed_at: string;
+  released_at: string | null;
+  release_actor_id: string | null;
+  removable: boolean;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SuppressionPage = {
+  items: Suppression[];
+  next_cursor: string | null;
+};

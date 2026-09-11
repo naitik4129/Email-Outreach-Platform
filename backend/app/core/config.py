@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
     supabase_jwt_audience: str = "authenticated"
     supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "imports"
+
+    import_max_file_bytes: int = Field(default=10_000_000, ge=1)
+    import_max_rows: int = Field(default=50_000, ge=1)
+    import_max_columns: int = Field(default=50, ge=1)
+    import_max_field_chars: int = Field(default=4_000, ge=1)
+    import_batch_size: int = Field(default=500, ge=1)
+    import_preview_row_limit: int = Field(default=20, ge=1)
+    import_lease_ttl_seconds: int = Field(default=120, ge=1)
+    import_recovery_poll_seconds: float = Field(default=30.0, gt=0)
 
     @field_validator("log_level", mode="before")
     @classmethod

@@ -21,6 +21,33 @@ class SchedulerRuntime:
 
     def run_once(self) -> None:
         logger.info("Scheduler heartbeat")
+        self._recover_imports()
+
+    def _recover_imports(self) -> None:
+        from sqlalchemy import text
+        from app.db.session import session_scope
+        from workers.celery_app import celery_app
+
+        with session_scope(self.settings) as session:
+            session.execute(text("SET ROLE app_scheduler"))
+            rows = session.execute(
+                text(
+                    """
+                    SELECT workspace_id, id FROM import_jobs
+                    WHERE (status = 'PENDING' AND next_due_at <= pg_catalog.transaction_timestamp())
+                       OR (status = 'PROCESSING' AND lease_expires_at <= pg_catalog.transaction_timestamp())
+                    """
+                )
+            ).all()
+
+            if rows:
+                logger.info(f"Discovered {len(rows)} due/stuck import(s). Dispatching recovery tasks.")
+                for workspace_id, import_id in rows:
+                    celery_app.send_task(
+                        "imports.process_chunk",
+                        kwargs={"workspace_id": str(workspace_id), "import_id": str(import_id)},
+                        queue="imports",
+                    )
 
     def run_forever(self) -> None:
         configure_logging(self.settings, service_name="scheduler")
@@ -28,7 +55,10 @@ class SchedulerRuntime:
         signal.signal(signal.SIGINT, self.stop)
         logger.info("Scheduler startup")
         while not self.stopped.is_set():
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception:
+                logger.exception("Error in scheduler run_once")
             self.stopped.wait(self.settings.scheduler_poll_seconds)
         logger.info("Scheduler shutdown complete")
 
