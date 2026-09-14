@@ -308,6 +308,15 @@ export type MailboxListItem = {
   updated_at: string;
 };
 
+export type SmtpSecurityMode = "STARTTLS" | "IMPLICIT_TLS";
+
+export type SmtpConfigView = {
+  host: string;
+  port: number;
+  security_mode: SmtpSecurityMode;
+  username: string;
+};
+
 export type MailboxDetail = {
   id: string;
   provider: "GMAIL" | "MICROSOFT" | "SMTP";
@@ -327,6 +336,7 @@ export type MailboxDetail = {
   version: number;
   created_at: string;
   updated_at: string;
+  smtp_config?: SmtpConfigView | null;
 };
 
 export type GmailConnectStartResult = {
@@ -340,6 +350,47 @@ export type GmailConnectCompleteResult = {
   email_address: string;
   connection_state: MailboxConnectionState;
   health_state: MailboxHealthState;
+};
+
+export type MicrosoftConnectStartResult = {
+  authorization_url: string;
+  expires_at: string;
+};
+
+export type MicrosoftConnectCompleteResult = {
+  mailbox_id: string;
+  provider: string;
+  email_address: string;
+  connection_state: MailboxConnectionState;
+  health_state: MailboxHealthState;
+};
+
+export type SmtpConnectInput = {
+  host: string;
+  port: number;
+  security_mode: SmtpSecurityMode;
+  username: string;
+  password: string;
+  email_address: string;
+  sender_display_name?: string | null;
+};
+
+export type SmtpConnectResult = {
+  mailbox_id: string;
+  provider: string;
+  email_address: string;
+  connection_state: MailboxConnectionState;
+  health_state: MailboxHealthState;
+};
+
+export type SmtpUpdateInput = {
+  host?: string;
+  port?: number;
+  security_mode?: SmtpSecurityMode;
+  username?: string;
+  // Omit entirely to keep the existing password.
+  password?: string;
+  sender_display_name?: string | null;
 };
 
 export type MailboxTestSendResult = {

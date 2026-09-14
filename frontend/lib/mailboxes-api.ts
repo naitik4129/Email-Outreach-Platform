@@ -6,6 +6,11 @@ import type {
   MailboxDetail,
   MailboxListItem,
   MailboxTestSendResult,
+  MicrosoftConnectCompleteResult,
+  MicrosoftConnectStartResult,
+  SmtpConnectInput,
+  SmtpConnectResult,
+  SmtpUpdateInput,
 } from "@/types/domain";
 
 function workspacePath(workspaceId: string, path: string) {
@@ -88,6 +93,77 @@ export async function disconnectMailbox(
   return (
     await apiRequest<DisconnectMailboxResult>(path, {
       method: "POST",
+    })
+  ).data;
+}
+
+export async function startMicrosoftOAuth(
+  workspaceId: string,
+  returnPath: string = "/app/mailboxes",
+): Promise<MicrosoftConnectStartResult> {
+  const path = workspacePath(workspaceId, "/mailboxes/connect/microsoft/start");
+  return (
+    await apiRequest<MicrosoftConnectStartResult>(path, {
+      method: "POST",
+      body: JSON.stringify({ return_path: returnPath }),
+    })
+  ).data;
+}
+
+export async function completeMicrosoftOAuth(
+  workspaceId: string,
+  payload: {
+    code: string;
+    state: string;
+  },
+): Promise<MicrosoftConnectCompleteResult> {
+  const path = workspacePath(workspaceId, "/mailboxes/connect/microsoft/complete");
+  return (
+    await apiRequest<MicrosoftConnectCompleteResult>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function reconnectMicrosoft(
+  workspaceId: string,
+  mailboxId: string,
+): Promise<MicrosoftConnectStartResult> {
+  const path = workspacePath(
+    workspaceId,
+    `/mailboxes/${mailboxId}/reconnect/microsoft`,
+  );
+  return (
+    await apiRequest<MicrosoftConnectStartResult>(path, {
+      method: "POST",
+    })
+  ).data;
+}
+
+export async function connectSmtpMailbox(
+  workspaceId: string,
+  payload: SmtpConnectInput,
+): Promise<SmtpConnectResult> {
+  const path = workspacePath(workspaceId, "/mailboxes/connect/smtp");
+  return (
+    await apiRequest<SmtpConnectResult>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function updateSmtpMailbox(
+  workspaceId: string,
+  mailboxId: string,
+  payload: SmtpUpdateInput,
+): Promise<MailboxDetail> {
+  const path = workspacePath(workspaceId, `/mailboxes/${mailboxId}/smtp`);
+  return (
+    await apiRequest<MailboxDetail>(path, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
     })
   ).data;
 }

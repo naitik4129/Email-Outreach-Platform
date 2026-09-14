@@ -13,6 +13,7 @@ import {
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ProviderBadge } from "@/components/mailboxes/provider-badge";
 import { ApiError } from "@/lib/api-client";
 import { listMailboxes } from "@/lib/mailboxes-api";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -181,8 +182,7 @@ export function MailboxesPageClient() {
                     </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-800">
-                        <span className="font-semibold text-rose-600">G</span>
-                        {mailbox.provider === "GMAIL" ? "Gmail" : mailbox.provider}
+                        <ProviderBadge provider={mailbox.provider} />
                       </span>
                     </td>
                     <td className="px-6 py-4">

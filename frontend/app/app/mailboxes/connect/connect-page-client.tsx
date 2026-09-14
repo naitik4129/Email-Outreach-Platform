@@ -7,7 +7,7 @@ import { ArrowLeft, Check, ChevronRight, Loader2, Server } from "lucide-react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
-import { startGmailOAuth } from "@/lib/mailboxes-api";
+import { startGmailOAuth, startMicrosoftOAuth } from "@/lib/mailboxes-api";
 import { useWorkspace } from "@/lib/workspace-context";
 
 export function ConnectPageClient() {
@@ -29,6 +29,24 @@ export function ConnectPageClient() {
         setError(err.message);
       } else {
         setError("Failed to initiate Google authentication. Please try again.");
+      }
+    }
+  }
+
+  async function handleConnectMicrosoft() {
+    if (!activeWorkspaceId) return;
+    setIsConnecting(true);
+    setError(null);
+    try {
+      const res = await startMicrosoftOAuth(activeWorkspaceId, "/app/mailboxes");
+      // Redirect browser to Microsoft OAuth consent screen
+      window.location.href = res.authorization_url;
+    } catch (err) {
+      setIsConnecting(false);
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError("Failed to initiate Microsoft authentication. Please try again.");
       }
     }
   }
@@ -123,8 +141,8 @@ export function ConnectPageClient() {
           </div>
         </div>
 
-        {/* Microsoft 365 - DISABLED */}
-        <div className="flex items-start justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-6 opacity-60">
+        {/* Microsoft 365 / Outlook - ACTIVE */}
+        <div className="group relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-50 border border-blue-100">
               <svg className="h-6 w-6" viewBox="0 0 24 24">
@@ -135,43 +153,50 @@ export function ConnectPageClient() {
               </svg>
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-slate-700">Microsoft 365 / Outlook</h3>
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
-                  Coming Soon
-                </span>
-              </div>
+              <h3 className="font-semibold text-slate-900">Microsoft 365 / Outlook</h3>
               <p className="text-sm text-slate-500 mt-1">
-                Connect Outlook and Microsoft 365 mailboxes via Microsoft Graph API.
+                Connect Outlook and Microsoft 365 mailboxes via Microsoft Graph, using OAuth 2.0 with PKCE verification.
               </p>
             </div>
           </div>
-          <Button variant="outline" disabled size="sm">
-            Unavailable
-          </Button>
+          <div className="mt-6 flex items-center justify-end">
+            <Button onClick={handleConnectMicrosoft} disabled={isConnecting} variant="outline">
+              {isConnecting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Redirecting to Microsoft...
+                </>
+              ) : (
+                <>
+                  Connect with Microsoft
+                  <ChevronRight className="ml-1.5 h-4 w-4" />
+                </>
+              )}
+            </Button>
+          </div>
         </div>
 
-        {/* Custom SMTP / IMAP - DISABLED */}
-        <div className="flex items-start justify-between rounded-xl border border-slate-200 bg-slate-50/60 p-6 opacity-60">
+        {/* Custom SMTP - ACTIVE, links to the configuration form */}
+        <div className="group relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600">
               <Server className="h-6 w-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-slate-700">Custom SMTP / IMAP</h3>
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">
-                  Coming Soon
-                </span>
-              </div>
+              <h3 className="font-semibold text-slate-900">Custom SMTP</h3>
               <p className="text-sm text-slate-500 mt-1">
-                Connect external transactional SMTP servers or custom mail servers.
+                Connect an existing SMTP-compatible mail server with your own host, port, and credentials.
               </p>
             </div>
           </div>
-          <Button variant="outline" disabled size="sm">
-            Unavailable
-          </Button>
+          <div className="mt-6 flex items-center justify-end">
+            <Button variant="outline" asChild>
+              <Link href="/app/mailboxes/connect/smtp">
+                Configure SMTP
+                <ChevronRight className="ml-1.5 h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
         </div>
       </div>
     </div>

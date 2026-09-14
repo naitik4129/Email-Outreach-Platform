@@ -21,6 +21,13 @@ from app.modules.mailboxes.schemas import (
     MailboxTestSendRequest,
     MailboxTestSendResult,
     MailboxUpdate,
+    MicrosoftConnectCompleteRequest,
+    MicrosoftConnectCompleteResponse,
+    MicrosoftConnectStartRequest,
+    MicrosoftConnectStartResponse,
+    SmtpConnectRequest,
+    SmtpConnectResponse,
+    SmtpUpdateRequest,
 )
 from app.modules.mailboxes.service import MailboxService
 
@@ -113,6 +120,93 @@ def reconnect_gmail(
 
 
 @router.post(
+    "/mailboxes/connect/microsoft/start",
+    response_model=MicrosoftConnectStartResponse,
+)
+def start_microsoft_connect(
+    payload: MicrosoftConnectStartRequest,
+    context: WorkspaceContext = Depends(require_permission("mailboxes.manage")),
+    db: Session = Depends(get_db),
+) -> MicrosoftConnectStartResponse:
+    service = MailboxService(MailboxRepository(db))
+    return service.start_microsoft_oauth(
+        workspace_id=context.workspace_id,
+        user_id=context.user_id,
+        return_path=payload.return_path,
+    )
+
+
+@router.post(
+    "/mailboxes/connect/microsoft/complete",
+    response_model=MicrosoftConnectCompleteResponse,
+)
+def complete_microsoft_connect(
+    payload: MicrosoftConnectCompleteRequest,
+    context: WorkspaceContext = Depends(require_permission("mailboxes.manage")),
+    db: Session = Depends(get_db),
+) -> MicrosoftConnectCompleteResponse:
+    service = MailboxService(MailboxRepository(db))
+    return service.complete_microsoft_oauth(
+        user_id=context.user_id,
+        code=payload.code,
+        state_token=payload.state,
+    )
+
+
+@router.post(
+    "/mailboxes/{mailbox_id}/reconnect/microsoft",
+    response_model=MicrosoftConnectStartResponse,
+)
+def reconnect_microsoft(
+    mailbox_id: UUID,
+    context: WorkspaceContext = Depends(require_permission("mailboxes.manage")),
+    db: Session = Depends(get_db),
+) -> MicrosoftConnectStartResponse:
+    service = MailboxService(MailboxRepository(db))
+    return service.reconnect_microsoft(
+        workspace_id=context.workspace_id,
+        user_id=context.user_id,
+        mailbox_id=mailbox_id,
+    )
+
+
+@router.post(
+    "/mailboxes/connect/smtp",
+    response_model=SmtpConnectResponse,
+)
+def connect_smtp_mailbox(
+    payload: SmtpConnectRequest,
+    context: WorkspaceContext = Depends(require_permission("mailboxes.manage")),
+    db: Session = Depends(get_db),
+) -> SmtpConnectResponse:
+    service = MailboxService(MailboxRepository(db))
+    return service.connect_smtp_mailbox(
+        workspace_id=context.workspace_id,
+        user_id=context.user_id,
+        payload=payload,
+    )
+
+
+@router.patch(
+    "/mailboxes/{mailbox_id}/smtp",
+    response_model=MailboxDetail,
+)
+def update_smtp_mailbox(
+    mailbox_id: UUID,
+    payload: SmtpUpdateRequest,
+    context: WorkspaceContext = Depends(require_permission("mailboxes.manage")),
+    db: Session = Depends(get_db),
+) -> MailboxDetail:
+    service = MailboxService(MailboxRepository(db))
+    return service.update_smtp_mailbox(
+        workspace_id=context.workspace_id,
+        user_id=context.user_id,
+        mailbox_id=mailbox_id,
+        payload=payload,
+    )
+
+
+@router.post(
     "/mailboxes/{mailbox_id}/disconnect",
     response_model=DisconnectResponse,
 )
@@ -178,5 +272,38 @@ def gmail_oauth_browser_callback(
 
     return RedirectResponse(
         url=f"{frontend_base}/app/mailboxes/connect/gmail?code={code}&state={state}",
+        status_code=302,
+    )
+
+
+@callback_router.get("/mailboxes/connect/microsoft/callback")
+def microsoft_oauth_browser_callback(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+) -> RedirectResponse:
+    """Authoritative browser redirect endpoint registered with Microsoft OAuth.
+
+    Mirrors gmail_oauth_browser_callback: forwards the browser back to the
+    authenticated frontend page where the user's existing Supabase session
+    completes the flow with bearer auth.
+    """
+    settings = Settings.current()
+    frontend_base = settings.frontend_base_url.rstrip("/")
+
+    if error:
+        return RedirectResponse(
+            url=f"{frontend_base}/app/mailboxes?error={error}",
+            status_code=302,
+        )
+
+    if not code or not state:
+        return RedirectResponse(
+            url=f"{frontend_base}/app/mailboxes?error=missing_callback_params",
+            status_code=302,
+        )
+
+    return RedirectResponse(
+        url=f"{frontend_base}/app/mailboxes/connect/microsoft?code={code}&state={state}",
         status_code=302,
     )

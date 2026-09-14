@@ -41,7 +41,7 @@ def test_header_injection_protection() -> None:
         body_html="<p>test</p>",
     )
     with pytest.raises(AppError) as exc_info:
-        provider.send_message("fake-token", envelope_bad_subject)
+        provider.send_message({"access_token": "fake-token"}, envelope_bad_subject)
     assert exc_info.value.code == "header_injection"
     assert exc_info.value.status_code == 422
 
@@ -53,7 +53,7 @@ def test_header_injection_protection() -> None:
         body_html="<p>test</p>",
     )
     with pytest.raises(AppError) as exc_info:
-        provider.send_message("fake-token", envelope_bad_to)
+        provider.send_message({"access_token": "fake-token"}, envelope_bad_to)
     assert exc_info.value.code == "header_injection"
 
 
@@ -80,7 +80,7 @@ def test_send_message_success() -> None:
         rfc_message_id="unique-rfc-id-123",
     )
 
-    result = provider.send_message("fake-token", envelope)
+    result = provider.send_message({"access_token": "fake-token"}, envelope)
     assert result.status == "ACCEPTED"
     assert result.provider_message_id == "msg-12345"
     assert result.provider_thread_id == "thread-67890"
@@ -103,7 +103,7 @@ def test_send_message_timeout_becomes_unknown() -> None:
         body_html="<p>Test</p>",
     )
 
-    result = provider.send_message("fake-token", envelope)
+    result = provider.send_message({"access_token": "fake-token"}, envelope)
     assert result.status == "UNKNOWN"
     assert result.error_category == ErrorCategory.UNKNOWN_OUTCOME
     assert result.error_code == "request_timeout"
@@ -238,5 +238,5 @@ def test_provider_registry() -> None:
     assert isinstance(provider, GmailProvider)
 
     with pytest.raises(AppError) as exc_info:
-        ProviderRegistry.get("MICROSOFT")
+        ProviderRegistry.get("YAHOO")
     assert exc_info.value.code == "unsupported_provider"

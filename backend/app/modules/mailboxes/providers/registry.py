@@ -3,6 +3,8 @@ from __future__ import annotations
 from app.core.errors import AppError
 from app.modules.mailboxes.providers.base import EmailProvider
 from app.modules.mailboxes.providers.gmail import GmailProvider
+from app.modules.mailboxes.providers.microsoft import MicrosoftGraphProvider
+from app.modules.mailboxes.providers.smtp import SmtpProvider
 
 _providers: dict[str, EmailProvider] = {}
 
@@ -20,6 +22,16 @@ class ProviderRegistry:
             provider = GmailProvider()
             _providers["GMAIL"] = provider
             return provider
+
+        if normalized == "MICROSOFT":
+            ms_provider = MicrosoftGraphProvider()
+            _providers["MICROSOFT"] = ms_provider
+            return ms_provider
+
+        if normalized == "SMTP":
+            smtp_provider = SmtpProvider()
+            _providers["SMTP"] = smtp_provider
+            return smtp_provider
 
         raise AppError(
             "unsupported_provider",

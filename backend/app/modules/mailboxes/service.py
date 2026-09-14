@@ -5,6 +5,7 @@ import hashlib
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from app.core.config import Settings
@@ -17,6 +18,7 @@ from app.core.crypto import (
 from app.core.errors import AppError
 from app.modules.mailboxes.providers.base import (
     OutboundMessageEnvelope,
+    ProviderCapability,
 )
 from app.modules.mailboxes.providers.registry import ProviderRegistry
 from app.modules.mailboxes.repository import MailboxRepository
@@ -28,6 +30,12 @@ from app.modules.mailboxes.schemas import (
     MailboxListItem,
     MailboxTestSendResult,
     MailboxUpdate,
+    MicrosoftConnectCompleteResponse,
+    MicrosoftConnectStartResponse,
+    SmtpConfigView,
+    SmtpConnectRequest,
+    SmtpConnectResponse,
+    SmtpUpdateRequest,
 )
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -62,6 +70,20 @@ class MailboxService:
         if not r:
             raise AppError("not_found", "Mailbox not found", status_code=404)
 
+        smtp_config = None
+        if r["provider"] == "SMTP" and r["connected_generation"]:
+            conn = self.repo.get_mailbox_connection(
+                workspace_id, mailbox_id, r["connected_generation"]
+            )
+            if conn and conn.get("protected_config"):
+                cfg = conn["protected_config"]
+                smtp_config = SmtpConfigView(
+                    host=cfg["host"],
+                    port=cfg["port"],
+                    security_mode=cfg["security_mode"],
+                    username=cfg["username"],
+                )
+
         return MailboxDetail(
             id=UUID(str(r["id"])),
             provider=r["provider"],
@@ -81,6 +103,7 @@ class MailboxService:
             version=r["version"],
             created_at=r["created_at"],
             updated_at=r["updated_at"],
+            smtp_config=smtp_config,
         )
 
     def update_mailbox(
@@ -431,6 +454,534 @@ class MailboxService:
             login_hint=mailbox["original_address"],
         )
 
+    # -------------------------------------------------------------------------
+    # Microsoft OAuth
+    # -------------------------------------------------------------------------
+    #
+    # Structurally identical to the Gmail flow above (same 8-step claim /
+    # actor-check / verifier-decrypt / exchange / identity / global-
+    # uniqueness / account-mismatch / insert-or-update sequence), just
+    # swapping the provider name and settings field. Deliberately
+    # copy-and-rename rather than factored into one shared
+    # complete_oauth(provider) helper -- that would be a larger refactor
+    # than this phase calls for and raises Gmail-regression risk.
+
+    def start_microsoft_oauth(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+        return_path: str = "/app/mailboxes",
+        login_hint: str | None = None,
+    ) -> MicrosoftConnectStartResponse:
+        if (
+            not return_path.startswith("/app/")
+            or "\\" in return_path
+            or any(ord(c) < 32 for c in return_path)
+        ):
+            return_path = "/app/mailboxes"
+
+        settings = Settings.current()
+        provider = ProviderRegistry.get("MICROSOFT")
+
+        state_token = secrets.token_urlsafe(32)
+        state_digest = hashlib.sha256(state_token.encode("utf-8")).hexdigest()
+
+        code_verifier = secrets.token_urlsafe(64)
+        verifier_hash = hashlib.sha256(code_verifier.encode("ascii")).digest()
+        code_challenge = (
+            base64.urlsafe_b64encode(verifier_hash).rstrip(b"=").decode("ascii")
+        )
+
+        enc_verifier, key_id, nonce = encrypt_verifier(
+            code_verifier, workspace_id, user_id, "MICROSOFT"
+        )
+
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(minutes=10)
+        flow_id = uuid4()
+
+        self.repo.insert_oauth_flow(
+            flow_id=flow_id,
+            workspace_id=workspace_id,
+            actor_id=user_id,
+            provider="MICROSOFT",
+            state_digest=state_digest,
+            encrypted_verifier=enc_verifier,
+            verifier_key_id=key_id,
+            verifier_nonce=nonce,
+            return_path=return_path,
+            expires_at=expires_at,
+        )
+
+        auth_url = provider.get_authorization_url(
+            state=state_token,
+            redirect_uri=settings.microsoft_redirect_uri,
+            login_hint=login_hint,
+            code_challenge=code_challenge,
+        )
+
+        return MicrosoftConnectStartResponse(
+            authorization_url=auth_url,
+            expires_at=expires_at,
+        )
+
+    def complete_microsoft_oauth(
+        self,
+        user_id: UUID,
+        code: str,
+        state_token: str,
+    ) -> MicrosoftConnectCompleteResponse:
+        settings = Settings.current()
+        state_digest = hashlib.sha256(state_token.encode("utf-8")).hexdigest()
+        claim_owner = f"user:{user_id}:{uuid4()}"
+
+        flow = self.repo.get_and_claim_oauth_flow(state_digest, claim_owner)
+        if not flow:
+            raise AppError(
+                "invalid_oauth_state",
+                "OAuth session is invalid, expired, or has already been used. "
+                "Please try connecting again.",
+                status_code=400,
+            )
+
+        flow_actor_id = UUID(str(flow["actor_id"]))
+        if flow_actor_id != user_id:
+            self.repo.fail_oauth_flow(UUID(str(flow["id"])))
+            raise AppError(
+                "forbidden",
+                "OAuth transaction was initiated by a different user session",
+                status_code=403,
+            )
+
+        flow_workspace_id = UUID(str(flow["workspace_id"]))
+        provider = ProviderRegistry.get("MICROSOFT")
+
+        code_verifier = decrypt_verifier(
+            ciphertext=flow["encrypted_verifier"],
+            nonce=flow["verifier_nonce"],
+            workspace_id=flow_workspace_id,
+            actor_id=user_id,
+            provider="MICROSOFT",
+            key_id=flow["verifier_key_id"],
+        )
+
+        try:
+            tokens = provider.exchange_code(
+                code=code,
+                redirect_uri=settings.microsoft_redirect_uri,
+                code_verifier=code_verifier,
+            )
+        except AppError:
+            self.repo.fail_oauth_flow(UUID(str(flow["id"])))
+            raise
+
+        try:
+            identity = provider.get_identity(tokens.access_token)
+        except AppError:
+            self.repo.fail_oauth_flow(UUID(str(flow["id"])))
+            raise
+
+        global_active = self.repo.get_active_mailbox_by_provider_account_global(
+            "MICROSOFT", identity.provider_account_id
+        )
+        if (
+            global_active
+            and UUID(str(global_active["workspace_id"])) != flow_workspace_id
+        ):
+            self.repo.fail_oauth_flow(UUID(str(flow["id"])))
+            raise AppError(
+                "conflict",
+                f"The Microsoft account '{identity.email_address}' is already "
+                "connected to another workspace.",
+                status_code=409,
+            )
+
+        target_mailbox_id = None
+        if flow.get("return_path", "").startswith("/app/mailboxes/"):
+            path_suffix = flow["return_path"].removeprefix("/app/mailboxes/").strip()
+            if path_suffix:
+                try:
+                    target_mailbox_id = UUID(path_suffix)
+                except ValueError:
+                    pass
+
+        if target_mailbox_id:
+            target_mb = self.repo.get_mailbox(flow_workspace_id, target_mailbox_id)
+            if target_mb:
+                if (
+                    target_mb.get("provider_account_id")
+                    and target_mb["provider_account_id"] != identity.provider_account_id
+                ) or (
+                    target_mb["original_address"].lower()
+                    != identity.email_address.lower()
+                ):
+                    self.repo.fail_oauth_flow(UUID(str(flow["id"])))
+                    raise AppError(
+                        "account_mismatch",
+                        f"Authenticated Microsoft account '{identity.email_address}' "
+                        f"does not match mailbox '{target_mb['original_address']}'.",
+                        status_code=400,
+                    )
+
+        existing = self.repo.get_mailbox_by_provider_account(
+            flow_workspace_id, "MICROSOFT", identity.provider_account_id
+        )
+
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=tokens.expires_in)
+
+        if existing:
+            mailbox_id = UUID(str(existing["id"]))
+            new_generation = existing["current_connection_generation"] + 1
+
+            refresh_token = tokens.refresh_token
+            if not refresh_token:
+                old_conn = self.repo.get_mailbox_connection(
+                    flow_workspace_id,
+                    mailbox_id,
+                    existing["current_connection_generation"],
+                )
+                if old_conn and old_conn["credential_ciphertext"]:
+                    old_creds = decrypt_credentials(
+                        old_conn["credential_ciphertext"],
+                        old_conn["nonce"],
+                        flow_workspace_id,
+                        mailbox_id,
+                        "MICROSOFT",
+                        old_conn["encryption_key_id"],
+                    )
+                    refresh_token = old_creds.get("refresh_token")
+
+            cred_payload = {
+                "access_token": tokens.access_token,
+                "refresh_token": refresh_token,
+                "token_type": tokens.token_type,
+            }
+            ciphertext, key_id, nonce = encrypt_credentials(
+                cred_payload, flow_workspace_id, mailbox_id, "MICROSOFT"
+            )
+
+            self.repo.insert_mailbox_connection(
+                connection_id=uuid4(),
+                workspace_id=flow_workspace_id,
+                mailbox_id=mailbox_id,
+                generation=new_generation,
+                credential_ciphertext=ciphertext,
+                encryption_key_id=key_id,
+                nonce=nonce,
+                auth_mechanism="OAUTH",
+                granted_scopes=tokens.granted_scopes,
+                expires_at=expires_at,
+            )
+
+            self.repo.update_mailbox_connection_state(
+                workspace_id=flow_workspace_id,
+                mailbox_id=mailbox_id,
+                connection_state="CONNECTED",
+                health_state="HEALTHY",
+                connected_generation=new_generation,
+                current_connection_generation=new_generation,
+                provider_account_id=identity.provider_account_id,
+                original_address=identity.email_address,
+            )
+        else:
+            mailbox_id = uuid4()
+            generation = 1
+
+            cred_payload = {
+                "access_token": tokens.access_token,
+                "refresh_token": tokens.refresh_token,
+                "token_type": tokens.token_type,
+            }
+            ciphertext, key_id, nonce = encrypt_credentials(
+                cred_payload, flow_workspace_id, mailbox_id, "MICROSOFT"
+            )
+
+            self.repo.insert_mailbox(
+                mailbox_id=mailbox_id,
+                workspace_id=flow_workspace_id,
+                provider="MICROSOFT",
+                provider_account_id=identity.provider_account_id,
+                original_address=identity.email_address,
+                connection_state="CONNECTING",
+                health_state="UNKNOWN",
+                generation=generation,
+            )
+
+            self.repo.insert_mailbox_connection(
+                connection_id=uuid4(),
+                workspace_id=flow_workspace_id,
+                mailbox_id=mailbox_id,
+                generation=generation,
+                credential_ciphertext=ciphertext,
+                encryption_key_id=key_id,
+                nonce=nonce,
+                auth_mechanism="OAUTH",
+                granted_scopes=tokens.granted_scopes,
+                expires_at=expires_at,
+            )
+
+            self.repo.update_mailbox_connection_state(
+                workspace_id=flow_workspace_id,
+                mailbox_id=mailbox_id,
+                connection_state="CONNECTED",
+                health_state="HEALTHY",
+                connected_generation=generation,
+                current_connection_generation=generation,
+            )
+
+        self.repo.complete_oauth_flow(UUID(str(flow["id"])), mailbox_id)
+
+        return MicrosoftConnectCompleteResponse(
+            mailbox_id=mailbox_id,
+            provider="MICROSOFT",
+            email_address=identity.email_address,
+            connection_state="CONNECTED",
+            health_state="HEALTHY",
+        )
+
+    def reconnect_microsoft(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+        mailbox_id: UUID,
+    ) -> MicrosoftConnectStartResponse:
+        mailbox = self.repo.get_mailbox(workspace_id, mailbox_id)
+        if not mailbox:
+            raise AppError("not_found", "Mailbox not found", status_code=404)
+
+        if mailbox["provider"] != "MICROSOFT":
+            raise AppError(
+                "bad_request", "Mailbox provider is not Microsoft", status_code=400
+            )
+
+        return self.start_microsoft_oauth(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            return_path=f"/app/mailboxes/{mailbox_id}",
+            login_hint=mailbox["original_address"],
+        )
+
+    # -------------------------------------------------------------------------
+    # Custom SMTP
+    # -------------------------------------------------------------------------
+
+    def connect_smtp_mailbox(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+        payload: SmtpConnectRequest,
+    ) -> SmtpConnectResponse:
+        target_email = payload.email_address.strip().lower()
+        if not _EMAIL_PATTERN.match(target_email) or any(
+            c in target_email for c in ["\r", "\n"]
+        ):
+            raise AppError(
+                "bad_request", "Invalid mailbox email address format", status_code=422
+            )
+
+        # SMTP has no external "account id" concept the way OAuth providers
+        # do (no /me identity endpoint) -- synthesize a stable, deterministic
+        # key from the connection coordinates so the same global
+        # one-workspace-per-account uniqueness rule still applies.
+        provider_account_id = (
+            f"{payload.host.strip().lower()}:{payload.port}:"
+            f"{payload.username.strip().lower()}"
+        )
+
+        global_active = self.repo.get_active_mailbox_by_provider_account_global(
+            "SMTP", provider_account_id
+        )
+        if global_active and UUID(str(global_active["workspace_id"])) != workspace_id:
+            raise AppError(
+                "conflict",
+                "This SMTP account is already connected to another workspace.",
+                status_code=409,
+            )
+
+        provider = ProviderRegistry.get("SMTP")
+        credential = {
+            "host": payload.host,
+            "port": payload.port,
+            "security_mode": payload.security_mode.value,
+            "username": payload.username,
+            "password": payload.password,
+        }
+
+        # SSRF-safe connect + authenticate. Any failure here propagates as
+        # an AppError and no mailbox row is ever created -- invalid
+        # configuration must never produce a "healthy" mailbox.
+        provider.validate_connection(credential)
+
+        mailbox_id = uuid4()
+        generation = 1
+
+        secret_payload = {"password": payload.password}
+        ciphertext, key_id, nonce = encrypt_credentials(
+            secret_payload, workspace_id, mailbox_id, "SMTP"
+        )
+        protected_config = {
+            "host": payload.host,
+            "port": payload.port,
+            "security_mode": payload.security_mode.value,
+            "username": payload.username,
+        }
+
+        self.repo.insert_mailbox(
+            mailbox_id=mailbox_id,
+            workspace_id=workspace_id,
+            provider="SMTP",
+            provider_account_id=provider_account_id,
+            original_address=target_email,
+            sender_display_name=payload.sender_display_name,
+            connection_state="CONNECTING",
+            health_state="UNKNOWN",
+            generation=generation,
+        )
+
+        self.repo.insert_mailbox_connection(
+            connection_id=uuid4(),
+            workspace_id=workspace_id,
+            mailbox_id=mailbox_id,
+            generation=generation,
+            credential_ciphertext=ciphertext,
+            encryption_key_id=key_id,
+            nonce=nonce,
+            auth_mechanism="SMTP_PASSWORD",
+            protected_config=protected_config,
+            expires_at=None,
+        )
+
+        self.repo.update_mailbox_connection_state(
+            workspace_id=workspace_id,
+            mailbox_id=mailbox_id,
+            connection_state="CONNECTED",
+            health_state="HEALTHY",
+            connected_generation=generation,
+            current_connection_generation=generation,
+        )
+
+        return SmtpConnectResponse(
+            mailbox_id=mailbox_id,
+            provider="SMTP",
+            email_address=target_email,
+            connection_state="CONNECTED",
+            health_state="HEALTHY",
+        )
+
+    def update_smtp_mailbox(
+        self,
+        workspace_id: UUID,
+        user_id: UUID,
+        mailbox_id: UUID,
+        payload: SmtpUpdateRequest,
+    ) -> MailboxDetail:
+        mailbox = self.repo.get_mailbox(workspace_id, mailbox_id, for_update=True)
+        if not mailbox:
+            raise AppError("not_found", "Mailbox not found", status_code=404)
+        if mailbox["provider"] != "SMTP":
+            raise AppError(
+                "bad_request", "Mailbox provider is not SMTP", status_code=400
+            )
+
+        current_gen = mailbox["current_connection_generation"]
+        conn = self.repo.get_mailbox_connection(workspace_id, mailbox_id, current_gen)
+        if not conn or not conn["credential_ciphertext"]:
+            raise AppError(
+                "conflict", "Mailbox credentials not found or revoked", status_code=409
+            )
+
+        existing_config: dict[str, Any] = dict(conn.get("protected_config") or {})
+        existing_creds = decrypt_credentials(
+            conn["credential_ciphertext"],
+            conn["nonce"],
+            workspace_id,
+            mailbox_id,
+            "SMTP",
+            conn["encryption_key_id"],
+        )
+
+        new_host = (
+            payload.host if payload.host is not None else existing_config.get("host")
+        )
+        new_port = (
+            payload.port if payload.port is not None else existing_config.get("port")
+        )
+        new_security_mode = (
+            payload.security_mode.value
+            if payload.security_mode is not None
+            else existing_config.get("security_mode")
+        )
+        new_username = (
+            payload.username
+            if payload.username is not None
+            else existing_config.get("username")
+        )
+        # Password omitted -> keep the existing credential. Never a literal
+        # placeholder string.
+        new_password = (
+            payload.password
+            if payload.password is not None
+            else existing_creds.get("password")
+        )
+
+        provider = ProviderRegistry.get("SMTP")
+        candidate_credential = {
+            "host": new_host,
+            "port": new_port,
+            "security_mode": new_security_mode,
+            "username": new_username,
+            "password": new_password,
+        }
+
+        # Re-validate the merged configuration BEFORE activating anything.
+        # On failure, the existing working generation is left untouched
+        # (fail closed, no partial update).
+        provider.validate_connection(candidate_credential)
+
+        new_gen = current_gen + 1
+        secret_payload = {"password": new_password}
+        ciphertext, key_id, nonce = encrypt_credentials(
+            secret_payload, workspace_id, mailbox_id, "SMTP"
+        )
+        protected_config = {
+            "host": new_host,
+            "port": new_port,
+            "security_mode": new_security_mode,
+            "username": new_username,
+        }
+
+        self.repo.insert_mailbox_connection(
+            connection_id=uuid4(),
+            workspace_id=workspace_id,
+            mailbox_id=mailbox_id,
+            generation=new_gen,
+            credential_ciphertext=ciphertext,
+            encryption_key_id=key_id,
+            nonce=nonce,
+            auth_mechanism="SMTP_PASSWORD",
+            protected_config=protected_config,
+            expires_at=None,
+        )
+        self.repo.update_mailbox_connection_state(
+            workspace_id=workspace_id,
+            mailbox_id=mailbox_id,
+            connection_state="CONNECTED",
+            health_state="HEALTHY",
+            connected_generation=new_gen,
+            current_connection_generation=new_gen,
+        )
+
+        if payload.sender_display_name is not None:
+            self.repo.update_mailbox_metadata(
+                workspace_id,
+                mailbox_id,
+                payload.sender_display_name,
+                mailbox["signature_html"],
+            )
+
+        return self.get_mailbox(workspace_id, mailbox_id)
+
     def disconnect_mailbox(
         self,
         workspace_id: UUID,
@@ -587,12 +1138,26 @@ class MailboxService:
             conn["encryption_key_id"],
         )
 
-        access_token = creds.get("access_token", "")
+        # Provider-neutral credential mapping: merges the decrypted secret
+        # payload (e.g. Gmail/Microsoft {"access_token", ...}, or SMTP
+        # {"password"}) with the non-secret protected_config (e.g. SMTP's
+        # {"host", "port", "security_mode", "username"}) so every provider
+        # adapter receives one consistent mapping shape.
+        credential: dict[str, Any] = dict(creds)
+        if conn.get("protected_config"):
+            credential.update(conn["protected_config"])
+
         expires_at = conn["expires_at"]
         provider = ProviderRegistry.get(mailbox["provider"])
 
-        # Refresh if within 5-minute safety margin
-        if expires_at and (now + timedelta(minutes=5) >= expires_at):
+        # Refresh if within 5-minute safety margin (naturally never true for
+        # SMTP, which has no expires_at; guarded by capability too for
+        # clarity/defense-in-depth).
+        if (
+            ProviderCapability.CREDENTIAL_REFRESH in provider.capabilities
+            and expires_at
+            and (now + timedelta(minutes=5) >= expires_at)
+        ):
             refresh_token = creds.get("refresh_token")
             if not refresh_token:
                 self.repo.update_mailbox_connection_state(
@@ -653,7 +1218,7 @@ class MailboxService:
                     new_gen,
                 )
                 current_gen = new_gen
-                access_token = refresh_res.access_token
+                credential["access_token"] = refresh_res.access_token
             except AppError as exc:
                 if exc.code == "auth_failure":
                     self.repo.update_mailbox_connection_state(
@@ -722,7 +1287,7 @@ class MailboxService:
             rfc_message_id=rfc_message_id,
         )
 
-        send_result = provider.send_message(access_token, envelope)
+        send_result = provider.send_message(credential, envelope)
 
         # 9. Commit durable result
         if send_result.status == "ACCEPTED":
@@ -734,6 +1299,12 @@ class MailboxService:
                 evidence_state="ACCEPTED",
                 provider_message_id=send_result.provider_message_id,
                 provider_thread_id=send_result.provider_thread_id,
+                # Locally-generated attempt identity, persisted as
+                # reconciliation evidence regardless of whether the
+                # provider itself returned a message id (Graph/SMTP often
+                # don't) -- required by
+                # message_attempts_acceptance_evidence_check.
+                provider_request_id=rfc_message_id,
             )
             # Reaffirm healthy state
             self.repo.update_mailbox_connection_state(

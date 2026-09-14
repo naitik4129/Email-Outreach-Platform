@@ -390,17 +390,19 @@ class MailboxRepository:
         auth_mechanism: str = "OAUTH",
         granted_scopes: list[str] | None = None,
         expires_at: datetime | None = None,
+        protected_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         _safe_set_role(self.session, "app_connection")
         query = text(
             """
             INSERT INTO public.mailbox_connections (
                 id, workspace_id, mailbox_id, generation, credential_ciphertext,
-                encryption_key_id, nonce, auth_mechanism, granted_scopes, expires_at
+                encryption_key_id, nonce, auth_mechanism, granted_scopes, expires_at,
+                protected_config
             ) VALUES (
                 :id, :workspace_id, :mailbox_id, :generation, :credential_ciphertext,
                 :encryption_key_id, :nonce, :auth_mechanism,
-                :granted_scopes, :expires_at
+                :granted_scopes, :expires_at, :protected_config
             )
             RETURNING *
             """
@@ -419,6 +421,11 @@ class MailboxRepository:
                     "auth_mechanism": auth_mechanism,
                     "granted_scopes": json.dumps(granted_scopes or []),
                     "expires_at": expires_at,
+                    "protected_config": (
+                        json.dumps(protected_config)
+                        if protected_config is not None
+                        else None
+                    ),
                 },
             )
             .mappings()
@@ -791,18 +798,30 @@ class MailboxRepository:
         provider_thread_id: str | None = None,
         error_category: str | None = None,
         error_code: str | None = None,
+        provider_request_id: str | None = None,
     ) -> None:
         _safe_set_role(self.session, "app_worker_send")
         now = datetime.now(UTC)
         accepted_at = now if status == "SENT" else None
 
         # Update attempt
+        #
+        # message_attempts_acceptance_evidence_check requires evidence_state
+        # = 'ACCEPTED' to carry at least one of provider_request_id /
+        # provider_message_ref / non-empty reconciliation_metadata. Not
+        # every provider returns a provider_message_id synchronously (Graph
+        # sendMail returns 202 with no body; generic SMTP submission has no
+        # message-id concept at all) -- callers must pass provider_request_id
+        # (their own locally-generated attempt identity, e.g. the RFC
+        # Message-ID minted before invocation) so acceptance evidence is
+        # always present regardless of what the provider itself supplies.
         self.session.execute(
             text(
                 """
                 UPDATE public.message_attempts
                 SET evidence_state = :evidence_state,
                     completed_at = :completed_at,
+                    provider_request_id = :provider_request_id,
                     provider_message_ref = :provider_message_id,
                     provider_thread_ref = :provider_thread_id,
                     error_category = :error_category,
@@ -815,6 +834,7 @@ class MailboxRepository:
                 "attempt_id": str(attempt_id),
                 "evidence_state": evidence_state,
                 "completed_at": now,
+                "provider_request_id": provider_request_id,
                 "provider_message_id": provider_message_id,
                 "provider_thread_id": provider_thread_id,
                 "error_category": error_category,

@@ -69,9 +69,24 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/api/v1/mailboxes/connect/gmail/callback"
+
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
+    microsoft_redirect_uri: str = (
+        "http://localhost:8000/api/v1/mailboxes/connect/microsoft/callback"
+    )
+    # "common" supports both work/school (Azure AD) and personal Microsoft
+    # accounts. Restrict to "organizations" or a specific tenant GUID only
+    # if the product intentionally narrows supported account types.
+    microsoft_tenant: str = "common"
+
     mailbox_encryption_key: str = ""
     mailbox_encryption_key_id: str = "v1"
     frontend_base_url: str = "http://localhost:3000"
+
+    smtp_dns_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    smtp_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    smtp_command_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -103,6 +118,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return _split_origins(self.backend_cors_origins)
+
+    @property
+    def microsoft_authority(self) -> str:
+        return f"https://login.microsoftonline.com/{self.microsoft_tenant}"
 
     @property
     def supabase_jwt_issuer(self) -> str:

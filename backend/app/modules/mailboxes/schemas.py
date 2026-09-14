@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.modules.mailboxes.providers.ssrf import ALLOWED_PORTS
 
 
 class MailboxListItem(BaseModel):
@@ -21,6 +24,24 @@ class MailboxListItem(BaseModel):
     updated_at: datetime
 
 
+class SmtpSecurityMode(StrEnum):
+    STARTTLS = "STARTTLS"
+    IMPLICIT_TLS = "IMPLICIT_TLS"
+
+
+class SmtpConfigView(BaseModel):
+    """Safe, non-secret SMTP configuration for display in mailbox detail.
+
+    Never includes password or any ciphertext -- populated only from
+    mailbox_connections.protected_config.
+    """
+
+    host: str
+    port: int
+    security_mode: SmtpSecurityMode
+    username: str
+
+
 class MailboxDetail(MailboxListItem):
     signature_html: str | None = None
     blocked_until: datetime | None = None
@@ -28,6 +49,7 @@ class MailboxDetail(MailboxListItem):
     current_connection_generation: int = 1
     config_version: int = 1
     version: int = 1
+    smtp_config: SmtpConfigView | None = None
 
 
 class MailboxUpdate(BaseModel):
@@ -73,3 +95,89 @@ class MailboxTestSendResult(BaseModel):
 class DisconnectResponse(BaseModel):
     mailbox_id: UUID
     connection_state: str
+
+
+# -----------------------------------------------------------------------
+# Microsoft OAuth
+# -----------------------------------------------------------------------
+
+
+class MicrosoftConnectStartRequest(BaseModel):
+    return_path: str = Field(default="/app/mailboxes", max_length=1024)
+
+
+class MicrosoftConnectStartResponse(BaseModel):
+    authorization_url: str
+    expires_at: datetime
+
+
+class MicrosoftConnectCompleteRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+
+
+class MicrosoftConnectCompleteResponse(BaseModel):
+    mailbox_id: UUID
+    provider: str
+    email_address: str
+    connection_state: str
+    health_state: str
+
+
+# -----------------------------------------------------------------------
+# Custom SMTP
+# -----------------------------------------------------------------------
+
+
+class SmtpConnectRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    security_mode: SmtpSecurityMode
+    username: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=500)
+    email_address: str = Field(min_length=3, max_length=320)
+    sender_display_name: str | None = Field(default=None, max_length=200)
+
+    @field_validator("port")
+    @classmethod
+    def port_must_be_allowed(cls, value: int) -> int:
+        if value not in ALLOWED_PORTS:
+            raise ValueError(
+                f"SMTP port must be one of {sorted(ALLOWED_PORTS)}"
+            )
+        return value
+
+    @field_validator("email_address")
+    @classmethod
+    def email_must_look_valid(cls, value: str) -> str:
+        if "@" not in value or any(c in value for c in ("\r", "\n")):
+            raise ValueError("Invalid email address")
+        return value
+
+
+class SmtpConnectResponse(BaseModel):
+    mailbox_id: UUID
+    provider: str
+    email_address: str
+    connection_state: str
+    health_state: str
+
+
+class SmtpUpdateRequest(BaseModel):
+    host: str | None = Field(default=None, min_length=1, max_length=255)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    security_mode: SmtpSecurityMode | None = None
+    username: str | None = Field(default=None, min_length=1, max_length=320)
+    # Omitted (None) means "keep the existing credential" -- never a literal
+    # placeholder string. An explicit empty string is rejected by min_length.
+    password: str | None = Field(default=None, min_length=1, max_length=500)
+    sender_display_name: str | None = Field(default=None, max_length=200)
+
+    @field_validator("port")
+    @classmethod
+    def port_must_be_allowed(cls, value: int | None) -> int | None:
+        if value is not None and value not in ALLOWED_PORTS:
+            raise ValueError(
+                f"SMTP port must be one of {sorted(ALLOWED_PORTS)}"
+            )
+        return value

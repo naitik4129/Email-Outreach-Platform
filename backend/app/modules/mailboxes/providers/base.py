@@ -1,9 +1,39 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Protocol
+
+from app.core.errors import AppError
+
+
+class ProviderCapability(StrEnum):
+    """Capabilities a provider adapter may or may not support.
+
+    Application/service code must check ``EmailProvider.capabilities``
+    before relying on a capability instead of assuming every provider
+    behaves like Gmail (e.g. SMTP has no OAuth flow or credential
+    refresh). Calling an unsupported method raises
+    ``UnsupportedCapabilityError`` rather than silently no-oping.
+    """
+
+    OAUTH_FLOW = "OAUTH_FLOW"
+    IDENTITY_DISCOVERY = "IDENTITY_DISCOVERY"
+    CONNECTION_VALIDATION = "CONNECTION_VALIDATION"
+    SEND = "SEND"
+    CREDENTIAL_REFRESH = "CREDENTIAL_REFRESH"
+    TOKEN_REVOCATION = "TOKEN_REVOCATION"
+
+
+class UnsupportedCapabilityError(AppError):
+    def __init__(self, provider_name: str, capability: ProviderCapability) -> None:
+        super().__init__(
+            "unsupported_capability",
+            f"{provider_name} does not support {capability.value}",
+            status_code=400,
+        )
 
 
 class ErrorCategory(StrEnum):
@@ -46,8 +76,11 @@ class ProviderAccountIdentity:
 @dataclass(frozen=True)
 class ConnectionValidationResult:
     is_valid: bool
-    email_address: str
-    provider_account_id: str
+    # Providers with no identity/profile endpoint (e.g. SMTP) can only
+    # confirm the credential authenticates successfully, not discover an
+    # authoritative account identity -- those providers return None here.
+    email_address: str | None
+    provider_account_id: str | None
     scopes: list[str]
 
 
@@ -83,7 +116,26 @@ class ClassifiedProviderError:
 
 
 class EmailProvider(Protocol):
-    """Generic abstraction for email provider integrations."""
+    """Generic abstraction for email provider integrations.
+
+    Not every provider supports every method: OAuth-only methods
+    (``get_authorization_url``/``exchange_code``/``refresh_token``/
+    ``get_identity``) are meaningless for SMTP, which has no
+    authorization-code flow or identity endpoint. Providers that lack a
+    capability raise ``UnsupportedCapabilityError`` for the corresponding
+    method rather than a bare ``NotImplementedError`` -- callers should
+    check ``capabilities`` first when a capability is optional.
+
+    ``validate_connection`` and ``send_message`` are supported by every
+    provider and take a provider-neutral ``credential`` mapping (the
+    decrypted credential payload merged with any non-secret
+    ``protected_config``) instead of a bare OAuth access token, so a
+    Gmail/Microsoft credential (``{"access_token": ...}``) and an SMTP
+    credential (``{"host", "port", "security_mode", "username",
+    "password"}``) both fit through the same signature.
+    """
+
+    capabilities: frozenset[ProviderCapability]
 
     def get_authorization_url(
         self,
@@ -104,11 +156,13 @@ class EmailProvider(Protocol):
 
     def get_identity(self, access_token: str) -> ProviderAccountIdentity: ...
 
-    def validate_connection(self, access_token: str) -> ConnectionValidationResult: ...
+    def validate_connection(
+        self, credential: Mapping[str, Any]
+    ) -> ConnectionValidationResult: ...
 
     def send_message(
         self,
-        access_token: str,
+        credential: Mapping[str, Any],
         envelope: OutboundMessageEnvelope,
     ) -> ProviderSendResult: ...
 

@@ -96,3 +96,39 @@ def test_verifier_encryption_roundtrip_and_actor_binding() -> None:
     # Wrong actor must fail
     with pytest.raises(AppError):
         decrypt_verifier(ciphertext, nonce, workspace_id, actor_b, "GMAIL", key_id)
+
+
+@pytest.mark.parametrize(
+    "provider,payload",
+    [
+        (
+            "MICROSOFT",
+            {"access_token": "eyJ.test-access-token", "refresh_token": "test-refresh"},
+        ),
+        ("SMTP", {"password": "s3cret-smtp-password"}),
+    ],
+)
+def test_credential_encryption_roundtrip_is_provider_agnostic(
+    provider: str, payload: dict
+) -> None:
+    """credential_aad is plain string formatting, not Gmail-specific --
+    verifies Microsoft/SMTP credentials round-trip and remain AAD-bound to
+    their own provider string exactly like Gmail's."""
+    workspace_id = uuid.uuid4()
+    mailbox_id = uuid.uuid4()
+
+    ciphertext, key_id, nonce = encrypt_credentials(
+        payload, workspace_id, mailbox_id, provider
+    )
+    decrypted = decrypt_credentials(
+        ciphertext, nonce, workspace_id, mailbox_id, provider, key_id
+    )
+    assert decrypted == payload
+
+    # Decrypting under a different provider string must fail (provider is
+    # part of the AAD binding, just like workspace/mailbox).
+    other_provider = "GMAIL" if provider != "GMAIL" else "SMTP"
+    with pytest.raises(AppError):
+        decrypt_credentials(
+            ciphertext, nonce, workspace_id, mailbox_id, other_provider, key_id
+        )
