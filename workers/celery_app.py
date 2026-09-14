@@ -28,3 +28,4 @@ celery_app = create_celery_app()
 
 import workers.tasks  # noqa: F401
 import workers.imports  # noqa: F401
+import workers.campaigns  # noqa: F401

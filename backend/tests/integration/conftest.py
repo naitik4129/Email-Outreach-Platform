@@ -186,6 +186,76 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
     # mailboxes behind in the shared Supabase test project -- including one
     # that collided with a later run via mailboxes_provider_account_global_key.
     for workspace_id in workspace_ids:
+        # Phase 7 campaign-family tables reference leads/lead_lists/
+        # recipient_addresses/mailboxes/template_versions deleted further
+        # down this cascade -- clean up everything except `campaigns` itself
+        # (and campaign_enrollments, which messages.enrollment_id can still
+        # reference) here, before any of those parent rows are gone.
+        # campaigns.draft_audience_id/draft_sequence_id/current_settings_id/
+        # activated_* are themselves FKs back into these child tables (a
+        # committed audience, a settings revision, ...) -- null them out
+        # first, same as templates.current_version_id below, or the child
+        # deletes fail with a foreign key violation.
+        session.execute(
+            text(
+                """
+                UPDATE campaigns
+                SET draft_audience_id = NULL, draft_sequence_id = NULL,
+                    current_settings_id = NULL, activated_sequence_id = NULL,
+                    activated_audience_id = NULL
+                WHERE workspace_id = :workspace_id
+                """
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_audience_members "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM audience_capture_sources "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_planning_jobs "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM campaign_audiences WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM sequence_steps WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_sequences WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_settings_versions "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_mailboxes WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
         session.execute(
             text(
                 "DELETE FROM lead_list_memberships "
@@ -207,6 +277,20 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         )
         session.execute(
             text("DELETE FROM messages WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        # campaign_enrollments (referenced by messages.enrollment_id, now
+        # clear) and campaigns itself (referenced by every campaign-family
+        # table already deleted above) come last in the campaign cascade.
+        # Phase 7 never creates campaign_enrollments -- this is defensive.
+        session.execute(
+            text(
+                "DELETE FROM campaign_enrollments WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM campaigns WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )
         session.execute(

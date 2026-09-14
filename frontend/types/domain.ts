@@ -406,3 +406,141 @@ export type DisconnectMailboxResult = {
   mailbox_id: string;
   connection_state: "DISCONNECTED";
 };
+
+// --- Campaigns ---
+
+export type CampaignStatus =
+  | "DRAFT"
+  | "SCHEDULED"
+  | "RUNNING"
+  | "PAUSED"
+  | "ERROR"
+  | "COMPLETED"
+  | "ARCHIVED";
+
+export type CampaignListItem = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string | null;
+  status: CampaignStatus;
+  draft_sequence_id: string | null;
+  draft_audience_id: string | null;
+  current_settings_id: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CampaignPage = {
+  items: CampaignListItem[];
+  next_cursor: string | null;
+};
+
+export type CampaignDetail = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string | null;
+  creator_id: string;
+  status: CampaignStatus;
+  start_at: string | null;
+  draft_sequence_id: string | null;
+  draft_audience_id: string | null;
+  current_settings_id: string | null;
+  planning_status: "PENDING" | "READY";
+  archived_at: string | null;
+  error_reason: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SequenceStepKind = "EMAIL" | "WAIT";
+
+export type SequenceStep = {
+  id: string;
+  sequence_id: string;
+  campaign_id: string;
+  position: number;
+  kind: SequenceStepKind;
+  email_subject: string | null;
+  email_body_html: string | null;
+  email_variable_schema: Record<string, unknown> | null;
+  wait_duration_minutes: number | null;
+  source_template_version_id: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CampaignSequence = {
+  id: string | null;
+  campaign_id: string;
+  revision: number;
+  status: "DRAFT" | "FROZEN" | "EMPTY";
+  steps: SequenceStep[];
+};
+
+export type CampaignMailbox = {
+  mailbox_id: string;
+  provider: "GMAIL" | "MICROSOFT" | "SMTP";
+  email_address: string;
+  sender_display_name: string | null;
+  connection_state: MailboxConnectionState;
+  health_state: MailboxHealthState;
+  policy_state: MailboxPolicyState;
+  policy_reason: string | null;
+  active: boolean;
+  allocation_position: number;
+};
+
+export type CampaignSettings = {
+  id: string;
+  campaign_id: string;
+  revision: number;
+  timezone: string;
+  weekdays: number[];
+  window_start_local: string;
+  window_end_local: string;
+  daily_limit: number | null;
+  created_at: string;
+};
+
+export type AudienceStatus = "CAPTURING" | "READY" | "FAILED" | "ABANDONED";
+
+export type CampaignAudience = {
+  id: string;
+  campaign_id: string;
+  revision: number;
+  status: AudienceStatus;
+  started_at: string;
+  completed_at: string | null;
+  is_committed: boolean;
+  total_candidates: number | null;
+  processed_count: number;
+  accepted_count: number | null;
+  excluded_count: number | null;
+  error_reason: string | null;
+};
+
+export type PreflightIssue = {
+  code: string;
+  message: string;
+  field_path: string | null;
+};
+
+export type PreflightResult = {
+  ready: boolean;
+  errors: PreflightIssue[];
+  warnings: PreflightIssue[];
+};
+
+export type CampaignReview = {
+  campaign: CampaignDetail;
+  sequence: CampaignSequence | null;
+  mailboxes: CampaignMailbox[];
+  settings: CampaignSettings | null;
+  audience: CampaignAudience | null;
+  preflight: PreflightResult;
+};

@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.modules.suppression.checks import is_address_suppressed
 
 
 def _safe_set_role(session: Session, role_name: str) -> None:
@@ -514,7 +515,10 @@ class MailboxRepository:
         # requires Postgres to check UPDATE privilege at parse time. DO
         # NOTHING avoids needing that grant at all; the fallback SELECT below
         # (app_api already has SELECT) fetches the id on conflict.
-        params = {"workspace_id": str(workspace_id), "canonical_address": canonical_email}
+        params = {
+            "workspace_id": str(workspace_id),
+            "canonical_address": canonical_email,
+        }
         insert_query = text(
             """
             INSERT INTO public.recipient_addresses (
@@ -541,21 +545,7 @@ class MailboxRepository:
         return UUID(str(addr_id))
 
     def is_address_suppressed(self, workspace_id: UUID, address_id: UUID) -> bool:
-        query = text(
-            """
-            SELECT 1
-            FROM public.suppressions
-            WHERE workspace_id = :workspace_id
-              AND address_id = :address_id
-              AND status = 'ACTIVE'
-            LIMIT 1
-            """
-        )
-        res = self.session.execute(
-            query,
-            {"workspace_id": str(workspace_id), "address_id": str(address_id)},
-        ).first()
-        return res is not None
+        return is_address_suppressed(self.session, workspace_id, address_id)
 
     # -------------------------------------------------------------------------
     # Command Receipts & Controlled Test Send

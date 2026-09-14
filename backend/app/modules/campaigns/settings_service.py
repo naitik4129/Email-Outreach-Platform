@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from sqlalchemy import RowMapping
+from sqlalchemy.orm import Session
+
+from app.api.deps import WorkspaceContext
+from app.core.errors import AppError
+from app.modules.campaigns.repository import CampaignRepository
+from app.modules.campaigns.schemas import CampaignSettingsCreateIn, CampaignSettingsOut
+
+# Platform-wide safety ceiling for a single campaign's daily send volume.
+# Campaign settings may never request more than this regardless of what the
+# user configures; individual mailbox/workspace/provider caps are enforced
+# separately by the rate-limiting layer, not here.
+_PLATFORM_MAX_DAILY_LIMIT = 100_000
+
+
+def _weekdays_to_bitmask(weekdays: list[int]) -> int:
+    # Mon = bit 0 .. Sun = bit 6 (ISO weekday order).
+    mask = 0
+    for day in weekdays:
+        mask |= 1 << (day - 1)
+    return mask
+
+
+def _bitmask_to_weekdays(weekday_set: int) -> list[int]:
+    return [day for day in range(1, 8) if weekday_set & (1 << (day - 1))]
+
+
+def _validate_timezone(tz_name: str) -> str:
+    try:
+        ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise AppError(
+            "validation_error",
+            f"'{tz_name}' is not a valid IANA timezone name",
+            status_code=422,
+        ) from exc
+    return tz_name
+
+
+class CampaignSettingsService:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.repo = CampaignRepository(session)
+
+    def _require_draft_campaign(
+        self, context: WorkspaceContext, campaign_id: UUID
+    ) -> RowMapping:
+        campaign = self.repo.get_campaign(
+            workspace_id=context.workspace_id, campaign_id=campaign_id
+        )
+        if campaign is None:
+            raise AppError("not_found", "Campaign not found", status_code=404)
+        if campaign["status"] != "DRAFT":
+            raise AppError(
+                "state_conflict",
+                "Schedule/settings can only change while the campaign is DRAFT",
+                status_code=409,
+            )
+        return campaign
+
+    def get_current(
+        self, context: WorkspaceContext, campaign_id: UUID
+    ) -> CampaignSettingsOut | None:
+        campaign = self.repo.get_campaign(
+            workspace_id=context.workspace_id, campaign_id=campaign_id
+        )
+        if campaign is None:
+            raise AppError("not_found", "Campaign not found", status_code=404)
+        if campaign["current_settings_id"] is None:
+            return None
+        row = self.repo.get_settings_version(
+            workspace_id=context.workspace_id,
+            settings_id=UUID(str(campaign["current_settings_id"])),
+        )
+        return self._to_out(row) if row is not None else None
+
+    def list_history(
+        self, context: WorkspaceContext, campaign_id: UUID
+    ) -> Sequence[CampaignSettingsOut]:
+        campaign = self.repo.get_campaign(
+            workspace_id=context.workspace_id, campaign_id=campaign_id
+        )
+        if campaign is None:
+            raise AppError("not_found", "Campaign not found", status_code=404)
+        rows = self.repo.list_settings_versions(
+            workspace_id=context.workspace_id, campaign_id=campaign_id
+        )
+        return [self._to_out(row) for row in rows]
+
+    def create_settings_version(
+        self,
+        context: WorkspaceContext,
+        campaign_id: UUID,
+        payload: CampaignSettingsCreateIn,
+    ) -> CampaignSettingsOut:
+        self._require_draft_campaign(context, campaign_id)
+        clean_tz = _validate_timezone(payload.timezone)
+        if (
+            payload.daily_limit is not None
+            and payload.daily_limit > _PLATFORM_MAX_DAILY_LIMIT
+        ):
+            raise AppError(
+                "validation_error",
+                f"daily_limit must not exceed the platform maximum of "
+                f"{_PLATFORM_MAX_DAILY_LIMIT}",
+                status_code=422,
+            )
+        row = self.repo.create_settings_version(
+            workspace_id=context.workspace_id,
+            campaign_id=campaign_id,
+            timezone=clean_tz,
+            weekday_set=_weekdays_to_bitmask(payload.weekdays),
+            window_start_local=payload.window_start_local,
+            window_end_local=payload.window_end_local,
+            daily_limit=payload.daily_limit,
+        )
+        return self._to_out(row)
+
+    def _to_out(self, row: RowMapping) -> CampaignSettingsOut:
+        return CampaignSettingsOut(
+            id=row["id"],
+            campaign_id=row["campaign_id"],
+            revision=row["revision"],
+            timezone=row["timezone"],
+            weekdays=_bitmask_to_weekdays(row["weekday_set"]),
+            window_start_local=row["window_start_local"],
+            window_end_local=row["window_end_local"],
+            daily_limit=row["daily_limit"],
+            created_at=row["created_at"],
+        )

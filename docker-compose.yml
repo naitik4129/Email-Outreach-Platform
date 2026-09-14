@@ -71,7 +71,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=maintenance,imports",
+        "--queues=maintenance,imports,campaigns",
       ]
     depends_on:
       redis:
