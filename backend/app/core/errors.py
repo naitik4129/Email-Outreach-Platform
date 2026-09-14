@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -10,8 +9,6 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.request_context import get_request_id
-
-logger = logging.getLogger(__name__)
 
 
 class AppError(Exception):
@@ -92,21 +89,27 @@ def install_error_handlers(app: FastAPI) -> None:
             ),
         )
 
-    @app.exception_handler(Exception)
-    async def unexpected_error_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
-        request_id = get_request_id() or getattr(request.state, "request_id", None)
-        logger.exception(
-            "Unexpected application error",
-            extra={"request_id": request_id},
-        )
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=error_body(
-                "internal_error",
-                "Internal server error",
-                request_id=request_id,
-                details=None,
-            ),
-        )
+    # Deliberately NOT @app.exception_handler(Exception): FastAPI/Starlette
+    # pulls any handler registered under the Exception/500 key out of
+    # ExceptionMiddleware and hands it to ServerErrorMiddleware instead (see
+    # fastapi.applications.FastAPI.build_middleware_stack), which sits
+    # OUTSIDE every app.add_middleware(...) middleware -- CORSMiddleware
+    # included. A response built there never passes back through
+    # CORSMiddleware, so the browser sees no Access-Control-Allow-Origin
+    # header and reports a misleading "blocked by CORS policy" error instead
+    # of the real 500, no matter how correctly CORS is configured. The fix is
+    # unhandled_exception_middleware (app/core/middleware.py), a normal
+    # app.middleware("http") handler that runs inside CORSMiddleware and
+    # produces this exact same response shape.
+
+
+def unhandled_exception_response(request_id: str | None) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_body(
+            "internal_error",
+            "Internal server error",
+            request_id=request_id,
+            details=None,
+        ),
+    )

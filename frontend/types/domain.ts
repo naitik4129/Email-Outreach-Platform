@@ -283,3 +283,75 @@ export type TemplatePreviewResult = {
   detected_variables: string[];
   missing_variables: string[];
 };
+
+export type MailboxConnectionState =
+  | "CONNECTED"
+  | "DISCONNECTED"
+  | "RECONNECT_REQUIRED";
+
+export type MailboxHealthState = "HEALTHY" | "DEGRADED" | "UNKNOWN";
+
+export type MailboxPolicyState = "ENABLED" | "DISABLED" | "RESTRICTED";
+
+export type MailboxListItem = {
+  id: string;
+  provider: "GMAIL" | "MICROSOFT" | "SMTP";
+  email_address: string;
+  sender_display_name: string | null;
+  connection_state: MailboxConnectionState;
+  health_state: MailboxHealthState;
+  policy_state: MailboxPolicyState;
+  policy_reason: string | null;
+  circuit_state: string;
+  sync_state: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MailboxDetail = {
+  id: string;
+  provider: "GMAIL" | "MICROSOFT" | "SMTP";
+  email_address: string;
+  sender_display_name: string | null;
+  signature_html: string | null;
+  connection_state: MailboxConnectionState;
+  health_state: MailboxHealthState;
+  policy_state: MailboxPolicyState;
+  policy_reason: string | null;
+  circuit_state: string;
+  sync_state: string;
+  blocked_until: string | null;
+  pending_safety_count: number;
+  current_connection_generation: number;
+  config_version: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailConnectStartResult = {
+  authorization_url: string;
+  expires_at: string;
+};
+
+export type GmailConnectCompleteResult = {
+  mailbox_id: string;
+  provider: string;
+  email_address: string;
+  connection_state: MailboxConnectionState;
+  health_state: MailboxHealthState;
+};
+
+export type MailboxTestSendResult = {
+  message_id: string;
+  status: "SENT" | "FAILED" | "UNKNOWN_OUTCOME";
+  recipient_email: string;
+  provider_message_id?: string | null;
+  accepted_at?: string | null;
+  error_message?: string | null;
+};
+
+export type DisconnectMailboxResult = {
+  mailbox_id: string;
+  connection_state: "DISCONNECTED";
+};

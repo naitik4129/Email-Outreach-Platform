@@ -174,6 +174,17 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         {"user_id": user_id},
     ).scalars().all()
 
+    # Deletion order below must respect FK RESTRICT dependencies (children
+    # before parents) or Postgres rejects the delete outright -- this table
+    # is deliberately children-first, not alphabetical/historical order:
+    #   message_attempts -> messages -> controlled_send_authorizations
+    #   -> suppressions -> command_receipts/recipient_addresses
+    #   -> mailbox_connections/oauth_flows -> mailboxes
+    # A stale ordering here previously aborted the whole per-user cleanup
+    # transaction partway through (whichever table it reached first that
+    # still had a live child row), silently leaving orphaned workspaces/
+    # mailboxes behind in the shared Supabase test project -- including one
+    # that collided with a later run via mailboxes_provider_account_global_key.
     for workspace_id in workspace_ids:
         session.execute(
             text(
@@ -188,6 +199,29 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         )
         session.execute(
             text("DELETE FROM lead_lists WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM message_attempts WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM messages WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM controlled_send_authorizations "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM suppressions WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM command_receipts WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )
         session.execute(
@@ -207,6 +241,38 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         )
         session.execute(
             text("DELETE FROM templates WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM oauth_flows WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        # mailboxes and mailbox_connections reference each other
+        # (mailboxes_current_connection_fkey vs. mailbox_connections_mailbox_
+        # fkey), so neither can simply be deleted first. Release mailboxes'
+        # pointer into mailbox_connections before deleting either: null out
+        # connected_generation (composite FK on connected_generation is not
+        # enforced when it's NULL) and bump current_connection_generation
+        # past it, satisfying app_guard_mailbox_generation the same way the
+        # application's own disconnect flow does.
+        session.execute(
+            text(
+                """
+                UPDATE mailboxes
+                SET connection_state = 'DISCONNECTED',
+                    connected_generation = NULL,
+                    current_connection_generation = current_connection_generation + 1
+                WHERE workspace_id = :workspace_id
+                """
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM mailbox_connections WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM mailboxes WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )
         session.execute(

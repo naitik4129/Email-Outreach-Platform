@@ -17,6 +17,7 @@ import {
   UploadCloud,
   Ban,
   FileText,
+  Mail,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import { useWorkspace, WorkspaceProvider } from "@/lib/workspace-context";
 
 const navigation = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/mailboxes", label: "Mailboxes", icon: Mail },
   { href: "/app/leads", label: "Leads", icon: Contact },
   { href: "/app/templates", label: "Templates", icon: FileText },
   { href: "/app/leads/imports", label: "Imports", icon: UploadCloud },

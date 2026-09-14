@@ -53,6 +53,10 @@ def make_session_factory(settings: Settings) -> sessionmaker[Session]:
     )
 
 
+def SessionLocal() -> Session:
+    return make_session_factory(Settings.current())()
+
+
 @contextmanager
 def session_scope(settings: Settings) -> Iterator[Session]:
     session = make_session_factory(settings)()

@@ -5,14 +5,17 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 type FieldProps = {
-  id: string;
+  id?: string;
   label: string;
+  required?: boolean;
   error?: string;
   children: React.ReactElement<{ id?: string; "aria-invalid"?: boolean; "aria-describedby"?: string }>;
   className?: string;
 };
 
-export function Field({ id, label, error, children, className }: FieldProps) {
+export function Field({ id: explicitId, label, required, error, children, className }: FieldProps) {
+  const generatedId = React.useId();
+  const id = explicitId || children.props.id || generatedId;
   const errorId = `${id}-error`;
   const child = React.cloneElement(children, {
     id,
@@ -22,7 +25,10 @@ export function Field({ id, label, error, children, className }: FieldProps) {
 
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label htmlFor={id}>{label}</Label>
+      <Label htmlFor={id}>
+        {label}
+        {required && <span className="text-red-500 ml-0.5" aria-hidden="true">*</span>}
+      </Label>
       {child}
       {error ? (
         <p

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import cast
@@ -10,6 +11,8 @@ from jwt import PyJWKClient
 
 from app.core.config import Settings
 from app.core.errors import AppError
+
+logger = logging.getLogger(__name__)
 
 _UNAUTHENTICATED = "unauthenticated"
 
@@ -63,6 +66,12 @@ def _decode(token: str, settings: Settings) -> dict[str, object]:
                 ),
             )
         except jwt.PyJWTError as exc:
+            logger.warning(
+                "Rejected HS256 access token: %s (issuer=%s audience=%s)",
+                type(exc).__name__,
+                settings.supabase_jwt_issuer,
+                settings.supabase_jwt_audience,
+            )
             raise _unauthenticated("Invalid or expired session") from exc
 
     if algorithm in _ASYMMETRIC_ALGORITHMS:
@@ -82,8 +91,22 @@ def _decode(token: str, settings: Settings) -> dict[str, object]:
                 ),
             )
         except jwt.PyJWTError as exc:
+            logger.warning(
+                "Rejected %s access token: %s (issuer=%s audience=%s jwks_url=%s)",
+                algorithm,
+                type(exc).__name__,
+                settings.supabase_jwt_issuer,
+                settings.supabase_jwt_audience,
+                settings.supabase_jwks_url,
+            )
             raise _unauthenticated("Invalid or expired session") from exc
         except Exception as exc:  # JWKS transport/lookup failures
+            logger.warning(
+                "Unable to fetch/match a JWKS signing key from %s: %s: %s",
+                settings.supabase_jwks_url,
+                type(exc).__name__,
+                exc,
+            )
             raise _unauthenticated("Unable to verify session") from exc
 
     raise _unauthenticated("Unsupported token signing algorithm")

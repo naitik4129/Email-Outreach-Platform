@@ -77,3 +77,33 @@ def test_unexpected_error_shape() -> None:
         }
     }
 
+
+def test_unexpected_error_still_carries_cors_headers() -> None:
+    """An unhandled exception must still pass back through CORSMiddleware.
+
+    Regression test for a real incident: a plain @app.exception_handler
+    (Exception) is pulled out of Starlette's ExceptionMiddleware and run by
+    ServerErrorMiddleware instead (see fastapi.applications.FastAPI.
+    build_middleware_stack), which sits OUTSIDE every app.add_middleware(...)
+    middleware including CORSMiddleware. A response built there never gets
+    Access-Control-Allow-Origin, so the browser reports a misleading "blocked
+    by CORS policy" error instead of surfacing the actual 500 -- exactly what
+    happened when an unrelated bug (a DB permission error) crashed a request
+    from the frontend. See app/core/errors.py and app/core/middleware.py
+    (unhandled_exception_middleware) for the fix.
+    """
+    app: FastAPI = create_app()
+
+    @app.get("/probe")
+    def probe() -> None:
+        raise RuntimeError("secret internals")
+
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.get(
+        "/probe",
+        headers={"Origin": "http://localhost:3000"},
+    )
+
+    assert response.status_code == 500
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+

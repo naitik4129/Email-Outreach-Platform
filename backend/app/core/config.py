@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     import_lease_ttl_seconds: int = Field(default=120, ge=1)
     import_recovery_poll_seconds: float = Field(default=30.0, gt=0)
 
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/api/v1/mailboxes/connect/gmail/callback"
+    mailbox_encryption_key: str = ""
+    mailbox_encryption_key_id: str = "v1"
+    frontend_base_url: str = "http://localhost:3000"
+
     @field_validator("log_level", mode="before")
     @classmethod
     def uppercase_log_level(cls, value: str) -> str:
