@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext, get_db, get_workspace_context
 from app.core.permissions import require_permission
+from app.modules.campaigns.activation_service import CampaignActivationService
 from app.modules.campaigns.audience_service import AudienceService
 from app.modules.campaigns.mailbox_service import CampaignMailboxService
 from app.modules.campaigns.preflight import PreflightService
 from app.modules.campaigns.review import ReviewService
 from app.modules.campaigns.schemas import (
+    ActivateIn,
     AudienceOut,
     AudienceSelectIn,
     CampaignArchiveIn,
@@ -22,11 +24,14 @@ from app.modules.campaigns.schemas import (
     CampaignMailboxesReorderIn,
     CampaignMailboxOut,
     CampaignPage,
+    CampaignPlanningOut,
     CampaignReviewOut,
     CampaignSettingsCreateIn,
     CampaignSettingsOut,
     CampaignUpdateIn,
+    PauseIn,
     PreflightResult,
+    ResumeIn,
     SequenceOut,
     SequenceStepCreateIn,
     SequenceStepOut,
@@ -117,6 +122,55 @@ def duplicate_campaign(
     db: Session = Depends(get_db),
 ) -> CampaignDetailOut:
     return CampaignService(db).duplicate_campaign(context, campaign_id, payload)
+
+
+# ---------------------------------------------------------------------------
+# Activation / planning
+# ---------------------------------------------------------------------------
+
+
+@router.post("/campaigns/{campaign_id}/activate", response_model=CampaignDetailOut)
+def activate_campaign(
+    campaign_id: UUID,
+    payload: ActivateIn,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=1, max_length=200
+    ),
+    context: WorkspaceContext = Depends(require_permission("campaigns.execute")),
+    db: Session = Depends(get_db),
+) -> CampaignDetailOut:
+    return CampaignActivationService(db).activate(
+        context, campaign_id, payload, idempotency_key
+    )
+
+
+@router.post("/campaigns/{campaign_id}/pause", response_model=CampaignDetailOut)
+def pause_campaign(
+    campaign_id: UUID,
+    payload: PauseIn,
+    context: WorkspaceContext = Depends(require_permission("campaigns.execute")),
+    db: Session = Depends(get_db),
+) -> CampaignDetailOut:
+    return CampaignActivationService(db).pause(context, campaign_id, payload)
+
+
+@router.post("/campaigns/{campaign_id}/resume", response_model=CampaignDetailOut)
+def resume_campaign(
+    campaign_id: UUID,
+    payload: ResumeIn,
+    context: WorkspaceContext = Depends(require_permission("campaigns.execute")),
+    db: Session = Depends(get_db),
+) -> CampaignDetailOut:
+    return CampaignActivationService(db).resume(context, campaign_id, payload)
+
+
+@router.get("/campaigns/{campaign_id}/planning", response_model=CampaignPlanningOut)
+def get_campaign_planning(
+    campaign_id: UUID,
+    context: WorkspaceContext = Depends(get_workspace_context),
+    db: Session = Depends(get_db),
+) -> CampaignPlanningOut:
+    return CampaignActivationService(db).get_planning_status(context, campaign_id)
 
 
 # ---------------------------------------------------------------------------

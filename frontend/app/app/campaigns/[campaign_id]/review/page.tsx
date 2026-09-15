@@ -2,17 +2,24 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Loader2, Lock } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, CheckCircle2, Loader2, Lock, Rocket } from "lucide-react";
+import { useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ProviderBadge } from "@/components/mailboxes/provider-badge";
 import { ApiError } from "@/lib/api-client";
-import { getReview } from "@/lib/campaigns-api";
+import {
+  activateCampaign,
+  getCampaignPlanning,
+  getReview,
+  pauseCampaign,
+  resumeCampaign,
+} from "@/lib/campaigns-api";
 import { canExecuteCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
-import type { PreflightIssue } from "@/types/domain";
+import type { CampaignPlanning, PreflightIssue } from "@/types/domain";
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -65,11 +72,76 @@ function IssueList({
   );
 }
 
+function planningIsNonTerminal(planning: CampaignPlanning | undefined): boolean {
+  if (!planning) return false;
+  if (planning.planning_status === "PENDING") return true;
+  for (const job of [planning.enroll, planning.render]) {
+    if (job && (job.state === "PENDING" || job.state === "PROCESSING")) return true;
+  }
+  return false;
+}
+
+function PlanningStatusPanel({ planning }: { planning: CampaignPlanning }) {
+  const jobLabel = (label: string, job: CampaignPlanning["enroll"]) => {
+    if (!job) return null;
+    return (
+      <div className="flex items-center justify-between text-xs text-slate-600">
+        <span>{label}</span>
+        <span>
+          {job.state === "PROCESSING" || job.state === "PENDING"
+            ? `${job.processed_count}${job.total_count != null ? `/${job.total_count}` : ""}`
+            : job.state}
+        </span>
+      </div>
+    );
+  };
+
+  const failed = planning.enroll?.state === "FAILED" || planning.render?.state === "FAILED";
+
+  return (
+    <div
+      className={`rounded-lg border p-4 ${
+        failed
+          ? "border-red-200 bg-red-50"
+          : planning.planning_status === "READY"
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-sky-200 bg-sky-50"
+      }`}
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        {planning.planning_status === "READY" ? (
+          <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        ) : failed ? (
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+        ) : (
+          <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
+        )}
+        {failed
+          ? "Planning failed"
+          : planning.planning_status === "READY"
+            ? "Message plan ready"
+            : "Preparing campaign..."}
+      </div>
+      <div className="mt-2 space-y-1">
+        {jobLabel("Enrolling recipients", planning.enroll)}
+        {jobLabel("Rendering messages", planning.render)}
+      </div>
+      {failed && (planning.enroll?.error_reason || planning.render?.error_reason) && (
+        <p className="mt-2 text-xs text-red-700">
+          {planning.enroll?.error_reason || planning.render?.error_reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function CampaignReviewPage() {
   const params = useParams<{ campaign_id: string }>();
   const campaignId = params.campaign_id;
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const mayExecute = canExecuteCampaign(activeWorkspace?.role_code);
+  const queryClient = useQueryClient();
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const reviewQuery = useQuery({
     queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId, "review"],
@@ -79,6 +151,72 @@ export default function CampaignReviewPage() {
         : Promise.reject(new Error("No active workspace")),
     enabled: Boolean(activeWorkspaceId && campaignId),
     refetchOnWindowFocus: true,
+  });
+
+  const campaignStatus = reviewQuery.data?.campaign.status;
+  const isActivated = Boolean(
+    campaignStatus && campaignStatus !== "DRAFT" && campaignStatus !== "ARCHIVED",
+  );
+
+  const planningQuery = useQuery({
+    queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId, "planning"],
+    queryFn: () =>
+      activeWorkspaceId && campaignId
+        ? getCampaignPlanning(activeWorkspaceId, campaignId)
+        : Promise.reject(new Error("No active workspace")),
+    enabled: Boolean(activeWorkspaceId && campaignId && isActivated),
+    refetchInterval: (query) => (planningIsNonTerminal(query.state.data) ? 4000 : false),
+  });
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({
+      queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId],
+    });
+  };
+
+  const activateMutation = useMutation({
+    mutationFn: () => {
+      if (!activeWorkspaceId || !campaignId || !reviewQuery.data)
+        throw new Error("Not ready");
+      return activateCampaign(activeWorkspaceId, campaignId, {
+        expected_version: reviewQuery.data.campaign.version,
+      });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      invalidateAll();
+    },
+    onError: (err) => setActionError(errorMessage(err)),
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: () => {
+      if (!activeWorkspaceId || !campaignId || !reviewQuery.data)
+        throw new Error("Not ready");
+      return pauseCampaign(activeWorkspaceId, campaignId, {
+        expected_version: reviewQuery.data.campaign.version,
+      });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      invalidateAll();
+    },
+    onError: (err) => setActionError(errorMessage(err)),
+  });
+
+  const resumeMutation = useMutation({
+    mutationFn: () => {
+      if (!activeWorkspaceId || !campaignId || !reviewQuery.data)
+        throw new Error("Not ready");
+      return resumeCampaign(activeWorkspaceId, campaignId, {
+        expected_version: reviewQuery.data.campaign.version,
+      });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      invalidateAll();
+    },
+    onError: (err) => setActionError(errorMessage(err)),
   });
 
   if (reviewQuery.isLoading) {
@@ -94,9 +232,12 @@ export default function CampaignReviewPage() {
 
   const { campaign, sequence, mailboxes, settings, audience, preflight } =
     reviewQuery.data;
+  const canStart = mayExecute && campaign.status === "DRAFT" && preflight.ready;
 
   return (
     <div className="max-w-2xl space-y-6">
+      {actionError && <Alert variant="error">{actionError}</Alert>}
+
       <div>
         <h2 className="text-lg font-semibold text-slate-900">Review</h2>
         <p className="text-sm text-slate-500">
@@ -123,7 +264,7 @@ export default function CampaignReviewPage() {
             <AlertTriangle className="h-4 w-4" />
           )}
           {preflight.ready
-            ? "Ready for activation (Phase 8)"
+            ? "Ready to activate"
             : `${preflight.errors.length} item${
                 preflight.errors.length === 1 ? "" : "s"
               } to resolve`}
@@ -192,16 +333,94 @@ export default function CampaignReviewPage() {
         )}
       </section>
 
+      {isActivated && planningQuery.data && (
+        <PlanningStatusPanel planning={planningQuery.data} />
+      )}
+
       <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
-        <Button disabled className="cursor-not-allowed opacity-60" title="Coming in a future phase">
-          <Lock className="mr-1.5 h-4 w-4" />
-          Start Campaign
-        </Button>
-        <p className="mt-2 text-xs text-slate-500">
-          Campaign activation isn&apos;t available in this phase. Configuration
-          stays safely in {campaign.status}
-          {mayExecute ? "" : " -- only Managers and above can activate once available"}.
-        </p>
+        {campaign.status === "DRAFT" ? (
+          <>
+            <Button
+              disabled={!canStart || activateMutation.isPending}
+              className={!canStart ? "cursor-not-allowed opacity-60" : undefined}
+              title={
+                !mayExecute
+                  ? "Only Managers and above can activate a campaign"
+                  : !preflight.ready
+                    ? "Resolve the items above before activating"
+                    : undefined
+              }
+              onClick={() => {
+                if (!canStart || activateMutation.isPending) return;
+                if (
+                  window.confirm(
+                    `Activate "${campaign.name}"? This freezes the sequence, senders and ` +
+                      "audience and creates a durable message plan. No email is sent by " +
+                      "this action, and configuration becomes restricted from editing.",
+                  )
+                ) {
+                  activateMutation.mutate();
+                }
+              }}
+            >
+              {activateMutation.isPending ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : canStart ? (
+                <Rocket className="mr-1.5 h-4 w-4" />
+              ) : (
+                <Lock className="mr-1.5 h-4 w-4" />
+              )}
+              Start Campaign
+            </Button>
+            <p className="mt-2 text-xs text-slate-500">
+              Starting activates this campaign and begins durable message planning.
+              No email is sent as part of activation.
+              {mayExecute
+                ? ""
+                : " Only Managers and above can activate this campaign."}
+            </p>
+          </>
+        ) : (
+          <div className="flex items-center gap-2">
+            {(campaign.status === "RUNNING" || campaign.status === "SCHEDULED") &&
+              mayExecute && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pauseMutation.isPending}
+                  onClick={() => {
+                    if (window.confirm(`Pause "${campaign.name}"?`)) {
+                      pauseMutation.mutate();
+                    }
+                  }}
+                >
+                  {pauseMutation.isPending && (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  )}
+                  Pause
+                </Button>
+              )}
+            {campaign.status === "PAUSED" && mayExecute && (
+              <Button
+                size="sm"
+                disabled={resumeMutation.isPending}
+                onClick={() => {
+                  if (window.confirm(`Resume "${campaign.name}"?`)) {
+                    resumeMutation.mutate();
+                  }
+                }}
+              >
+                {resumeMutation.isPending && (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                )}
+                Resume
+              </Button>
+            )}
+            <p className="text-xs text-slate-500">
+              Campaign is {campaign.status}. Configuration is restricted while activated.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

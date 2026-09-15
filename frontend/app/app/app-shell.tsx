@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Loader2,
   LogOut,
+  Send,
   Settings,
   UserCircle,
   Users,
@@ -27,6 +28,7 @@ import { useWorkspace, WorkspaceProvider } from "@/lib/workspace-context";
 
 const navigation = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/campaigns", label: "Campaigns", icon: Send },
   { href: "/app/mailboxes", label: "Mailboxes", icon: Mail },
   { href: "/app/leads", label: "Leads", icon: Contact },
   { href: "/app/templates", label: "Templates", icon: FileText },

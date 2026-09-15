@@ -1164,6 +1164,298 @@ class CampaignRepository:
         return {"accepted": int(row["accepted"]), "excluded": int(row["excluded"])}
 
     # -------------------------------------------------------------------
+    # Activation (app_api-permitted parts only -- ENROLL/RENDER planning
+    # itself is owned by CampaignWorkerRepository under app_worker_general)
+    # -------------------------------------------------------------------
+
+    def freeze_sequence(
+        self, *, workspace_id: UUID, sequence_id: UUID, content_digest: str
+    ) -> RowMapping | None:
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    UPDATE campaign_sequences
+                    SET status = 'FROZEN',
+                        frozen_at = pg_catalog.transaction_timestamp(),
+                        content_digest = :content_digest
+                    WHERE workspace_id = :workspace_id AND id = :sequence_id
+                      AND status = 'DRAFT'
+                    RETURNING *
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "sequence_id": str(sequence_id),
+                    "content_digest": content_digest,
+                },
+            )
+            .mappings()
+            .first()
+        )
+        return row
+
+    def activate_campaign(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        expected_version: int,
+        activation_id: UUID,
+        activated_sequence_id: UUID,
+        activated_audience_id: UUID,
+        start_at: Any,
+        target_status: str,
+        actor_id: UUID,
+    ) -> RowMapping | None:
+        """Caller must already hold a FOR UPDATE lock on this campaign and
+        have validated status == 'DRAFT' -- this only guards on version,
+        exactly like update_campaign/archive_campaign."""
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    UPDATE campaigns
+                    SET activation_id = :activation_id,
+                        activated_sequence_id = :activated_sequence_id,
+                        activated_audience_id = :activated_audience_id,
+                        start_at = :start_at,
+                        status = :target_status,
+                        planning_status = 'PENDING'
+                    WHERE workspace_id = :workspace_id AND id = :campaign_id
+                      AND version = :expected_version
+                    RETURNING *
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "expected_version": expected_version,
+                    "activation_id": str(activation_id),
+                    "activated_sequence_id": str(activated_sequence_id),
+                    "activated_audience_id": str(activated_audience_id),
+                    "start_at": start_at,
+                    "target_status": target_status,
+                },
+            )
+            .mappings()
+            .first()
+        )
+        if row is not None:
+            self._record_audit_event(
+                workspace_id=workspace_id,
+                actor_id=actor_id,
+                action="campaign.activate",
+                target_id=campaign_id,
+                after_state={
+                    "activation_id": str(activation_id),
+                    "status": target_status,
+                },
+            )
+        return row
+
+    def update_campaign_status(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        expected_version: int,
+        target_status: str,
+        actor_id: UUID,
+        action: str,
+    ) -> RowMapping | None:
+        """Caller must already hold a FOR UPDATE lock and have validated the
+        current status allows this transition -- mirrors activate_campaign's
+        version-only guard. Used by pause/resume."""
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    UPDATE campaigns
+                    SET status = :target_status
+                    WHERE workspace_id = :workspace_id AND id = :campaign_id
+                      AND version = :expected_version
+                    RETURNING *
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "expected_version": expected_version,
+                    "target_status": target_status,
+                },
+            )
+            .mappings()
+            .first()
+        )
+        if row is not None:
+            self._record_audit_event(
+                workspace_id=workspace_id,
+                actor_id=actor_id,
+                action=action,
+                target_id=campaign_id,
+                after_state={"status": target_status},
+            )
+        return row
+
+    def insert_planning_job(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        activation_id: UUID,
+        sequence_id: UUID,
+        phase: str,
+        total_count: int,
+    ) -> RowMapping:
+        job_id = uuid.uuid4()
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    INSERT INTO campaign_planning_jobs
+                        (id, workspace_id, campaign_id, activation_id, sequence_id,
+                         phase, state, total_count, next_due_at)
+                    VALUES
+                        (:id, :workspace_id, :campaign_id, :activation_id, :sequence_id,
+                         :phase, 'PENDING', :total_count,
+                         pg_catalog.transaction_timestamp())
+                    RETURNING *
+                    """
+                ),
+                {
+                    "id": str(job_id),
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "activation_id": str(activation_id),
+                    "sequence_id": str(sequence_id),
+                    "phase": phase,
+                    "total_count": total_count,
+                },
+            )
+            .mappings()
+            .one()
+        )
+        return row
+
+    def get_planning_jobs(
+        self, *, workspace_id: UUID, campaign_id: UUID, activation_id: UUID
+    ) -> Sequence[RowMapping]:
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT * FROM campaign_planning_jobs
+                    WHERE workspace_id = :workspace_id AND campaign_id = :campaign_id
+                      AND activation_id = :activation_id
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "activation_id": str(activation_id),
+                },
+            )
+            .mappings()
+            .all()
+        )
+        return rows
+
+    def get_command_receipt(
+        self,
+        *,
+        workspace_id: UUID,
+        actor_id: UUID,
+        operation: str,
+        request_key: str,
+    ) -> RowMapping | None:
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT * FROM command_receipts
+                    WHERE workspace_id = :workspace_id AND actor_id = :actor_id
+                      AND operation = :operation AND request_key = :request_key
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "actor_id": str(actor_id),
+                    "operation": operation,
+                    "request_key": request_key,
+                },
+            )
+            .mappings()
+            .first()
+        )
+        return row
+
+    def insert_pending_command_receipt(
+        self,
+        *,
+        workspace_id: UUID,
+        actor_id: UUID,
+        operation: str,
+        request_key: str,
+        payload_hash: str,
+        resource_type: str,
+        resource_id: UUID,
+    ) -> RowMapping:
+        """May raise sqlalchemy.exc.IntegrityError on
+        command_receipts_identity_key if a truly simultaneous request with
+        the same idempotency key is inserting concurrently -- callers must
+        catch that and re-SELECT via get_command_receipt instead of treating
+        it as a generic failure."""
+        receipt_id = uuid.uuid4()
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    INSERT INTO command_receipts
+                        (id, workspace_id, actor_id, operation, request_key,
+                         payload_hash, resource_type, resource_id, status, expires_at)
+                    VALUES
+                        (:id, :workspace_id, :actor_id, :operation, :request_key,
+                         :payload_hash, :resource_type, :resource_id, 'PENDING',
+                         pg_catalog.transaction_timestamp() + interval '7 days')
+                    RETURNING *
+                    """
+                ),
+                {
+                    "id": str(receipt_id),
+                    "workspace_id": str(workspace_id),
+                    "actor_id": str(actor_id),
+                    "operation": operation,
+                    "request_key": request_key,
+                    "payload_hash": payload_hash,
+                    "resource_type": resource_type,
+                    "resource_id": str(resource_id),
+                },
+            )
+            .mappings()
+            .one()
+        )
+        return row
+
+    def complete_command_receipt(
+        self, *, workspace_id: UUID, receipt_id: UUID, response_version: int
+    ) -> None:
+        self.session.execute(
+            text(
+                """
+                UPDATE command_receipts
+                SET status = 'COMPLETED', response_version = :response_version
+                WHERE workspace_id = :workspace_id AND id = :receipt_id
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "receipt_id": str(receipt_id),
+                "response_version": response_version,
+            },
+        )
+
+    # -------------------------------------------------------------------
     # Audit
     # -------------------------------------------------------------------
 

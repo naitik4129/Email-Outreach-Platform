@@ -4,6 +4,7 @@ import type {
   CampaignDetail,
   CampaignMailbox,
   CampaignPage,
+  CampaignPlanning,
   CampaignReview,
   CampaignSequence,
   CampaignSettings,
@@ -317,6 +318,56 @@ export async function abandonAudience(
     `/campaigns/${campaignId}/audience/${audienceId}/abandon`,
   );
   await apiRequest<void>(path, { method: "POST" });
+}
+
+// --- Activation / planning ---
+
+export async function activateCampaign(
+  workspaceId: string,
+  campaignId: string,
+  payload: { expected_version: number; start_at?: string | null },
+) {
+  const path = workspacePath(workspaceId, `/campaigns/${campaignId}/activate`);
+  return (
+    await apiRequest<CampaignDetail>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      idempotencyKey: newIdempotencyKey(),
+    })
+  ).data;
+}
+
+export async function pauseCampaign(
+  workspaceId: string,
+  campaignId: string,
+  payload: { expected_version: number },
+) {
+  const path = workspacePath(workspaceId, `/campaigns/${campaignId}/pause`);
+  return (
+    await apiRequest<CampaignDetail>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function resumeCampaign(
+  workspaceId: string,
+  campaignId: string,
+  payload: { expected_version: number },
+) {
+  const path = workspacePath(workspaceId, `/campaigns/${campaignId}/resume`);
+  return (
+    await apiRequest<CampaignDetail>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function getCampaignPlanning(workspaceId: string, campaignId: string) {
+  const path = workspacePath(workspaceId, `/campaigns/${campaignId}/planning`);
+  return (await apiRequest<CampaignPlanning>(path)).data;
 }
 
 // --- Preflight / Review ---

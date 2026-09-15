@@ -544,3 +544,18 @@ export type CampaignReview = {
   audience: CampaignAudience | null;
   preflight: PreflightResult;
 };
+
+export type PlanningJobStatus = {
+  phase: "ENROLL" | "RENDER";
+  state: "PENDING" | "PROCESSING" | "READY" | "FAILED";
+  processed_count: number;
+  total_count: number | null;
+  error_reason: string | null;
+};
+
+export type CampaignPlanning = {
+  campaign_id: string;
+  planning_status: "PENDING" | "READY";
+  enroll: PlanningJobStatus | null;
+  render: PlanningJobStatus | null;
+};

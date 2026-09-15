@@ -254,3 +254,36 @@ class CampaignReviewOut(BaseModel):
     settings: CampaignSettingsOut | None = None
     audience: AudienceOut | None = None
     preflight: PreflightResult
+
+
+# ---------------------------------------------------------------------------
+# Activation / planning
+# ---------------------------------------------------------------------------
+
+
+class ActivateIn(BaseModel):
+    expected_version: int = Field(ge=1)
+    start_at: datetime | None = None
+
+
+class PauseIn(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class ResumeIn(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class PlanningJobStatusOut(BaseModel):
+    phase: str
+    state: str
+    processed_count: int
+    total_count: int | None = None
+    error_reason: str | None = None
+
+
+class CampaignPlanningOut(BaseModel):
+    campaign_id: UUID
+    planning_status: str
+    enroll: PlanningJobStatusOut | None = None
+    render: PlanningJobStatusOut | None = None
