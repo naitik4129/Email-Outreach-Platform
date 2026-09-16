@@ -899,7 +899,7 @@ class CampaignRepository:
             self.session.execute(
                 text(
                     """
-                    SELECT id, version FROM lead_lists
+                    SELECT id, membership_revision FROM lead_lists
                     WHERE workspace_id = :workspace_id AND id = ANY(:ids)
                       AND archived_at IS NULL
                     """
@@ -912,7 +912,9 @@ class CampaignRepository:
             .mappings()
             .all()
         )
-        return {UUID(str(row["id"])): int(row["version"]) for row in rows}
+        return {
+            UUID(str(row["id"])): int(row["membership_revision"]) for row in rows
+        }
 
     def get_existing_lead_ids(
         self, *, workspace_id: UUID, lead_ids: Sequence[UUID]

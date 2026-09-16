@@ -236,9 +236,9 @@ class ImportService:
         )
 
     def _dispatch_process_task(self, *, workspace_id: UUID, import_id: UUID) -> None:
-        from workers.celery_app import celery_app
+        from app.services.task_dispatch import get_task_producer
 
-        celery_app.send_task(
+        get_task_producer().send_task(
             "imports.process_chunk",
             kwargs={"workspace_id": str(workspace_id), "import_id": str(import_id)},
             queue="imports",

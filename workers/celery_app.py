@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ssl
+from urllib.parse import urlparse
+
 from app.core.config import Settings
 from app.core.logging import configure_logging
 from celery import Celery
@@ -9,18 +12,25 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
     settings = settings or Settings.current()
     configure_logging(settings, service_name="worker")
     celery = Celery("email_outreach", broker=settings.redis_url, backend=settings.redis_url)
-    celery.conf.update(
-        task_serializer="json",
-        accept_content=["json"],
-        result_serializer="json",
-        timezone="UTC",
-        enable_utc=True,
-        task_default_queue="maintenance",
-        task_routes={"infrastructure.smoke": {"queue": "maintenance"}},
-        worker_prefetch_multiplier=1,
-        task_acks_late=False,
-        broker_connection_retry_on_startup=True,
-    )
+    conf: dict[str, object] = {
+        "task_serializer": "json",
+        "accept_content": ["json"],
+        "result_serializer": "json",
+        "timezone": "UTC",
+        "enable_utc": True,
+        "task_default_queue": "maintenance",
+        "task_routes": {"infrastructure.smoke": {"queue": "maintenance"}},
+        "worker_prefetch_multiplier": 1,
+        "task_acks_late": False,
+        "broker_connection_retry_on_startup": True,
+    }
+    if urlparse(settings.redis_url).scheme == "rediss":
+        # kombu's redis transport does not verify TLS certs unless told to;
+        # require verification explicitly rather than relying on its default.
+        ssl_options = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+        conf["broker_use_ssl"] = ssl_options
+        conf["redis_backend_use_ssl"] = ssl_options
+    celery.conf.update(**conf)
     return celery
 
 

@@ -361,9 +361,9 @@ class CampaignActivationService:
     def _dispatch_enroll_task(
         self, *, workspace_id: UUID, campaign_id: UUID, activation_id: UUID
     ) -> None:
-        from workers.celery_app import celery_app
+        from app.services.task_dispatch import get_task_producer
 
-        celery_app.send_task(
+        get_task_producer().send_task(
             "campaigns.enroll_activation_chunk",
             kwargs={
                 "workspace_id": str(workspace_id),

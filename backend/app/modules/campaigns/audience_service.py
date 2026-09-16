@@ -239,9 +239,9 @@ class AudienceService:
         audience_id: UUID,
         abandon: bool = False,
     ) -> None:
-        from workers.celery_app import celery_app
+        from app.services.task_dispatch import get_task_producer
 
-        celery_app.send_task(
+        get_task_producer().send_task(
             "campaigns.capture_audience_chunk",
             kwargs={
                 "workspace_id": str(workspace_id),
