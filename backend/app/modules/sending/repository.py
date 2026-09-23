@@ -328,6 +328,29 @@ class SendingRepository:
             },
         )
 
+    def update_mailbox_blocked_until(
+        self,
+        *,
+        workspace_id: UUID,
+        mailbox_id: UUID,
+        blocked_until: datetime,
+    ) -> None:
+        _safe_set_role(self.session, "app_worker_send")
+        self.session.execute(
+            text(
+                """
+                UPDATE public.mailboxes
+                SET blocked_until = :blocked_until
+                WHERE workspace_id = :ws AND id = :mbid
+                """
+            ),
+            {
+                "ws": str(workspace_id),
+                "mbid": str(mailbox_id),
+                "blocked_until": blocked_until,
+            },
+        )
+
     def get_rate_control_status(self) -> dict[str, Any] | None:
         _safe_set_role(self.session, "app_worker_send")
         row = (
@@ -547,6 +570,7 @@ class SendingRepository:
         error_category: str | None = None,
         error_code: str | None = None,
         terminal_reason: str | None = None,
+        hold_reason: str | None = None,
         retry_count: int | None = None,
         next_retry_at: datetime | None = None,
         due_at: datetime | None = None,
@@ -595,6 +619,7 @@ class SendingRepository:
                     provider_message_id =
                         COALESCE(:provider_message_id, provider_message_id),
                     terminal_reason = :terminal_reason,
+                    hold_reason = :hold_reason,
                     retry_count = COALESCE(:retry_count, retry_count),
                     next_retry_at = :next_retry_at,
                     due_at = COALESCE(:due_at, due_at),
@@ -608,6 +633,7 @@ class SendingRepository:
                 "status": message_status,
                 "provider_message_id": provider_message_id,
                 "terminal_reason": terminal_reason,
+                "hold_reason": hold_reason,
                 "retry_count": retry_count,
                 "next_retry_at": next_retry_at,
                 "due_at": due_at,

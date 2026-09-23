@@ -70,9 +70,40 @@ class SchedulerRuntime:
         except Exception:
             logger.exception("Error during import recovery")
 
+        # 6. Recover stale in-flight executions (workers crashed/stuck in SENDING)
+        try:
+            with session_scope(self.settings) as session:
+                from app.modules.sending.recovery_service import RecoveryService
+
+                recovery_service = RecoveryService(session)
+                recovered_stale = recovery_service.recover_stale_executions()
+                if recovered_stale > 0:
+                    logger.info(
+                        f"Scheduler recovered {recovered_stale} stale SENDING messages to UNKNOWN_OUTCOME"
+                    )
+        except Exception:
+            logger.exception("Error during stale execution recovery")
+
+        # 7. Reconcile ambiguous message outcomes
+        try:
+            with session_scope(self.settings) as session:
+                from app.modules.sending.reconciliation_service import (
+                    ReconciliationService,
+                )
+
+                reconciliation_service = ReconciliationService(session)
+                reconciled = reconciliation_service.reconcile_unknown_messages()
+                if reconciled.get("reconciled_sent", 0) > 0:
+                    logger.info(
+                        f"Scheduler reconciled {reconciled['reconciled_sent']} messages to SENT"
+                    )
+        except Exception:
+            logger.exception("Error during message outcome reconciliation")
+
     def _recover_imports(self) -> None:
-        from sqlalchemy import text
         from app.db.session import session_scope
+        from sqlalchemy import text
+
         from workers.celery_app import celery_app
 
         with session_scope(self.settings) as session:

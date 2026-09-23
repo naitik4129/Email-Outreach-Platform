@@ -49,6 +49,7 @@ class MicrosoftGraphProvider(EmailProvider):
             ProviderCapability.CONNECTION_VALIDATION,
             ProviderCapability.SEND,
             ProviderCapability.CREDENTIAL_REFRESH,
+            ProviderCapability.LOOKUP_MESSAGE,
         }
     )
 
@@ -358,11 +359,21 @@ class MicrosoftGraphProvider(EmailProvider):
 
         error_payload = resp.json() if resp.content else {}
         classified = self.classify_error(resp.status_code, error_payload)
+
+        retry_after_seconds: float | None = None
+        raw_retry_after = resp.headers.get("Retry-After")
+        if raw_retry_after:
+            try:
+                retry_after_seconds = float(raw_retry_after)
+            except ValueError:
+                retry_after_seconds = None
+
         return ProviderSendResult(
             status="DEFINITIVELY_REJECTED",
             error_category=classified.category,
             error_code=classified.provider_code or str(resp.status_code),
             raw_response=error_payload,
+            retry_after_seconds=retry_after_seconds,
         )
 
     def classify_error(
@@ -470,3 +481,42 @@ class MicrosoftGraphProvider(EmailProvider):
         raise UnsupportedCapabilityError(
             "MICROSOFT", ProviderCapability.TOKEN_REVOCATION
         )
+
+    def lookup_message(
+        self,
+        credential: Mapping[str, Any],
+        rfc_message_id: str,
+    ) -> ProviderSendResult | None:
+        """Query Microsoft Graph API to check if an email with the given
+        rfc_message_id exists in the user's mailbox."""
+        access_token = credential.get("access_token")
+        if not access_token or not rfc_message_id:
+            return None
+
+        client = self._get_client()
+        headers = {"Authorization": f"Bearer {access_token}"}
+        # Graph supports filtering messages by internetMessageId
+        clean_id = rfc_message_id.strip("<>")
+        query = f"internetMessageId eq '<{clean_id}>'"
+        try:
+            resp = client.get(
+                "https://graph.microsoft.com/v1.0/me/messages",
+                headers=headers,
+                params={"$filter": query, "$top": 1, "$select": "id,conversationId"},
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            messages = data.get("value", [])
+            if not messages:
+                return None
+            found_msg = messages[0]
+            return ProviderSendResult(
+                status="ACCEPTED",
+                provider_message_id=found_msg.get("id"),
+                provider_thread_id=found_msg.get("conversationId"),
+                accepted_at=datetime.now(UTC),
+                raw_response=found_msg,
+            )
+        except Exception:
+            return None

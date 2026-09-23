@@ -423,3 +423,11 @@ class SmtpProvider(EmailProvider):
             safe_message="The SMTP server rejected the request.",
             provider_code=str(code),
         )
+
+    def lookup_message(
+        self,
+        credential: Mapping[str, Any],
+        rfc_message_id: str,
+    ) -> ProviderSendResult | None:
+        """SMTP protocol does not provide a remote message search capability."""
+        return None

@@ -18,15 +18,13 @@ _RETRYABLE_CATEGORIES = frozenset(
     }
 )
 
-# Bounded exponential backoff with jitter. Matches the shape already used by
-# OutboxPublisherService's own backoff (workers/... via
-# app/modules/scheduler/service.py: min(300, 2**attempts + jitter)) so retry
-# pacing conventions stay consistent across the codebase, scaled up for
-# provider-level retries (which are coarser-grained than outbox publish
-# retries).
+# Bounded exponential backoff with proportional jitter.
+# BASE = 30s, MAX = 3600s (1 hour). Proportional jitter (+/- 20%) ensures that
+# retry waves spread across a wide window, eliminating thundering herds and
+# retry storms when a provider recovers from an outage.
 _BASE_BACKOFF_SECONDS = 30.0
 _MAX_BACKOFF_SECONDS = 3600.0
-_JITTER_RANGE = (0.5, 2.0)
+_DEFAULT_RETRY_HORIZON = timedelta(hours=48)
 
 
 @dataclass(frozen=True)
@@ -44,6 +42,9 @@ def classify_and_decide(
     retry_budget: int,
     now: datetime | None = None,
     provider_retry_after_seconds: float | None = None,
+    anchor_at: datetime | None = None,
+    retry_deadline: datetime | None = None,
+    retry_horizon: timedelta | None = _DEFAULT_RETRY_HORIZON,
 ) -> RetryDecision:
     """Decide whether a failed/ambiguous attempt may be retried.
 
@@ -55,6 +56,7 @@ def classify_and_decide(
     """
     now = now or datetime.now(UTC)
 
+    # 1. Enforce attempt-based retry budget
     if retry_count >= retry_budget:
         return RetryDecision(
             should_retry=False,
@@ -62,6 +64,25 @@ def classify_and_decide(
             terminal_reason="retry_budget_exhausted",
         )
 
+    # 2. Enforce time-based retry deadline if applicable (MESSAGE_STATE_MACHINE.md §79)
+    if retry_deadline is not None and now >= retry_deadline:
+        return RetryDecision(
+            should_retry=False,
+            next_retry_at=None,
+            terminal_reason="retry_deadline_exceeded",
+        )
+
+    if anchor_at is not None and retry_horizon is not None:
+        if anchor_at.tzinfo is None:
+            anchor_at = anchor_at.replace(tzinfo=UTC)
+        if (now - anchor_at) >= retry_horizon:
+            return RetryDecision(
+                should_retry=False,
+                next_retry_at=None,
+                terminal_reason="retry_deadline_exceeded",
+            )
+
+    # 3. Classify retryability
     category_retryable = (
         ErrorCategory(error_category) in _RETRYABLE_CATEGORIES
         if error_category
@@ -82,11 +103,14 @@ def classify_and_decide(
             terminal_reason=(error_category or "non_retryable").lower(),
         )
 
+    # 4. Exponential backoff with proportional jitter (+/- 20%)
+    raw_backoff = min(_MAX_BACKOFF_SECONDS, _BASE_BACKOFF_SECONDS * (2**retry_count))
+    jittered_backoff = raw_backoff * random.uniform(0.8, 1.2)
     backoff_seconds = min(
-        _MAX_BACKOFF_SECONDS,
-        (_BASE_BACKOFF_SECONDS * (2**retry_count)) + random.uniform(*_JITTER_RANGE),
+        _MAX_BACKOFF_SECONDS, max(_BASE_BACKOFF_SECONDS, jittered_backoff)
     )
-    if provider_retry_after_seconds is not None:
+
+    if provider_retry_after_seconds is not None and provider_retry_after_seconds > 0:
         # Respect Retry-After / persisted provider cooldown in addition to
         # platform backoff -- never retry sooner than the provider asked.
         backoff_seconds = max(backoff_seconds, provider_retry_after_seconds)

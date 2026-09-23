@@ -10,6 +10,16 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.crypto import decrypt_credentials, encrypt_credentials
 from app.core.errors import AppError
+from app.core.metrics import (
+    record_ambiguous_outcome,
+    record_auth_failure,
+    record_duplicate_task_noop,
+    record_provider_throttle,
+    record_retry_executed,
+    record_retry_exhausted,
+    record_retry_scheduled,
+    record_terminal_failure,
+)
 from app.modules.mailboxes.providers.base import (
     EmailProvider,
     OutboundMessageEnvelope,
@@ -73,6 +83,7 @@ class SendingService:
             )
         except MessageLockedByAnotherWorker:
             self.session.rollback()
+            record_duplicate_task_noop("locked")
             logger.info(
                 "Message locked by a concurrent worker; safe no-op",
                 extra={"message_id": str(message_id)},
@@ -81,6 +92,7 @@ class SendingService:
 
         if ctx is None:
             self.session.rollback()
+            record_duplicate_task_noop("message_not_found")
             logger.warning(
                 "email.send task references a message that does not exist; "
                 "terminal, non-retryable",
@@ -98,6 +110,7 @@ class SendingService:
             )
         except (gates.MessageAlreadyResolved, gates.StaleDispatchGeneration) as exc:
             self.session.rollback()
+            record_duplicate_task_noop(exc.terminal_reason)
             return SendOutcome(
                 message_id=message_id, outcome="NOOP", reason=exc.terminal_reason
             )
@@ -200,6 +213,7 @@ class SendingService:
         except AttemptAlreadyClaimed:
             self.rate_limiter.release(reservation.reservation_id)
             self.session.rollback()
+            record_duplicate_task_noop("already_claimed")
             logger.info(
                 "Attempt already claimed by a concurrent worker; safe no-op",
                 extra={"message_id": str(ctx.message_id)},
@@ -213,7 +227,10 @@ class SendingService:
         # From here on, capacity is NEVER released/refunded regardless of
         # outcome (RATE_LIMITING.md: no refunds for uncertain provider
         # usage) -- only the pre-commit abort paths above call release().
-        return self._invoke_provider_and_finalize(*outcome)
+        attempt_id, fresh_ctx, cred_gen = outcome
+        if fresh_ctx.retry_count > 0:
+            record_retry_executed(fresh_ctx.mailbox_provider)
+        return self._invoke_provider_and_finalize(attempt_id, fresh_ctx, cred_gen)
 
     def _run_authorization_transaction(
         self,
@@ -371,7 +388,27 @@ class SendingService:
             )
 
         outcome = self._finalize_send_result(ctx, attempt_id, send_result)
-        self.session.commit()
+        # Commit with retry on transient DB error: if provider accepted but
+        # DB finalization commit experiences a transient glitch, retry commit.
+        # If DB fails permanently, rollback and raise without re-calling provider;
+        # stale execution recovery + reconciliation will safely recover the send.
+        for commit_attempt in range(3):
+            try:
+                self.session.commit()
+                break
+            except Exception as commit_err:
+                self.session.rollback()
+                if commit_attempt == 2:
+                    logger.error(
+                        "Failed to commit attempt finalization after provider call; "
+                        "rolling back to allow recovery/reconciliation safely",
+                        extra={
+                            "message_id": str(ctx.message_id),
+                            "error": str(commit_err),
+                        },
+                    )
+                    raise
+                self._finalize_send_result(ctx, attempt_id, send_result)
         return outcome
 
     def _load_and_refresh_credential(
@@ -429,10 +466,12 @@ class SendingService:
                     connected_generation=None,
                     current_connection_generation=credential_generation,
                 )
+                record_auth_failure(ctx.mailbox_provider)
                 raise _CredentialFailure(
                     error_category="AUTH_FAILURE",
                     error_code="refresh_token_unavailable",
-                    message_status="FAILED",
+                    message_status="RETRY_SCHEDULED",
+                    hold_reason="mailbox_reauth_required",
                 )
             try:
                 refresh_res = provider.refresh_token(refresh_token)
@@ -445,10 +484,12 @@ class SendingService:
                     connected_generation=None,
                     current_connection_generation=credential_generation,
                 )
+                record_auth_failure(ctx.mailbox_provider)
                 raise _CredentialFailure(
                     error_category="AUTH_FAILURE",
                     error_code="refresh_failed",
-                    message_status="FAILED",
+                    message_status="RETRY_SCHEDULED",
+                    hold_reason="mailbox_reauth_required",
                 ) from None
 
             new_refresh_token = refresh_res.refresh_token or refresh_token
@@ -515,13 +556,24 @@ class SendingService:
             )
 
         if send_result.status == "UNKNOWN":
+            record_ambiguous_outcome(ctx.mailbox_provider, send_result.error_category)
+            db_error_category = (
+                "NETWORK_ERROR"
+                if str(send_result.error_category)
+                in ("UNKNOWN_OUTCOME", "ErrorCategory.UNKNOWN_OUTCOME")
+                else (
+                    str(send_result.error_category)
+                    if send_result.error_category
+                    else None
+                )
+            )
             self.repository.finalize_attempt_result(
                 workspace_id=ctx.workspace_id,
                 message_id=ctx.message_id,
                 attempt_id=attempt_id,
                 message_status="UNKNOWN_OUTCOME",
                 evidence_state="UNKNOWN",
-                error_category=send_result.error_category,
+                error_category=db_error_category,
                 error_code=send_result.error_code,
             )
             self._audit(
@@ -537,13 +589,69 @@ class SendingService:
             )
 
         # DEFINITIVELY_REJECTED
+        if send_result.error_category == "AUTH_FAILURE":
+            self.repository.update_mailbox_connection_state(
+                workspace_id=ctx.workspace_id,
+                mailbox_id=ctx.mailbox_id,
+                connection_state="RECONNECT_REQUIRED",
+                health_state="DEGRADED",
+                connected_generation=None,
+                current_connection_generation=ctx.mailbox_current_connection_generation,
+            )
+            record_auth_failure(ctx.mailbox_provider)
+            now = datetime.now(UTC)
+            hold_time = now + timedelta(hours=1)
+            self.repository.finalize_attempt_result(
+                workspace_id=ctx.workspace_id,
+                message_id=ctx.message_id,
+                attempt_id=attempt_id,
+                message_status="RETRY_SCHEDULED",
+                evidence_state="REJECTED",
+                error_category="AUTH_FAILURE",
+                error_code=send_result.error_code,
+                retry_count=ctx.retry_count,
+                next_retry_at=hold_time,
+                due_at=hold_time,
+                hold_reason="mailbox_reauth_required",
+            )
+            self._audit(
+                ctx, action="message.held_for_reauth", reason=send_result.error_code
+            )
+            return SendOutcome(
+                message_id=ctx.message_id,
+                outcome="RETRY_SCHEDULED",
+                reason="AUTH_FAILURE",
+                attempt_id=attempt_id,
+            )
+
+        if send_result.error_category == "RATE_LIMIT":
+            record_provider_throttle(ctx.mailbox_provider)
+            cooldown = (
+                send_result.retry_after_seconds
+                if (
+                    send_result.retry_after_seconds
+                    and send_result.retry_after_seconds > 0
+                )
+                else 60.0
+            )
+            now = datetime.now(UTC)
+            self.repository.update_mailbox_blocked_until(
+                workspace_id=ctx.workspace_id,
+                mailbox_id=ctx.mailbox_id,
+                blocked_until=now + timedelta(seconds=cooldown),
+            )
+
+        anchor_at = ctx.raw.get("anchor_at") or ctx.rendered_at
         decision = classify_and_decide(
             error_category=send_result.error_category,
             is_retryable=None,
             retry_count=ctx.retry_count,
             retry_budget=ctx.retry_budget,
+            provider_retry_after_seconds=send_result.retry_after_seconds,
+            anchor_at=anchor_at,
         )
         if decision.should_retry:
+            record_retry_scheduled(ctx.mailbox_provider, send_result.error_category)
             self.repository.finalize_attempt_result(
                 workspace_id=ctx.workspace_id,
                 message_id=ctx.message_id,
@@ -566,6 +674,10 @@ class SendingService:
                 attempt_id=attempt_id,
             )
 
+        if decision.terminal_reason == "retry_budget_exhausted":
+            record_retry_exhausted(ctx.mailbox_provider)
+        record_terminal_failure(ctx.mailbox_provider, decision.terminal_reason)
+
         self.repository.finalize_attempt_result(
             workspace_id=ctx.workspace_id,
             message_id=ctx.message_id,
@@ -587,6 +699,11 @@ class SendingService:
     def _finalize_not_invoked(
         self, ctx: LoadedSendContext, attempt_id: UUID, failure: _CredentialFailure
     ) -> None:
+        hold_time = (
+            (datetime.now(UTC) + timedelta(hours=1))
+            if failure.message_status == "RETRY_SCHEDULED"
+            else None
+        )
         self.repository.finalize_attempt_result(
             workspace_id=ctx.workspace_id,
             message_id=ctx.message_id,
@@ -598,6 +715,9 @@ class SendingService:
             terminal_reason=(
                 failure.error_code if failure.message_status == "FAILED" else None
             ),
+            hold_reason=failure.hold_reason,
+            due_at=hold_time,
+            next_retry_at=hold_time,
         )
         self._audit(ctx, action="message.credential_failure", reason=failure.error_code)
 
@@ -606,6 +726,7 @@ class SendingService:
     # -------------------------------------------------------------------------
 
     def _skip(self, ctx: LoadedSendContext, terminal_reason: str) -> SendOutcome:
+        record_terminal_failure(ctx.mailbox_provider, terminal_reason)
         self.repository.skip_message(
             workspace_id=ctx.workspace_id,
             message_id=ctx.message_id,
@@ -642,9 +763,15 @@ class _AuthorizationAborted(Exception):
 
 class _CredentialFailure(Exception):
     def __init__(
-        self, *, error_category: str, error_code: str, message_status: str
+        self,
+        *,
+        error_category: str,
+        error_code: str,
+        message_status: str,
+        hold_reason: str | None = None,
     ) -> None:
         self.error_category = error_category
         self.error_code = error_code
         self.message_status = message_status
+        self.hold_reason = hold_reason
         super().__init__(error_code)

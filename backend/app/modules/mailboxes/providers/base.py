@@ -25,6 +25,7 @@ class ProviderCapability(StrEnum):
     SEND = "SEND"
     CREDENTIAL_REFRESH = "CREDENTIAL_REFRESH"
     TOKEN_REVOCATION = "TOKEN_REVOCATION"
+    LOOKUP_MESSAGE = "LOOKUP_MESSAGE"
 
 
 class UnsupportedCapabilityError(AppError):
@@ -104,6 +105,7 @@ class ProviderSendResult:
     error_category: str | None = None
     error_code: str | None = None
     raw_response: dict[str, Any] | None = None
+    retry_after_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -172,3 +174,9 @@ class EmailProvider(Protocol):
     ) -> ClassifiedProviderError: ...
 
     def revoke_token(self, token: str) -> bool: ...
+
+    def lookup_message(
+        self,
+        credential: Mapping[str, Any],
+        rfc_message_id: str,
+    ) -> ProviderSendResult | None: ...
