@@ -150,7 +150,7 @@ class SendingRepository:
                 SELECT workspace_id, provider, provider_account_id, connection_state,
                        health_state, policy_state, policy_reason, circuit_state,
                        blocked_until, current_connection_generation, original_address,
-                       sender_display_name
+                       sender_display_name, pending_safety_count
                 FROM public.mailboxes
                 WHERE workspace_id = :ws AND id = :mbid
                 {plain_lock_clause}
@@ -221,8 +221,10 @@ class SendingRepository:
             ],
             mailbox_original_address=mailbox["original_address"],
             mailbox_sender_display_name=mailbox["sender_display_name"],
+            mailbox_pending_safety_count=int(mailbox.get("pending_safety_count", 0)),
             raw=dict(msg),
         )
+
 
     def get_mailbox_connection(
         self, *, workspace_id: UUID, mailbox_id: UUID, generation: int

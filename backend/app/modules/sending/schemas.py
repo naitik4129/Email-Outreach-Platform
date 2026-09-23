@@ -57,8 +57,8 @@ class LoadedSendContext:
     mailbox_current_connection_generation: int
     mailbox_original_address: str
     mailbox_sender_display_name: str | None
-
     raw: dict[str, Any]
+    mailbox_pending_safety_count: int = 0
 
 
 @dataclass(frozen=True)

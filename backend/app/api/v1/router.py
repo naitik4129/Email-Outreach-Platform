@@ -13,11 +13,15 @@ from app.api.v1.mailboxes import (
 from app.api.v1.me import router as me_router
 from app.api.v1.suppressions import router as suppressions_router
 from app.api.v1.templates import router as templates_router
+from app.api.v1.unsubscribe import router as unsubscribe_router
+from app.api.v1.webhooks import router as webhooks_router
 from app.api.v1.workspaces import router as workspaces_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health_router)
 api_router.include_router(me_router)
+api_router.include_router(webhooks_router)
+api_router.include_router(unsubscribe_router)
 api_router.include_router(mailboxes_callback_router, tags=["mailboxes"])
 api_router.include_router(workspaces_router, prefix="/workspaces", tags=["workspaces"])
 api_router.include_router(

@@ -156,3 +156,98 @@ def record_duplicate_task_noop(reason: str | None = None) -> None:
         "email_duplicate_task_noop_total",
         reason=reason.lower() if reason else "unspecified",
     )
+
+
+# Event Processing Pipeline Metrics (Phase 12)
+def record_event_received(provider: str, event_type: str | None = None) -> None:
+    metrics.increment(
+        "inbound_events_received_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+        event_type=event_type.upper() if event_type else "UNKNOWN",
+    )
+
+
+def record_event_verified(provider: str) -> None:
+    metrics.increment(
+        "inbound_events_verified_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_event_rejected(provider: str, reason: str | None = None) -> None:
+    metrics.increment(
+        "inbound_events_rejected_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+        reason=reason.lower() if reason else "unspecified",
+    )
+
+
+def record_event_deduplicated(provider: str) -> None:
+    metrics.increment(
+        "inbound_events_deduplicated_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_event_processed(provider: str, event_type: str) -> None:
+    metrics.increment(
+        "inbound_events_processed_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+        event_type=event_type.upper() if event_type else "UNKNOWN",
+    )
+
+
+def record_event_failed(provider: str, reason: str | None = None) -> None:
+    metrics.increment(
+        "inbound_events_failed_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+        reason=reason.lower() if reason else "unspecified",
+    )
+
+
+def record_event_retried(provider: str) -> None:
+    metrics.increment(
+        "inbound_events_retried_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_bounce_processed(provider: str, bounce_type: str = "UNKNOWN") -> None:
+    metrics.increment(
+        "inbound_bounces_processed_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+        bounce_type=bounce_type.upper(),
+    )
+
+
+def record_complaint_processed(provider: str) -> None:
+    metrics.increment(
+        "inbound_complaints_processed_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_unsubscribe_processed(provider: str) -> None:
+    metrics.increment(
+        "inbound_unsubscribes_processed_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_suppression_created(reason: str) -> None:
+    metrics.increment(
+        "inbound_suppression_created_total",
+        reason=reason.upper() if reason else "UNKNOWN",
+    )
+
+
+def record_message_cancelled_due_to_event(reason: str) -> None:
+    metrics.increment(
+        "messages_cancelled_due_to_event_total",
+        reason=reason.lower() if reason else "unspecified",
+    )
+
+
+def record_message_blocked_at_send_due_to_suppression() -> None:
+    metrics.increment("messages_blocked_at_send_due_to_suppression_total")
+

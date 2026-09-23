@@ -118,6 +118,7 @@ class SendingService:
             gates.CampaignStateRejected,
             gates.EnrollmentStateRejected,
             gates.MailboxStateRejected,
+            gates.SafetyHoldRejected,
         ) as exc:
             # Temporarily ineligible, may become eligible again later (e.g.
             # campaign resumes). Leave the message QUEUED and untouched --

@@ -22,6 +22,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         "task_routes": {
             "infrastructure.smoke": {"queue": "maintenance"},
             "email.send": {"queue": "email.send"},
+            "event.process": {"queue": "webhooks"},
         },
         "worker_prefetch_multiplier": 1,
         "task_acks_late": False,
@@ -43,3 +44,5 @@ import workers.tasks  # noqa: F401
 import workers.imports  # noqa: F401
 import workers.campaigns  # noqa: F401
 import workers.send_task  # noqa: F401
+import workers.events  # noqa: F401
+

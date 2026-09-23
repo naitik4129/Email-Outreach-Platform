@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.core.metrics import record_message_blocked_at_send_due_to_suppression
 from app.modules.sending.schemas import LoadedSendContext
 from app.modules.suppression.checks import is_address_suppressed, is_platform_suppressed
 
@@ -62,6 +63,10 @@ class EnrollmentStateRejected(SendGateRejected):
 
 
 class SuppressionRejected(SendGateRejected):
+    pass
+
+
+class SafetyHoldRejected(SendGateRejected):
     pass
 
 
@@ -138,14 +143,28 @@ def check_suppression(session: Session, ctx: LoadedSendContext) -> None:
     between attempts).
     """
     if is_address_suppressed(session, ctx.workspace_id, ctx.address_id):
+        record_message_blocked_at_send_due_to_suppression()
         raise SuppressionRejected(
             "recipient address is suppressed (workspace scope)",
             terminal_reason="suppressed",
         )
     if is_platform_suppressed(session, ctx.canonical_address):
+        record_message_blocked_at_send_due_to_suppression()
         raise SuppressionRejected(
             "recipient address is suppressed (platform scope)",
             terminal_reason="suppressed",
+        )
+
+
+def check_safety_holds(ctx: LoadedSendContext) -> None:
+    """Refuse send authorization while any pending-safety counter/hold is active
+    on this mailbox or workspace, closing the race between acknowledging safety
+    events and asynchronous domain processing (EVENT_SYSTEM.md §37).
+    """
+    if ctx.mailbox_pending_safety_count > 0:
+        raise SafetyHoldRejected(
+            f"mailbox has {ctx.mailbox_pending_safety_count} active pending-safety hold(s)",
+            terminal_reason="safety_hold_active",
         )
 
 
@@ -273,6 +292,7 @@ def run_pre_authorization_gates(
     check_campaign_state(ctx)
     check_enrollment_state(ctx)
     check_suppression(session, ctx)
+    check_safety_holds(ctx)
     check_mailbox_state(ctx)
     check_mailbox_ownership(ctx)
     check_provider_match(ctx)
