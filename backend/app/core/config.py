@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     outbox_lease_seconds: int = Field(default=60, ge=5, le=600)
     outbox_max_attempts: int = Field(default=10, ge=1, le=100)
 
+    # Phase 10: while false, the email.send Celery task keeps the Phase 9
+    # placeholder behavior (validates the payload, never calls a provider).
+    # Lets the sending-worker/rate-limiter modules land and be tested
+    # end-to-end before any environment is allowed to perform a real send.
+    sending_worker_enabled: bool = False
+    rate_controller_reconcile_poll_seconds: float = Field(default=5.0, gt=0, le=300)
+
     supabase_url: str = Field(default="", min_length=1)
     supabase_jwt_secret: str = ""
     supabase_jwt_audience: str = "authenticated"

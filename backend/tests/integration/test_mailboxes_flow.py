@@ -580,11 +580,16 @@ def test_rbac_matrix_permissions(
     ws = _bootstrap(api_client, owner, "RBAC WS")
     workspace_id = ws["id"]
 
+    # Lazily creates the viewer's profiles row (see app/api/deps.py's
+    # get_current_user) -- workspace_memberships_user_fkey requires one to
+    # already exist before the raw membership insert below.
+    api_client.get("/api/v1/me", headers=viewer.auth_header)
+
     # Add viewer to workspace with role VIEWER
     db_admin.execute(
         text(
             """
-            INSERT INTO workspace_memberships (id, workspace_id, user_id, role)
+            INSERT INTO workspace_memberships (id, workspace_id, user_id, role_code)
             VALUES (:id, :ws, :user, 'VIEWER')
             """
         ),
