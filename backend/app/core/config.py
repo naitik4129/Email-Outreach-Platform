@@ -49,7 +49,13 @@ class Settings(BaseSettings):
     db_statement_timeout_ms: int = Field(default=5_000, ge=100, le=60_000)
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
 
+    scheduler_enabled: bool = True
     scheduler_poll_seconds: float = Field(default=5.0, gt=0, le=300)
+    scheduler_batch_size: int = Field(default=50, ge=1, le=1000)
+    scheduler_claim_lease_seconds: int = Field(default=300, ge=10, le=3600)
+    outbox_publish_batch_size: int = Field(default=50, ge=1, le=1000)
+    outbox_lease_seconds: int = Field(default=60, ge=5, le=600)
+    outbox_max_attempts: int = Field(default=10, ge=1, le=100)
 
     supabase_url: str = Field(default="", min_length=1)
     supabase_jwt_secret: str = ""

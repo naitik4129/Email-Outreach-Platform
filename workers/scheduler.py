@@ -6,6 +6,8 @@ from threading import Event
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
+from app.db.session import session_scope
+from app.modules.scheduler.service import OutboxPublisherService, SchedulerService
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,52 @@ class SchedulerRuntime:
 
     def run_once(self) -> None:
         logger.info("Scheduler heartbeat")
-        self._recover_imports()
+
+        # 1. Discover due work and claim
+        try:
+            with session_scope(self.settings) as session:
+                service = SchedulerService(session, self.settings)
+                disc, claimed = service.discover_and_claim_due_work()
+                if claimed > 0:
+                    logger.info(f"Scheduler claimed {claimed}/{disc} due messages")
+        except Exception:
+            logger.exception("Error during scheduler due discovery and claim")
+
+        # 2. Publish pending outbox deliveries to Celery queue
+        try:
+            with session_scope(self.settings) as session:
+                publisher = OutboxPublisherService(session, settings=self.settings)
+                published = publisher.publish_pending_deliveries()
+                if published > 0:
+                    logger.info(f"Outbox publisher published {published} deliveries to email.send")
+        except Exception:
+            logger.exception("Error during outbox publication")
+
+        # 3. Recover expired message claims
+        try:
+            with session_scope(self.settings) as session:
+                service = SchedulerService(session, self.settings)
+                recovered = service.recover_expired_claims()
+                if recovered > 0:
+                    logger.info(f"Scheduler recovered {recovered} expired message claims")
+        except Exception:
+            logger.exception("Error during expired claim recovery")
+
+        # 4. Recover stale outbox leases
+        try:
+            with session_scope(self.settings) as session:
+                publisher = OutboxPublisherService(session, settings=self.settings)
+                recovered_leases = publisher.recover_stale_leases()
+                if recovered_leases > 0:
+                    logger.info(f"Outbox publisher recovered {recovered_leases} stale leases")
+        except Exception:
+            logger.exception("Error during stale outbox lease recovery")
+
+        # 5. Recover imports
+        try:
+            self._recover_imports()
+        except Exception:
+            logger.exception("Error during import recovery")
 
     def _recover_imports(self) -> None:
         from sqlalchemy import text

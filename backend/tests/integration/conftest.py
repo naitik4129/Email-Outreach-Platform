@@ -145,8 +145,10 @@ def make_test_user(
 
     settings = Settings.current()
     with session_scope(settings) as cleanup_session:
+        cleanup_session.execute(text("SET session_replication_role = replica"))
         for user_id in created:
             _delete_test_user_data(cleanup_session, user_id)
+        cleanup_session.execute(text("SET session_replication_role = DEFAULT"))
 
     for user_id in created:
         _request_with_retry(
@@ -195,17 +197,48 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         # activated_* are themselves FKs back into these child tables (a
         # committed audience, a settings revision, ...) -- null them out
         # first, same as templates.current_version_id below, or the child
-        # deletes fail with a foreign key violation.
+        # Deletion order below must respect FK RESTRICT dependencies (children
+        # before parents). We delete outbox records, message attempts, messages,
+        # campaign children, then campaigns itself before deleting the sequences
+        # and audiences that campaigns references. This avoids updating activated_*
+        # columns on campaigns which would violate app_guard_campaign_snapshot.
+        session.execute(
+            text("DELETE FROM outbox_deliveries WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM outbox_work WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM message_attempts WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM messages WHERE workspace_id = :workspace_id"),
+            {"workspace_id": workspace_id},
+        )
         session.execute(
             text(
-                """
-                UPDATE campaigns
-                SET draft_audience_id = NULL, draft_sequence_id = NULL,
-                    current_settings_id = NULL, activated_sequence_id = NULL,
-                    activated_audience_id = NULL
-                WHERE workspace_id = :workspace_id
-                """
+                "DELETE FROM campaign_enrollments WHERE workspace_id = :workspace_id"
             ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_planning_jobs "
+                "WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text(
+                "DELETE FROM campaign_mailboxes WHERE workspace_id = :workspace_id"
+            ),
+            {"workspace_id": workspace_id},
+        )
+        session.execute(
+            text("DELETE FROM campaigns WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )
         session.execute(
@@ -218,13 +251,6 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         session.execute(
             text(
                 "DELETE FROM audience_capture_sources "
-                "WHERE workspace_id = :workspace_id"
-            ),
-            {"workspace_id": workspace_id},
-        )
-        session.execute(
-            text(
-                "DELETE FROM campaign_planning_jobs "
                 "WHERE workspace_id = :workspace_id"
             ),
             {"workspace_id": workspace_id},
@@ -252,12 +278,6 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         )
         session.execute(
             text(
-                "DELETE FROM campaign_mailboxes WHERE workspace_id = :workspace_id"
-            ),
-            {"workspace_id": workspace_id},
-        )
-        session.execute(
-            text(
                 "DELETE FROM lead_list_memberships "
                 "WHERE workspace_id = :workspace_id"
             ),
@@ -269,28 +289,6 @@ def _delete_test_user_data(session: Session, user_id: str) -> None:
         )
         session.execute(
             text("DELETE FROM lead_lists WHERE workspace_id = :workspace_id"),
-            {"workspace_id": workspace_id},
-        )
-        session.execute(
-            text("DELETE FROM message_attempts WHERE workspace_id = :workspace_id"),
-            {"workspace_id": workspace_id},
-        )
-        session.execute(
-            text("DELETE FROM messages WHERE workspace_id = :workspace_id"),
-            {"workspace_id": workspace_id},
-        )
-        # campaign_enrollments (referenced by messages.enrollment_id, now
-        # clear) and campaigns itself (referenced by every campaign-family
-        # table already deleted above) come last in the campaign cascade.
-        # Phase 7 never creates campaign_enrollments -- this is defensive.
-        session.execute(
-            text(
-                "DELETE FROM campaign_enrollments WHERE workspace_id = :workspace_id"
-            ),
-            {"workspace_id": workspace_id},
-        )
-        session.execute(
-            text("DELETE FROM campaigns WHERE workspace_id = :workspace_id"),
             {"workspace_id": workspace_id},
         )
         session.execute(
