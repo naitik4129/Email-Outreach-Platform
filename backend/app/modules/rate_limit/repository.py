@@ -231,7 +231,8 @@ class RateControlRepository:
                 """
                 UPDATE public.rate_control
                 SET status = 'READY',
-                    recovery_watermark = :watermark
+                    recovery_watermark = :watermark,
+                    recovery_started_at = NULL
                 WHERE id AND generation = :generation AND status = 'RECOVERING'
                 """
             ),

@@ -200,3 +200,53 @@ def test_reconcile_tick_first_call_never_bootstraps(
     controller.reconcile_loop_tick(last_known_run_id=None)
 
     repository.enter_recovering.assert_not_called()
+
+
+def test_mark_ready_satisfies_the_recovery_check_constraint() -> None:
+    """The real rate_control table only allows status READY when
+    recovery_started_at is NULL (rate_control_recovery_check, migration 0005).
+    mark_ready must clear it, or PostgreSQL rejects the flip and the controller
+    can never become READY."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.modules.rate_limit.repository import RateControlRepository
+
+    engine = create_engine(
+        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    )
+    session = sessionmaker(bind=engine)()
+    session.execute(text("ATTACH DATABASE ':memory:' AS public;"))
+    session.execute(
+        text(
+            """
+            CREATE TABLE public.rate_control (
+                id BOOLEAN PRIMARY KEY,
+                generation INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                recovery_watermark TIMESTAMP,
+                recovery_started_at TIMESTAMP,
+                CHECK ((status = 'RECOVERING') = (recovery_started_at IS NOT NULL))
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            "INSERT INTO public.rate_control "
+            "(id, generation, status, recovery_started_at) "
+            "VALUES (1, 4, 'RECOVERING', CURRENT_TIMESTAMP)"
+        )
+    )
+    session.commit()
+
+    repository = RateControlRepository(session)
+    assert repository.mark_ready(generation=4, recovery_watermark=datetime.now(UTC))
+    session.commit()
+
+    status, started_at = session.execute(
+        text("SELECT status, recovery_started_at FROM public.rate_control")
+    ).one()
+    assert status == "READY"
+    assert started_at is None
