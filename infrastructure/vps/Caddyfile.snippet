@@ -1,0 +1,32 @@
+# Site block for the Email Outreach Platform. Add it to your existing Caddyfile
+# (or import it). Replace YOUR_DOMAIN with the subdomain, and the two ports
+# with BACKEND_HOST_PORT / FRONTEND_HOST_PORT from .env (defaults 8000 / 3000).
+#
+# This form is for Caddy running directly on the host. If Caddy runs in a
+# Docker container, 127.0.0.1 is the container itself, so use
+# docs/operations/DEPLOYMENT.md, "If Caddy runs in Docker" instead.
+#
+# /api/v1/*  -> FastAPI backend
+# everything else -> Next.js frontend
+# One origin for both means the browser makes no cross-origin calls.
+
+YOUR_DOMAIN {
+	encode gzip
+
+	# Provider webhook endpoints are blocked on purpose: their shared secrets
+	# are read from settings that do not exist in backend/app/core/config.py,
+	# so the endpoints currently accept unauthenticated requests. Remove this
+	# only after that is fixed (docs/operations/DEPLOYMENT.md, "Known
+	# limitations"). Replies are still collected by mailbox polling.
+	handle /api/v1/webhooks/* {
+		respond "Forbidden" 403
+	}
+
+	handle /api/v1/* {
+		reverse_proxy 127.0.0.1:4130
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:4131
+	}
+}
