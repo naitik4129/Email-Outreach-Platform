@@ -100,6 +100,53 @@ class SchedulerRuntime:
         except Exception:
             logger.exception("Error during message outcome reconciliation")
 
+        # 8. Discover and enqueue due mailbox reply syncs (Phase 13)
+        if self.settings.reply_sync_enabled:
+            try:
+                with session_scope(self.settings) as session:
+                    from datetime import UTC, datetime
+
+                    from app.modules.replies.repository import ReplyRepository
+
+                    from workers.celery_app import celery_app
+
+                    repo = ReplyRepository(session)
+                    now = datetime.now(UTC)
+                    claimed_syncs = repo.claim_due_sync_states(
+                        lease_owner="scheduler-sync-dispatcher",
+                        now=now,
+                        limit=20,
+                        lease_duration_seconds=self.settings.reply_sync_lease_seconds,
+                    )
+                    session.commit()
+
+                    if claimed_syncs:
+                        logger.info("Scheduler dispatched %d due mailbox sync tasks", len(claimed_syncs))
+                        for sync in claimed_syncs:
+                            celery_app.send_task(
+                                "mailbox.sync",
+                                kwargs={
+                                    "workspace_id": str(sync["workspace_id"]),
+                                    "mailbox_id": str(sync["mailbox_id"]),
+                                    "lease_owner": "scheduler-sync-dispatcher",
+                                },
+                                queue="mailbox.sync",
+                            )
+            except Exception:
+                logger.exception("Error during mailbox sync due discovery")
+
+            # 9. Recover stale reply sync leases
+            try:
+                with session_scope(self.settings) as session:
+                    from app.modules.replies.service import ReplySyncService
+
+                    service = ReplySyncService(session)
+                    recovered_sync_leases = service.recover_stale_leases()
+                    if recovered_sync_leases > 0:
+                        logger.info("Scheduler recovered %d stale sync leases", recovered_sync_leases)
+            except Exception:
+                logger.exception("Error during stale sync lease recovery")
+
     def _recover_imports(self) -> None:
         from app.db.session import session_scope
         from sqlalchemy import text

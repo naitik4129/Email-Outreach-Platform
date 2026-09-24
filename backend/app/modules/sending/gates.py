@@ -4,6 +4,7 @@ import hashlib
 import re
 from datetime import UTC, datetime
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.metrics import record_message_blocked_at_send_due_to_suppression
@@ -60,6 +61,12 @@ class CampaignStateRejected(SendGateRejected):
 
 class EnrollmentStateRejected(SendGateRejected):
     pass
+
+
+class RecipientRepliedRejected(SendGateRejected):
+    """Refuse send authorization because a qualifying reply has already made
+    this recipient ineligible. Campaign safety: the system must never send a
+    future campaign email when a reply has already occurred."""
 
 
 class SuppressionRejected(SendGateRejected):
@@ -131,6 +138,28 @@ def check_enrollment_state(ctx: LoadedSendContext) -> None:
         raise EnrollmentStateRejected(
             f"enrollment state={ctx.enrollment_state} is not ACTIVE",
             terminal_reason="enrollment_not_active",
+        )
+
+
+def check_reply_outcome(session: Session, ctx: LoadedSendContext) -> None:
+    """Pre-send gate check: verifies that recipient_outcomes does not contain a
+    REPLIED outcome for this enrollment, closing any race between background
+    reply synchronization and send dispatch.
+    """
+    if ctx.purpose != "CAMPAIGN" or not ctx.enrollment_id:
+        return
+    stmt = text(
+        "SELECT 1 FROM public.recipient_outcomes "
+        "WHERE workspace_id = :ws AND enrollment_id = :eid AND kind = 'REPLIED' LIMIT 1"
+    )
+    res = session.execute(
+        stmt,
+        {"ws": str(ctx.workspace_id), "eid": str(ctx.enrollment_id)},
+    ).first()
+    if res:
+        raise RecipientRepliedRejected(
+            f"enrollment {ctx.enrollment_id} already has a recorded reply outcome",
+            terminal_reason="recipient_replied",
         )
 
 
@@ -292,6 +321,7 @@ def run_pre_authorization_gates(
     check_campaign_state(ctx)
     check_enrollment_state(ctx)
     check_suppression(session, ctx)
+    check_reply_outcome(session, ctx)
     check_safety_holds(ctx)
     check_mailbox_state(ctx)
     check_mailbox_ownership(ctx)

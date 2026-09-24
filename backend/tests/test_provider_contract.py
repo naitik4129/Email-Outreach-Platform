@@ -263,6 +263,7 @@ def test_gmail_supports_every_capability() -> None:
             ProviderCapability.CREDENTIAL_REFRESH,
             ProviderCapability.TOKEN_REVOCATION,
             ProviderCapability.LOOKUP_MESSAGE,
+            ProviderCapability.REPLY_SYNC,
         }
     )
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -18,7 +20,9 @@ from app.modules.mailboxes.providers.base import (
     OutboundMessageEnvelope,
     ProviderAccountIdentity,
     ProviderCapability,
+    ProviderInboundMessage,
     ProviderSendResult,
+    SyncPageResult,
     TokenExchangeResult,
     TokenRefreshResult,
 )
@@ -55,6 +59,7 @@ class GmailProvider(EmailProvider):
             ProviderCapability.CREDENTIAL_REFRESH,
             ProviderCapability.TOKEN_REVOCATION,
             ProviderCapability.LOOKUP_MESSAGE,
+            ProviderCapability.REPLY_SYNC,
         }
     )
 
@@ -497,3 +502,300 @@ class GmailProvider(EmailProvider):
             )
         except Exception:
             return None
+
+    def sync_inbound_messages(
+        self,
+        credential: Mapping[str, Any],
+        cursor: str | None = None,
+        page_size: int = 50,
+    ) -> SyncPageResult:
+        access_token = credential.get("access_token")
+        if not access_token:
+            raise AppError("auth_failure", "Missing access token for Gmail sync", status_code=401)
+
+        client = self._get_client()
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        # Parse cursor (can be raw historyId string or JSON {"history_id": ..., "page_token": ...})
+        history_id: str | None = None
+        page_token: str | None = None
+        if cursor:
+            if cursor.startswith("{"):
+                try:
+                    c_data = json.loads(cursor)
+                    history_id = c_data.get("history_id")
+                    page_token = c_data.get("page_token")
+                except Exception:
+                    history_id = cursor
+            else:
+                history_id = cursor
+
+        # 1. Incremental sync using history if history_id is available
+        if history_id:
+            params: dict[str, Any] = {
+                "startHistoryId": history_id,
+                "maxResults": min(max(page_size, 1), 100),
+                "historyTypes": "messageAdded",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            try:
+                resp = client.get(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/history",
+                    headers=headers,
+                    params=params,
+                )
+            except Exception as exc:
+                classified = self.classify_error(exc)
+                if classified.category == ErrorCategory.RATE_LIMIT:
+                    return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
+                raise
+
+            if resp.status_code == 404:
+                # History ID is out of date / expired -> trigger resync
+                return SyncPageResult(messages=[], resync_required=True)
+            elif resp.status_code in (401, 403):
+                classified = self.classify_error(resp.status_code)
+                raise AppError(
+                    classified.category.value.lower(),
+                    classified.safe_message,
+                    status_code=resp.status_code,
+                )
+            elif resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", 30))
+                return SyncPageResult(messages=[], has_more=True, retry_after_seconds=retry_after)
+            elif resp.status_code != 200:
+                classified = self.classify_error(resp.status_code)
+                raise AppError(
+                    classified.category.value.lower(),
+                    classified.safe_message,
+                    status_code=resp.status_code,
+                )
+
+            data = resp.json()
+            history_records = data.get("history", [])
+            new_history_id = str(data.get("historyId", history_id))
+            next_page_token = data.get("nextPageToken")
+
+            msg_ids: list[tuple[str, str | None]] = []
+            for h in history_records:
+                for added in h.get("messagesAdded", []):
+                    m = added.get("message", {})
+                    mid = m.get("id")
+                    if mid:
+                        msg_ids.append((mid, m.get("threadId")))
+
+            inbound_msgs = self._fetch_gmail_messages(client, headers, msg_ids)
+
+            next_cursor = None
+            if next_page_token:
+                next_cursor = json.dumps({"history_id": new_history_id, "page_token": next_page_token})
+            else:
+                next_cursor = new_history_id
+
+            return SyncPageResult(
+                messages=inbound_msgs,
+                next_cursor=next_cursor,
+                next_page_token=next_page_token,
+                has_more=bool(next_page_token),
+                resync_required=False,
+                synced_checkpoint=new_history_id,
+            )
+
+        # 2. Initial sync or full resync
+        start_history_id = None
+        try:
+            prof_resp = client.get("https://gmail.googleapis.com/gmail/v1/users/me/profile", headers=headers)
+            if prof_resp.status_code == 200:
+                start_history_id = str(prof_resp.json().get("historyId", ""))
+        except Exception:
+            pass
+
+        list_params: dict[str, Any] = {"maxResults": min(max(page_size, 1), 100)}
+        if page_token:
+            list_params["pageToken"] = page_token
+
+        try:
+            resp = client.get(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+                headers=headers,
+                params=list_params,
+            )
+        except Exception as exc:
+            classified = self.classify_error(exc)
+            if classified.category == ErrorCategory.RATE_LIMIT:
+                return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
+            raise
+
+        if resp.status_code in (401, 403):
+            classified = self.classify_error(resp.status_code)
+            raise AppError(
+                classified.category.value.lower(),
+                classified.safe_message,
+                status_code=resp.status_code,
+            )
+        elif resp.status_code == 429:
+            retry_after = float(resp.headers.get("Retry-After", 30))
+            return SyncPageResult(messages=[], has_more=True, retry_after_seconds=retry_after)
+        elif resp.status_code != 200:
+            classified = self.classify_error(resp.status_code)
+            raise AppError(
+                classified.category.value.lower(),
+                classified.safe_message,
+                status_code=resp.status_code,
+            )
+
+        data = resp.json()
+        messages_meta = data.get("messages", [])
+        next_page_token = data.get("nextPageToken")
+        msg_ids = [(m["id"], m.get("threadId")) for m in messages_meta if "id" in m]
+
+        inbound_msgs = self._fetch_gmail_messages(client, headers, msg_ids)
+
+        next_cursor = None
+        if next_page_token:
+            next_cursor = json.dumps({"history_id": start_history_id, "page_token": next_page_token})
+        else:
+            next_cursor = start_history_id
+
+        return SyncPageResult(
+            messages=inbound_msgs,
+            next_cursor=next_cursor,
+            next_page_token=next_page_token,
+            has_more=bool(next_page_token),
+            resync_required=False,
+            synced_checkpoint=start_history_id,
+        )
+
+    def _fetch_gmail_messages(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        msg_ids: list[tuple[str, str | None]],
+    ) -> list[ProviderInboundMessage]:
+        inbound_msgs: list[ProviderInboundMessage] = []
+        for mid, thread_id in msg_ids:
+            try:
+                resp = client.get(
+                    f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{mid}",
+                    headers=headers,
+                    params={"format": "full"},
+                )
+                if resp.status_code != 200:
+                    continue
+                m_data = resp.json()
+                inbound_msgs.append(self._parse_gmail_message(m_data, thread_id))
+            except Exception:
+                continue
+        return inbound_msgs
+
+    def _parse_gmail_message(
+        self,
+        m_data: dict[str, Any],
+        fallback_thread_id: str | None = None,
+    ) -> ProviderInboundMessage:
+        mid = str(m_data.get("id"))
+        thread_id = m_data.get("threadId") or fallback_thread_id
+        payload = m_data.get("payload", {})
+        headers_list = payload.get("headers", [])
+
+        headers: dict[str, str] = {}
+        for h in headers_list:
+            name = h.get("name", "").strip()
+            val = h.get("value", "").strip()
+            if name:
+                headers[name.lower()] = val
+                headers[name] = val
+
+        rfc_id = headers.get("message-id")
+        in_reply_to = headers.get("in-reply-to")
+        references_str = headers.get("references", "")
+        references = references_str.split() if references_str else []
+
+        from_raw = headers.get("from", "")
+        from_name, from_addr = parseaddr(from_raw)
+
+        to_raw = headers.get("to", "")
+        to_addrs = [addr for _, addr in getaddresses([to_raw]) if addr]
+
+        cc_raw = headers.get("cc", "")
+        cc_addrs = [addr for _, addr in getaddresses([cc_raw]) if addr]
+
+        bcc_raw = headers.get("bcc", "")
+        bcc_addrs = [addr for _, addr in getaddresses([bcc_raw]) if addr]
+
+        subject = headers.get("subject", "")
+
+        received_at = datetime.now(UTC)
+        internal_date_str = m_data.get("internalDate")
+        if internal_date_str:
+            try:
+                received_at = datetime.fromtimestamp(int(internal_date_str) / 1000.0, tz=UTC)
+            except Exception:
+                pass
+        elif "date" in headers:
+            try:
+                received_at = parsedate_to_datetime(headers["date"])
+                if received_at.tzinfo is None:
+                    received_at = received_at.replace(tzinfo=UTC)
+            except Exception:
+                pass
+
+        body_text, body_html = self._extract_gmail_payload(payload)
+
+        auto_sub = headers.get("auto-submitted", "").lower()
+        precedence = headers.get("precedence", "").lower()
+        x_autoreply = headers.get("x-autoreply", "").lower()
+        is_automated = bool(
+            (auto_sub and auto_sub != "no")
+            or precedence in ("bulk", "junk", "auto_reply")
+            or x_autoreply in ("yes", "true")
+        )
+
+        return ProviderInboundMessage(
+            provider_message_id=mid,
+            provider_thread_id=thread_id,
+            rfc_message_id=rfc_id,
+            in_reply_to=in_reply_to,
+            references=references,
+            from_address=from_addr,
+            from_name=from_name or None,
+            to_addresses=to_addrs,
+            cc_addresses=cc_addrs,
+            bcc_addresses=bcc_addrs,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+            received_at=received_at,
+            headers=headers,
+            is_automated=is_automated,
+        )
+
+    def _extract_gmail_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        mime_type = payload.get("mimeType", "")
+        body_data = payload.get("body", {}).get("data")
+        body_text: str | None = None
+        body_html: str | None = None
+
+        if body_data:
+            try:
+                decoded = base64.urlsafe_b64decode(body_data + "==").decode("utf-8", errors="replace")
+                if "text/html" in mime_type:
+                    body_html = decoded
+                else:
+                    body_text = decoded
+            except Exception:
+                pass
+
+        for part in payload.get("parts", []):
+            sub_text, sub_html = self._extract_gmail_payload(part)
+            if sub_text and not body_text:
+                body_text = sub_text
+            if sub_html and not body_html:
+                body_html = sub_html
+
+        return body_text, body_html

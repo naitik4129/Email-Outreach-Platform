@@ -18,6 +18,7 @@ from app.modules.mailboxes.providers.base import (
     ProviderAccountIdentity,
     ProviderCapability,
     ProviderSendResult,
+    SyncPageResult,
     TokenExchangeResult,
     TokenRefreshResult,
     UnsupportedCapabilityError,
@@ -431,3 +432,12 @@ class SmtpProvider(EmailProvider):
     ) -> ProviderSendResult | None:
         """SMTP protocol does not provide a remote message search capability."""
         return None
+
+    def sync_inbound_messages(
+        self,
+        credential: Mapping[str, Any],
+        cursor: str | None = None,
+        page_size: int = 50,
+    ) -> SyncPageResult:
+        """SMTP is strictly an outbound transmission protocol; it does not provide inbound sync."""
+        raise UnsupportedCapabilityError("SMTP", ProviderCapability.REPLY_SYNC)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -17,7 +17,9 @@ from app.modules.mailboxes.providers.base import (
     OutboundMessageEnvelope,
     ProviderAccountIdentity,
     ProviderCapability,
+    ProviderInboundMessage,
     ProviderSendResult,
+    SyncPageResult,
     TokenExchangeResult,
     TokenRefreshResult,
     UnsupportedCapabilityError,
@@ -50,6 +52,7 @@ class MicrosoftGraphProvider(EmailProvider):
             ProviderCapability.SEND,
             ProviderCapability.CREDENTIAL_REFRESH,
             ProviderCapability.LOOKUP_MESSAGE,
+            ProviderCapability.REPLY_SYNC,
         }
     )
 
@@ -520,3 +523,202 @@ class MicrosoftGraphProvider(EmailProvider):
             )
         except Exception:
             return None
+
+    def _validate_graph_url(self, url: str) -> None:
+        """Validate opaque continuation/delta URL against SSRF."""
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            raise AppError("ssrf_rejected", f"Invalid URL scheme: {parsed.scheme}", status_code=400)
+        if parsed.netloc.lower() != "graph.microsoft.com":
+            raise AppError("ssrf_rejected", f"Untrusted host in continuation URL: {parsed.netloc}", status_code=400)
+        if not parsed.path.startswith("/v1.0/"):
+            raise AppError("ssrf_rejected", f"Unexpected path in continuation URL: {parsed.path}", status_code=400)
+
+    def sync_inbound_messages(
+        self,
+        credential: Mapping[str, Any],
+        cursor: str | None = None,
+        page_size: int = 50,
+    ) -> SyncPageResult:
+        access_token = credential.get("access_token")
+        if not access_token:
+            raise AppError("auth_failure", "Missing access token for Microsoft sync", status_code=401)
+
+        client = self._get_client()
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Prefer": f"odata.maxpagesize={min(max(page_size, 1), 100)}",
+        }
+
+        # Determine URL
+        if cursor:
+            self._validate_graph_url(cursor)
+            target_url = cursor
+            params = None
+        else:
+            target_url = "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages/delta"
+            params = {
+                "$select": (
+                    "id,conversationId,internetMessageId,subject,from,"
+                    "toRecipients,ccRecipients,bccRecipients,receivedDateTime,"
+                    "sentDateTime,body,hasAttachments,internetMessageHeaders"
+                )
+            }
+
+        try:
+            resp = client.get(target_url, headers=headers, params=params)
+        except Exception as exc:
+            classified = self.classify_error(exc)
+            if classified.category == ErrorCategory.RATE_LIMIT:
+                return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
+            raise
+
+        if resp.status_code == 410:
+            return SyncPageResult(messages=[], resync_required=True)
+        elif resp.status_code in (401, 403):
+            classified = self.classify_error(resp.status_code)
+            raise AppError(
+                classified.category.value.lower(),
+                classified.safe_message,
+                status_code=resp.status_code,
+            )
+        elif resp.status_code == 429:
+            retry_after = float(resp.headers.get("Retry-After", 30))
+            return SyncPageResult(messages=[], has_more=True, retry_after_seconds=retry_after)
+        elif resp.status_code != 200:
+            try:
+                err_data = resp.json().get("error", {})
+                if err_data.get("code") in ("resyncRequired", "ResyncRequired"):
+                    return SyncPageResult(messages=[], resync_required=True)
+            except Exception:
+                pass
+            classified = self.classify_error(resp.status_code)
+            raise AppError(
+                classified.category.value.lower(),
+                classified.safe_message,
+                status_code=resp.status_code,
+            )
+
+        data = resp.json()
+        raw_messages = data.get("value", [])
+        next_link = data.get("@odata.nextLink")
+        delta_link = data.get("@odata.deltaLink")
+
+        parsed_messages: list[ProviderInboundMessage] = []
+        for msg in raw_messages:
+            if "@removed" in msg:
+                continue
+            parsed = self._parse_graph_message(msg)
+            if parsed:
+                parsed_messages.append(parsed)
+
+        next_cursor = next_link or delta_link
+        has_more = bool(next_link)
+        synced_checkpoint = delta_link if delta_link else None
+
+        return SyncPageResult(
+            messages=parsed_messages,
+            next_cursor=next_cursor,
+            has_more=has_more,
+            resync_required=False,
+            synced_checkpoint=synced_checkpoint,
+        )
+
+    def _parse_graph_message(self, msg: dict[str, Any]) -> ProviderInboundMessage | None:
+        mid = msg.get("id")
+        if not mid:
+            return None
+
+        thread_id = msg.get("conversationId")
+        rfc_id = msg.get("internetMessageId")
+        subject = msg.get("subject") or ""
+
+        from_dict = msg.get("from", {}).get("emailAddress", {})
+        from_addr = from_dict.get("address", "")
+        from_name = from_dict.get("name")
+
+        to_addrs = [
+            r.get("emailAddress", {}).get("address", "")
+            for r in msg.get("toRecipients", [])
+            if r.get("emailAddress", {}).get("address")
+        ]
+        cc_addrs = [
+            r.get("emailAddress", {}).get("address", "")
+            for r in msg.get("ccRecipients", [])
+            if r.get("emailAddress", {}).get("address")
+        ]
+        bcc_addrs = [
+            r.get("emailAddress", {}).get("address", "")
+            for r in msg.get("bccRecipients", [])
+            if r.get("emailAddress", {}).get("address")
+        ]
+
+        received_at = datetime.now(UTC)
+        received_str = msg.get("receivedDateTime")
+        if received_str:
+            try:
+                if received_str.endswith("Z"):
+                    received_str = received_str[:-1] + "+00:00"
+                received_at = datetime.fromisoformat(received_str)
+            except Exception:
+                pass
+
+        body_obj = msg.get("body", {})
+        content_type = (body_obj.get("contentType") or "").lower()
+        content_val = body_obj.get("content")
+        body_text = None
+        body_html = None
+        if "html" in content_type:
+            body_html = content_val
+        else:
+            body_text = content_val
+
+        headers: dict[str, str] = {}
+        for h in msg.get("internetMessageHeaders", []):
+            name = (h.get("name") or "").strip()
+            val = (h.get("value") or "").strip()
+            if name:
+                headers[name.lower()] = val
+                headers[name] = val
+
+        in_reply_to = headers.get("in-reply-to")
+        references_str = headers.get("references", "")
+        references = references_str.split() if references_str else []
+
+        if not in_reply_to or not references:
+            for prop in msg.get("singleValueExtendedProperties", []):
+                prop_id = prop.get("id", "")
+                if not in_reply_to and ("0x1042" in prop_id or "InReplyTo" in prop_id):
+                    in_reply_to = prop.get("value")
+                if not references and ("0x1039" in prop_id or "References" in prop_id):
+                    ref_val = prop.get("value", "")
+                    if ref_val:
+                        references = ref_val.split()
+
+        auto_sub = headers.get("auto-submitted", "").lower()
+        precedence = headers.get("precedence", "").lower()
+        x_autoreply = headers.get("x-autoreply", "").lower()
+        is_automated = bool(
+            (auto_sub and auto_sub != "no")
+            or precedence in ("bulk", "junk", "auto_reply")
+            or x_autoreply in ("yes", "true")
+        )
+
+        return ProviderInboundMessage(
+            provider_message_id=str(mid),
+            provider_thread_id=str(thread_id) if thread_id else None,
+            rfc_message_id=str(rfc_id) if rfc_id else None,
+            in_reply_to=in_reply_to,
+            references=references,
+            from_address=from_addr,
+            from_name=from_name or None,
+            to_addresses=to_addrs,
+            cc_addresses=cc_addrs,
+            bcc_addresses=bcc_addrs,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+            received_at=received_at,
+            headers=headers,
+            is_automated=is_automated,
+        )

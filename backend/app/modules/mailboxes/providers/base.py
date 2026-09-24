@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Protocol
@@ -26,6 +26,7 @@ class ProviderCapability(StrEnum):
     CREDENTIAL_REFRESH = "CREDENTIAL_REFRESH"
     TOKEN_REVOCATION = "TOKEN_REVOCATION"
     LOOKUP_MESSAGE = "LOOKUP_MESSAGE"
+    REPLY_SYNC = "REPLY_SYNC"
 
 
 class UnsupportedCapabilityError(AppError):
@@ -117,6 +118,38 @@ class ClassifiedProviderError:
     provider_code: str | None = None
 
 
+@dataclass(frozen=True)
+class ProviderInboundMessage:
+    provider_message_id: str
+    provider_thread_id: str | None = None
+    rfc_message_id: str | None = None
+    in_reply_to: str | None = None
+    references: list[str] = field(default_factory=list)
+    from_address: str = ""
+    from_name: str | None = None
+    to_addresses: list[str] = field(default_factory=list)
+    cc_addresses: list[str] = field(default_factory=list)
+    bcc_addresses: list[str] = field(default_factory=list)
+    subject: str = ""
+    body_text: str | None = None
+    body_html: str | None = None
+    received_at: datetime | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    is_automated: bool = False
+    classification: str | None = None
+
+
+@dataclass(frozen=True)
+class SyncPageResult:
+    messages: list[ProviderInboundMessage]
+    next_cursor: str | None = None
+    next_page_token: str | None = None
+    has_more: bool = False
+    resync_required: bool = False
+    synced_checkpoint: str | None = None
+    retry_after_seconds: float | None = None
+
+
 class EmailProvider(Protocol):
     """Generic abstraction for email provider integrations.
 
@@ -180,3 +213,10 @@ class EmailProvider(Protocol):
         credential: Mapping[str, Any],
         rfc_message_id: str,
     ) -> ProviderSendResult | None: ...
+
+    def sync_inbound_messages(
+        self,
+        credential: Mapping[str, Any],
+        cursor: str | None = None,
+        page_size: int = 50,
+    ) -> SyncPageResult: ...

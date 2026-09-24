@@ -251,3 +251,49 @@ def record_message_cancelled_due_to_event(reason: str) -> None:
 def record_message_blocked_at_send_due_to_suppression() -> None:
     metrics.increment("messages_blocked_at_send_due_to_suppression_total")
 
+
+def record_reply_sync_run(provider: str, status: str) -> None:
+    metrics.increment(
+        "reply_sync_runs_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+        status=status.lower(),
+    )
+
+
+def record_reply_sync_messages_discovered(provider: str, count: int = 1) -> None:
+    metrics.increment(
+        "reply_sync_messages_discovered_total",
+        value=count,
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_reply_matched(evidence_type: str, confidence: str) -> None:
+    metrics.increment(
+        "reply_matched_total",
+        evidence_type=evidence_type.upper(),
+        confidence=confidence.upper(),
+    )
+
+
+def record_inbound_message_deduplicated(provider: str) -> None:
+    metrics.increment(
+        "reply_sync_messages_deduplicated_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+
+
+def record_campaign_stopped_by_reply() -> None:
+    metrics.increment("campaigns_stopped_by_reply_total")
+
+
+def record_future_message_cancelled_by_reply(count: int = 1) -> None:
+    metrics.increment("future_messages_cancelled_by_reply_total", value=count)
+
+
+def record_sync_resync_triggered(provider: str) -> None:
+    metrics.increment(
+        "reply_sync_resync_triggered_total",
+        provider=provider.upper() if provider else "UNKNOWN",
+    )
+

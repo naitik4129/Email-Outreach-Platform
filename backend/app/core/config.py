@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     sending_worker_enabled: bool = False
     rate_controller_reconcile_poll_seconds: float = Field(default=5.0, gt=0, le=300)
 
+    # Reply Sync & Campaign Safety settings (Phase 13)
+    reply_sync_enabled: bool = True
+    reply_sync_interval_seconds: int = Field(default=300, ge=30, le=3600)
+    reply_sync_lease_seconds: int = Field(default=120, ge=30, le=1800)
+    reply_sync_max_pages_per_run: int = Field(default=10, ge=1, le=100)
+    reply_sync_poll_seconds: float = Field(default=10.0, gt=0, le=300)
+
     supabase_url: str = Field(default="", min_length=1)
     supabase_jwt_secret: str = ""
     supabase_jwt_audience: str = "authenticated"
