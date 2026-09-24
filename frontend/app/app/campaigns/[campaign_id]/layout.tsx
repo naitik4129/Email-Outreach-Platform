@@ -13,12 +13,14 @@ import type { CampaignStatus } from "@/types/domain";
 
 const TABS: { href: string; label: string }[] = [
   { href: "overview", label: "Overview" },
+  { href: "analytics", label: "Analytics" },
   { href: "audience", label: "Audience" },
   { href: "sequence", label: "Sequence" },
   { href: "senders", label: "Senders" },
   { href: "schedule", label: "Schedule" },
   { href: "review", label: "Review" },
 ];
+
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;

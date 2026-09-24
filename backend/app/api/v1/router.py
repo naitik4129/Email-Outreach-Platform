@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.api.v1.analytics import router as analytics_router
 from app.api.v1.campaigns import router as campaigns_router
 from app.api.v1.health import router as health_router
 from app.api.v1.imports import router as imports_router
@@ -60,3 +61,9 @@ api_router.include_router(
     prefix="/workspaces/{workspace_id}",
     tags=["inbox"],
 )
+api_router.include_router(
+    analytics_router,
+    prefix="/workspaces/{workspace_id}/analytics",
+    tags=["analytics"],
+)
+

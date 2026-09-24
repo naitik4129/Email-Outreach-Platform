@@ -20,6 +20,8 @@ import {
   FileText,
   Mail,
   Inbox,
+  BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +32,8 @@ import { useWorkspace, WorkspaceProvider } from "@/lib/workspace-context";
 const navigation = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/campaigns", label: "Campaigns", icon: Send },
+  { href: "/app/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/app/deliverability", label: "Deliverability", icon: ShieldCheck },
   { href: "/app/mailboxes", label: "Mailboxes", icon: Mail },
   { href: "/app/leads", label: "Leads", icon: Contact },
   { href: "/app/inbox", label: "Inbox", icon: Inbox },
@@ -38,6 +42,7 @@ const navigation = [
   { href: "/app/leads/suppression", label: "Suppression", icon: Ban },
   { href: "/app/team", label: "Team", icon: Users },
 ];
+
 
 function AppShellInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
