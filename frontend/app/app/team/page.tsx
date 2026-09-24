@@ -1,67 +1,825 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { Loader2, Users } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  Check,
+  Clock,
+  Copy,
+  Loader2,
+  Mail,
+  RefreshCw,
+  Shield,
+  Trash2,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
+import { useState } from "react";
 
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ApiError } from "@/lib/api-client";
+import {
+  canInviteMembers,
+  canManageRoles,
+  canTransferOwnership,
+} from "@/lib/permissions";
+import {
+  createInvitation,
+  listInvitations,
+  listTeamMembers,
+  removeMember,
+  resendInvitation,
+  revokeInvitation,
+  transferOwnership,
+  updateMemberRole,
+} from "@/lib/team-api";
 import { useWorkspace } from "@/lib/workspace-context";
-import { listWorkspaceMembers } from "@/lib/workspaces-api";
+import type { RoleCode, WorkspaceInvitation, WorkspaceMember } from "@/types/domain";
+
+const AVAILABLE_ROLES: RoleCode[] = ["ADMIN", "MANAGER", "MEMBER", "VIEWER"];
 
 export default function TeamPage() {
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, activeWorkspace } = useWorkspace();
+  const queryClient = useQueryClient();
 
-  const { data: members, isLoading, isError } = useQuery({
-    queryKey: ["workspace", activeWorkspaceId, "members"],
-    queryFn: () => listWorkspaceMembers(activeWorkspaceId!),
+  const userRole = activeWorkspace?.role_code;
+  const isOwner = canManageRoles(userRole);
+  const canInvite = canInviteMembers(userRole);
+
+  // Modals & UI state
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [memberToRemove, setMemberToRemove] = useState<WorkspaceMember | null>(null);
+
+  // Invite Form
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<RoleCode>("MEMBER");
+  const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // Transfer Ownership Form
+  const [newOwnerUserId, setNewOwnerUserId] = useState("");
+  const [retainRole, setRetainRole] = useState<RoleCode>("ADMIN");
+
+  // Status banners
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Queries
+  const {
+    data: members,
+    isLoading: loadingMembers,
+    isError: membersError,
+  } = useQuery({
+    queryKey: ["workspace", activeWorkspaceId, "team"],
+    queryFn: () => listTeamMembers(activeWorkspaceId!),
     enabled: Boolean(activeWorkspaceId),
   });
 
+  const {
+    data: invitations,
+    isLoading: loadingInvitations,
+  } = useQuery({
+    queryKey: ["workspace", activeWorkspaceId, "invitations"],
+    queryFn: () => listInvitations(activeWorkspaceId!),
+    enabled: Boolean(activeWorkspaceId && canInvite),
+  });
+
+  // Mutations
+  const updateRoleMutation = useMutation({
+    mutationFn: ({
+      memberId,
+      newRole,
+      expectedVersion,
+    }: {
+      memberId: string;
+      newRole: RoleCode;
+      expectedVersion: number;
+    }) =>
+      updateMemberRole(activeWorkspaceId!, memberId, {
+        role_code: newRole,
+        expected_version: expectedVersion,
+      }),
+    onSuccess: () => {
+      setSuccessMessage("Member role updated successfully.");
+      setErrorMessage(null);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "team"],
+      });
+    },
+    onError: (err: unknown) => {
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update member role. Please refresh.";
+      setErrorMessage(msg);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "team"],
+      });
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: (memberId: string) =>
+      removeMember(activeWorkspaceId!, memberId),
+    onSuccess: () => {
+      setSuccessMessage("Member removed from workspace.");
+      setErrorMessage(null);
+      setMemberToRemove(null);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "team"],
+      });
+    },
+    onError: (err: unknown) => {
+      setErrorMessage(
+        err instanceof ApiError ? err.message : "Failed to remove member.",
+      );
+      setMemberToRemove(null);
+    },
+  });
+
+  const inviteMutation = useMutation({
+    mutationFn: () =>
+      createInvitation(activeWorkspaceId!, {
+        email: inviteEmail.trim(),
+        role_code: inviteRole,
+      }),
+    onSuccess: (data) => {
+      setSuccessMessage(`Invitation dispatched to ${inviteEmail}.`);
+      setErrorMessage(null);
+      if (data.invite_token) {
+        const origin = window.location.origin;
+        setLastInviteLink(`${origin}/auth/accept-invite?token=${data.invite_token}`);
+      } else {
+        setInviteModalOpen(false);
+        setInviteEmail("");
+      }
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "invitations"],
+      });
+    },
+    onError: (err: unknown) => {
+      setErrorMessage(
+        err instanceof ApiError ? err.message : "Failed to send invitation.",
+      );
+    },
+  });
+
+  const resendInviteMutation = useMutation({
+    mutationFn: (invitationId: string) =>
+      resendInvitation(activeWorkspaceId!, invitationId),
+    onSuccess: () => {
+      setSuccessMessage("Invitation resent successfully.");
+      setErrorMessage(null);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "invitations"],
+      });
+    },
+    onError: (err: unknown) => {
+      setErrorMessage(
+        err instanceof ApiError ? err.message : "Failed to resend invitation.",
+      );
+    },
+  });
+
+  const revokeInviteMutation = useMutation({
+    mutationFn: (invitationId: string) =>
+      revokeInvitation(activeWorkspaceId!, invitationId),
+    onSuccess: () => {
+      setSuccessMessage("Invitation revoked.");
+      setErrorMessage(null);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "invitations"],
+      });
+    },
+    onError: (err: unknown) => {
+      setErrorMessage(
+        err instanceof ApiError ? err.message : "Failed to revoke invitation.",
+      );
+    },
+  });
+
+  const transferMutation = useMutation({
+    mutationFn: () =>
+      transferOwnership(activeWorkspaceId!, {
+        new_owner_user_id: newOwnerUserId,
+        retain_role: retainRole,
+      }),
+    onSuccess: () => {
+      setSuccessMessage(
+        "Workspace ownership transferred successfully. Your role has been updated.",
+      );
+      setErrorMessage(null);
+      setTransferModalOpen(false);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId],
+      });
+      window.location.reload();
+    },
+    onError: (err: unknown) => {
+      setErrorMessage(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to transfer ownership.",
+      );
+    },
+  });
+
+  function handleCopyInviteLink() {
+    if (!lastInviteLink) return;
+    navigator.clipboard.writeText(lastInviteLink);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  }
+
   return (
-    <main className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-teal-700">Workspace</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-normal text-slate-950">
-          Team
-        </h1>
+    <main className="space-y-6 max-w-6xl pb-16">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-teal-700">Workspace Management</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
+            Team &amp; Access
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Manage teammates, roles, pending invitations, and workspace ownership.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {canTransferOwnership(userRole) && members && members.length > 1 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const candidates = members.filter((m) => m.role_code !== "OWNER");
+                if (candidates.length > 0) {
+                  setNewOwnerUserId(candidates[0].user_id);
+                }
+                setTransferModalOpen(true);
+              }}
+              className="gap-2 text-slate-700 hover:text-slate-950"
+            >
+              <ArrowRightLeft className="h-4 w-4" />
+              Transfer Ownership
+            </Button>
+          )}
+
+          {canInvite && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setLastInviteLink(null);
+                setInviteEmail("");
+                setInviteModalOpen(true);
+              }}
+              className="gap-2"
+            >
+              <UserPlus className="h-4 w-4" />
+              Invite Teammate
+            </Button>
+          )}
+        </div>
       </div>
 
-      <section className="rounded-md border border-slate-200 bg-white shadow-sm">
-        {isLoading ? (
-          <div className="flex items-center justify-center gap-2 p-8 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      {/* Alerts */}
+      {errorMessage && (
+        <Alert variant="error" className="flex items-center justify-between">
+          <span>{errorMessage}</span>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="text-red-700 hover:text-red-900"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </Alert>
+      )}
+
+      {successMessage && (
+        <Alert variant="info" className="flex items-center justify-between">
+          <span>{successMessage}</span>
+          <button
+            type="button"
+            onClick={() => setSuccessMessage(null)}
+            className="text-teal-700 hover:text-teal-900"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </Alert>
+      )}
+
+      {/* Members Directory */}
+      <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-slate-600" />
+            <h2 className="text-base font-semibold text-slate-900">
+              Active Members
+            </h2>
+            {members && (
+              <span className="ml-2 inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                {members.length}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {loadingMembers ? (
+          <div className="flex items-center justify-center gap-2 p-12 text-sm text-slate-500">
+            <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
             Loading team members&hellip;
           </div>
-        ) : isError ? (
+        ) : membersError ? (
           <p className="p-8 text-center text-sm text-red-600">
-            We couldn&apos;t load the team directory. Please try again.
+            Unable to load team members. Please try refreshing.
           </p>
         ) : !members || members.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 p-8 text-center text-sm text-slate-500">
-            <Users className="h-6 w-6 text-slate-300" aria-hidden="true" />
-            No team members yet.
+          <div className="flex flex-col items-center gap-2 p-12 text-center text-sm text-slate-500">
+            <Users className="h-8 w-8 text-slate-300" aria-hidden="true" />
+            No members found in this workspace.
           </div>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-5 py-3">Name</th>
-                <th className="px-5 py-3">Role</th>
-                <th className="px-5 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {members.map((member) => (
-                <tr key={member.membership_id}>
-                  <td className="px-5 py-3 font-medium text-slate-950">
-                    {member.display_name ?? "Unnamed member"}
-                  </td>
-                  <td className="px-5 py-3 text-slate-600">{member.role_code}</td>
-                  <td className="px-5 py-3 text-slate-600">{member.status}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+                <tr>
+                  <th className="px-6 py-3.5">User</th>
+                  <th className="px-6 py-3.5">Email</th>
+                  <th className="px-6 py-3.5">Role</th>
+                  <th className="px-6 py-3.5">Joined</th>
+                  {isOwner && <th className="px-6 py-3.5 text-right">Actions</th>}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {members.map((member) => {
+                  const isCurrentMemberOwner = member.role_code === "OWNER";
+                  return (
+                    <tr
+                      key={member.membership_id}
+                      className="hover:bg-slate-50/60 transition-colors"
+                    >
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-teal-100 text-teal-800 font-semibold text-sm">
+                            {(member.display_name?.[0] ?? member.email?.[0] ?? "U").toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {member.display_name ?? "Member"}
+                            </p>
+                            <p className="text-xs text-slate-500 md:hidden">
+                              {member.email}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-slate-600">
+                        {member.email ?? "—"}
+                      </td>
+                      <td className="px-6 py-4">
+                        {isOwner && !isCurrentMemberOwner ? (
+                          <select
+                            value={member.role_code}
+                            disabled={updateRoleMutation.isPending}
+                            onChange={(e) =>
+                              updateRoleMutation.mutate({
+                                memberId: member.membership_id,
+                                newRole: e.target.value as RoleCode,
+                                expectedVersion: member.version,
+                              })
+                            }
+                            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
+                          >
+                            {AVAILABLE_ROLES.map((role) => (
+                              <option key={role} value={role}>
+                                {role}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              isCurrentMemberOwner
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {isCurrentMemberOwner && (
+                              <Shield className="h-3 w-3" />
+                            )}
+                            {member.role_code}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-xs text-slate-500">
+                        {new Date(member.joined_at).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </td>
+                      {isOwner && (
+                        <td className="px-6 py-4 text-right">
+                          {!isCurrentMemberOwner && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setMemberToRemove(member)}
+                              className="text-red-600 hover:bg-red-50 hover:text-red-700 h-8 px-2"
+                              aria-label={`Remove ${member.display_name ?? member.email}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
+
+      {/* Pending Invitations Section */}
+      {canInvite && (
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Mail className="h-5 w-5 text-slate-600" />
+              <h2 className="text-base font-semibold text-slate-900">
+                Pending Invitations
+              </h2>
+              {invitations && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                  {invitations.filter((i) => i.status === "PENDING").length}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {loadingInvitations ? (
+            <div className="flex items-center justify-center gap-2 p-8 text-sm text-slate-500">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+              Loading invitations&hellip;
+            </div>
+          ) : !invitations || invitations.length === 0 ? (
+            <div className="p-8 text-center text-sm text-slate-500">
+              No pending invitations.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  <tr>
+                    <th className="px-6 py-3.5">Invited Email</th>
+                    <th className="px-6 py-3.5">Role</th>
+                    <th className="px-6 py-3.5">Status</th>
+                    <th className="px-6 py-3.5">Expires</th>
+                    <th className="px-6 py-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {invitations.map((inv) => (
+                    <tr
+                      key={inv.id}
+                      className="hover:bg-slate-50/60 transition-colors"
+                    >
+                      <td className="px-6 py-4 font-medium text-slate-900">
+                        {inv.email}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                          {inv.role_code}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                            inv.status === "PENDING"
+                              ? "bg-amber-50 text-amber-700"
+                              : inv.status === "ACCEPTED"
+                              ? "bg-green-50 text-green-700"
+                              : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          <Clock className="h-3 w-3" />
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-xs text-slate-500">
+                        {new Date(inv.expires_at).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        {inv.status === "PENDING" && (
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={resendInviteMutation.isPending}
+                              onClick={() => resendInviteMutation.mutate(inv.id)}
+                              className="text-slate-600 hover:text-slate-950 h-8 px-2"
+                              title="Resend invitation"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline text-xs ml-1">
+                                Resend
+                              </span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={revokeInviteMutation.isPending}
+                              onClick={() => revokeInviteMutation.mutate(inv.id)}
+                              className="text-red-600 hover:bg-red-50 hover:text-red-700 h-8 px-2"
+                              title="Revoke invitation"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline text-xs ml-1">
+                                Revoke
+                              </span>
+                            </Button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Modal: Invite Teammate */}
+      {inviteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-semibold text-slate-950">
+                Invite Teammate
+              </h3>
+              <button
+                type="button"
+                onClick={() => setInviteModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {lastInviteLink ? (
+              <div className="space-y-4 py-2">
+                <div className="rounded-md bg-teal-50 border border-teal-200 p-3 text-sm text-teal-800">
+                  <p className="font-medium">Invitation link generated!</p>
+                  <p className="text-xs mt-1 text-teal-700">
+                    A transactional email has been queued. You can also share the direct link below:
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={lastInviteLink}
+                    className="flex-1 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-800"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyInviteLink}
+                    className="gap-1"
+                  >
+                    {copiedLink ? (
+                      <>
+                        <Check className="h-4 w-4 text-teal-600" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4" />
+                        Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <Button
+                  variant="primary"
+                  className="w-full"
+                  onClick={() => {
+                    setInviteModalOpen(false);
+                    setLastInviteLink(null);
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  inviteMutation.mutate();
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <Label htmlFor="invite-email">Teammate Email</Label>
+                  <Input
+                    id="invite-email"
+                    type="email"
+                    required
+                    placeholder="colleague@company.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="invite-role">Workspace Role</Label>
+                  <select
+                    id="invite-role"
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as RoleCode)}
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  >
+                    <option value="MEMBER">MEMBER (View &amp; draft campaigns)</option>
+                    <option value="MANAGER">MANAGER (Execute campaigns &amp; mailboxes)</option>
+                    <option value="ADMIN">ADMIN (Workspace settings &amp; invitations)</option>
+                    <option value="VIEWER">VIEWER (Read-only analytics)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setInviteModalOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={inviteMutation.isPending || !inviteEmail.trim()}
+                  >
+                    {inviteMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                        Sending&hellip;
+                      </>
+                    ) : (
+                      "Send Invitation"
+                    )}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Transfer Ownership */}
+      {transferModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-lg font-semibold text-slate-950 flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                Transfer Ownership
+              </h3>
+              <button
+                type="button"
+                onClick={() => setTransferModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1">
+              <p className="font-semibold">Irreversible Administrative Action</p>
+              <p>
+                Transferring ownership designates another member as the primary OWNER. You will retain access under your selected role, but you will no longer have exclusive ownership authority.
+              </p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                transferMutation.mutate();
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <Label htmlFor="new-owner">Select New Owner</Label>
+                <select
+                  id="new-owner"
+                  value={newOwnerUserId}
+                  onChange={(e) => setNewOwnerUserId(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                >
+                  {members
+                    ?.filter((m) => m.role_code !== "OWNER")
+                    .map((m) => (
+                      <option key={m.user_id} value={m.user_id}>
+                        {m.display_name ?? m.email} ({m.email})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <Label htmlFor="retain-role">Your Role After Transfer</Label>
+                <select
+                  id="retain-role"
+                  value={retainRole}
+                  onChange={(e) => setRetainRole(e.target.value as RoleCode)}
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                >
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="MANAGER">MANAGER</option>
+                  <option value="MEMBER">MEMBER</option>
+                  <option value="VIEWER">VIEWER</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setTransferModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="danger"
+                  disabled={transferMutation.isPending || !newOwnerUserId}
+                >
+                  {transferMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                      Transferring&hellip;
+                    </>
+                  ) : (
+                    "Confirm Transfer"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Remove Member Confirmation */}
+      {memberToRemove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl space-y-4">
+            <h3 className="text-base font-semibold text-slate-950">
+              Remove Team Member?
+            </h3>
+            <p className="text-sm text-slate-600">
+              Are you sure you want to remove{" "}
+              <strong className="text-slate-900">
+                {memberToRemove.display_name ?? memberToRemove.email}
+              </strong>{" "}
+              from this workspace? They will immediately lose access to all campaigns and data.
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setMemberToRemove(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={removeMemberMutation.isPending}
+                onClick={() =>
+                  removeMemberMutation.mutate(memberToRemove.membership_id)
+                }
+              >
+                {removeMemberMutation.isPending ? "Removing..." : "Remove"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

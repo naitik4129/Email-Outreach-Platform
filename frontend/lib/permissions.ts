@@ -34,3 +34,20 @@ export function canManageInbox(role: RoleCode): boolean {
   return Boolean(role && INBOX_MANAGE_ROLES.has(role));
 }
 
+const INVITE_ROLES = new Set(["OWNER", "ADMIN"]);
+
+/** team.invite: invite new members or manage pending invites. */
+export function canInviteMembers(role: RoleCode): boolean {
+  return Boolean(role && INVITE_ROLES.has(role));
+}
+
+/** team.manage_roles: change roles or remove members (Owner only). */
+export function canManageRoles(role: RoleCode): boolean {
+  return role === "OWNER";
+}
+
+/** team.transfer_ownership: transfer workspace ownership (Owner only). */
+export function canTransferOwnership(role: RoleCode): boolean {
+  return role === "OWNER";
+}
+

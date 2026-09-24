@@ -650,3 +650,67 @@ export type InboxSyncStatusResponse = {
   mailboxes: MailboxSyncStatusItem[];
 };
 
+export type WorkspaceMember = {
+  membership_id: string;
+  user_id: string;
+  display_name: string | null;
+  email: string | null;
+  role_code: RoleCode;
+  status: "ACTIVE" | "REVOKED";
+  version: number;
+  joined_at: string;
+  revoked_at: string | null;
+};
+
+export type WorkspaceInvitation = {
+  id: string;
+  workspace_id: string;
+  email: string;
+  role_code: RoleCode;
+  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+  invited_by_user_id: string | null;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VerifiedInvitation = {
+  valid: boolean;
+  email: string;
+  workspace_name: string;
+  role_code: RoleCode;
+  expires_at: string;
+};
+
+export type NotificationItem = {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  category: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+  is_read: boolean;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type NotificationPreferences = {
+  email_notifications_enabled: boolean;
+  in_app_notifications_enabled: boolean;
+  category_preferences: Record<string, boolean>;
+};
+
+export type DimensionUsage = {
+  used: number;
+  limit: number | null;
+  unit: string;
+};
+
+export type WorkspaceUsage = {
+  workspace_id: string;
+  plan_name: string;
+  dimensions: Record<string, DimensionUsage>;
+  as_of: string;
+};
+

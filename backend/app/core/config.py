@@ -39,6 +39,9 @@ class Settings(BaseSettings):
         "http://localhost:3000,http://127.0.0.1:3000"
     )
 
+    platform_operator_emails: str = "operator@example.com,admin@example.com"
+    platform_operator_key: str = ""
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "text"] = "json"
     service_name: str = "backend"

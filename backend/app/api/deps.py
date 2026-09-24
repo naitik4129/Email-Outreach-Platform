@@ -93,3 +93,32 @@ def get_workspace_context(
     return WorkspaceContext(
         workspace_id=workspace_id, user_id=principal.user_id, role_code=role_code
     )
+
+
+@dataclass(frozen=True)
+class PlatformOperatorPrincipal:
+    """Explicit platform administrator identity, separate from any workspace role."""
+
+    user_id: UUID | None
+    email: str | None
+
+
+def get_platform_operator(
+    principal: AuthenticatedPrincipal = Depends(get_current_user),
+    operator_key: str | None = None,
+) -> PlatformOperatorPrincipal:
+    """Verifies server-side platform operator authority.
+
+    Never trusts client-side role claims, workspace permissions, or route parameters.
+    Requires caller's verified email to match platform_operator_emails or valid operator key.
+    """
+    settings = Settings.current()
+    if operator_key and settings.platform_operator_key and operator_key == settings.platform_operator_key:
+        return PlatformOperatorPrincipal(user_id=principal.user_id, email=principal.email)
+
+    if principal.email:
+        allowed = {e.strip().lower() for e in settings.platform_operator_emails.split(",") if e.strip()}
+        if principal.email.strip().lower() in allowed:
+            return PlatformOperatorPrincipal(user_id=principal.user_id, email=principal.email)
+
+    raise AppError("forbidden", "Platform operator authority required", status_code=403)
