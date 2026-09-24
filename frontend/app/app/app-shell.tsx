@@ -19,6 +19,7 @@ import {
   Ban,
   FileText,
   Mail,
+  Inbox,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ const navigation = [
   { href: "/app/campaigns", label: "Campaigns", icon: Send },
   { href: "/app/mailboxes", label: "Mailboxes", icon: Mail },
   { href: "/app/leads", label: "Leads", icon: Contact },
+  { href: "/app/inbox", label: "Inbox", icon: Inbox },
   { href: "/app/templates", label: "Templates", icon: FileText },
   { href: "/app/leads/imports", label: "Imports", icon: UploadCloud },
   { href: "/app/leads/suppression", label: "Suppression", icon: Ban },

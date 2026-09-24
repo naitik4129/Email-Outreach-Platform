@@ -53,7 +53,9 @@ def test_expired_token_rejected() -> None:
 
 def test_tampered_signature_rejected() -> None:
     token = _sign(_claims())
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    parts = token.split(".")
+    tampered_sig = ("x" if parts[2][0] != "x" else "y") + parts[2][1:]
+    tampered = f"{parts[0]}.{parts[1]}.{tampered_sig}"
     with pytest.raises(AppError) as exc_info:
         verify_access_token(tampered, _settings())
     assert exc_info.value.status_code == 401

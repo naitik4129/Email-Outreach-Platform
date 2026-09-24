@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.campaigns import router as campaigns_router
 from app.api.v1.health import router as health_router
 from app.api.v1.imports import router as imports_router
+from app.api.v1.inbox import router as inbox_router
 from app.api.v1.leads import router as leads_router
 from app.api.v1.mailboxes import (
     callback_router as mailboxes_callback_router,
@@ -53,4 +54,9 @@ api_router.include_router(
     campaigns_router,
     prefix="/workspaces/{workspace_id}",
     tags=["campaigns"],
+)
+api_router.include_router(
+    inbox_router,
+    prefix="/workspaces/{workspace_id}",
+    tags=["inbox"],
 )

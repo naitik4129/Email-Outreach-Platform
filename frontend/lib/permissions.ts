@@ -26,3 +26,11 @@ export function canDraftCampaign(role: RoleCode): boolean {
 export function canExecuteCampaign(role: RoleCode): boolean {
   return Boolean(role && EXECUTE_ROLES.has(role));
 }
+
+const INBOX_MANAGE_ROLES = new Set(["OWNER", "ADMIN", "MANAGER"]);
+
+/** inbox.manage: archive or unarchive conversations. */
+export function canManageInbox(role: RoleCode): boolean {
+  return Boolean(role && INBOX_MANAGE_ROLES.has(role));
+}
+

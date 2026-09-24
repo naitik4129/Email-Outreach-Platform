@@ -559,3 +559,94 @@ export type CampaignPlanning = {
   enroll: PlanningJobStatus | null;
   render: PlanningJobStatus | null;
 };
+
+export type InboxFilter = "ALL" | "UNREAD" | "READ" | "REPLIED" | "ARCHIVED";
+
+export type ConversationListItem = {
+  id: string;
+  mailbox_id: string;
+  mailbox_address: string;
+  mailbox_provider: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  subject: string;
+  snippet: string;
+  latest_activity_at: string;
+  is_read: boolean;
+  read_at: string | null;
+  archived_at: string | null;
+  participant_email: string;
+  participant_name: string | null;
+  reply_status: string;
+  message_count: number;
+};
+
+export type ConversationPage = {
+  items: ConversationListItem[];
+  next_cursor: string | null;
+  has_more: boolean;
+  unread_count: number;
+};
+
+export type MessageThreadItem = {
+  id: string;
+  direction: "INBOUND" | "OUTBOUND";
+  sender_email: string;
+  sender_name: string | null;
+  recipient_email: string;
+  recipient_name: string | null;
+  subject: string;
+  content_text: string | null;
+  content_html: string | null;
+  timestamp: string;
+  status: string | null;
+  sequence_step_id: string | null;
+  association_status: string | null;
+  classification: string | null;
+};
+
+export type ConversationDetail = {
+  id: string;
+  workspace_id: string;
+  mailbox_id: string;
+  mailbox_address: string;
+  mailbox_provider: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  subject: string;
+  latest_activity_at: string;
+  created_at: string;
+  is_read: boolean;
+  read_at: string | null;
+  archived_at: string | null;
+  reply_status: string;
+  participant_email: string;
+  participant_name: string | null;
+  lead_id: string | null;
+  lead_company: string | null;
+  messages: MessageThreadItem[];
+};
+
+export type ConversationActionResult = {
+  id: string;
+  is_read: boolean;
+  read_at: string | null;
+  archived_at: string | null;
+  updated_at: string | null;
+};
+
+export type MailboxSyncStatusItem = {
+  mailbox_id: string;
+  email_address: string;
+  provider: string;
+  connection_status: string;
+  sync_scope: string;
+  sync_status: string;
+  last_complete_at: string | null;
+  failure_count: number;
+};
+
+export type InboxSyncStatusResponse = {
+  mailboxes: MailboxSyncStatusItem[];
+};
+
