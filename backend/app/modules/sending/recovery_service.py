@@ -49,17 +49,21 @@ class RecoveryService:
         now: datetime | None = None,
     ) -> int:
         now = now or datetime.now(UTC)
-        bind = self.session.get_bind()
-        is_sqlite = bind and getattr(bind.dialect, "name", "") == "sqlite"
 
-        lock_clause = "" if is_sqlite else "FOR UPDATE SKIP LOCKED"
         ws_clause = "AND a.workspace_id = :ws" if workspace_id else ""
         query_params: dict[str, Any] = {"now": now, "limit": limit}
         if workspace_id:
             query_params["ws"] = str(workspace_id)
 
-        # 1. Discover abandoned PREPARED attempts with expired lease deadlines
-        _safe_set_role(self.session, "app_worker_send")
+        # 1. Discover abandoned PREPARED attempts with expired lease deadlines.
+        # This sweep spans every workspace, so it runs as app_scheduler, whose
+        # read-only discovery policies (migrations 0011/0013) allow that;
+        # app_worker_send is scoped to one workspace and would see no rows.
+        # Every write below happens per row as app_worker_send inside that
+        # row's workspace, guarded by evidence_state/status/version, so no
+        # row lock is needed at discovery time (and FOR UPDATE would also
+        # require an UPDATE policy that app_scheduler only has per workspace).
+        _safe_set_role(self.session, "app_scheduler")
         _safe_set_workspace(self.session, workspace_id)
 
         candidates_stmt = text(
@@ -75,7 +79,6 @@ class RecoveryService:
               {ws_clause}
             ORDER BY a.authorization_deadline ASC
             LIMIT :limit
-            {lock_clause}
             """
         )
 

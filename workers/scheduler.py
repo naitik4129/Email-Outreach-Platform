@@ -128,7 +128,10 @@ class SchedulerRuntime:
                                 kwargs={
                                     "workspace_id": str(sync["workspace_id"]),
                                     "mailbox_id": str(sync["mailbox_id"]),
-                                    "lease_owner": "scheduler-sync-dispatcher",
+                                    # Unique per-claim owner minted by
+                                    # claim_due_sync_states; the task takes
+                                    # over exactly this lease.
+                                    "lease_owner": sync["lease_owner"],
                                 },
                                 queue="mailbox.sync",
                             )

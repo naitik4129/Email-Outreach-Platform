@@ -411,7 +411,7 @@ class TestReplyRepository:
             text(
                 """
             CREATE TABLE public.mailbox_sync_states (
-                id TEXT PRIMARY KEY,
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
                 workspace_id TEXT NOT NULL,
                 mailbox_id TEXT NOT NULL,
                 connection_generation INTEGER NOT NULL,
@@ -715,6 +715,86 @@ class TestReplyRepository:
         refreshed = repo.get_sync_state(workspace_id=ws_id, mailbox_id=mb_id)
         assert refreshed["lease_owner"] is None
         assert refreshed["status"] == "CURRENT"
+
+    def test_scheduler_claim_hands_lease_to_the_task_with_the_same_owner(
+        self, sqlite_session: Session
+    ) -> None:
+        repo = ReplyRepository(sqlite_session)
+        ws_id, mb_id = uuid.uuid4(), uuid.uuid4()
+        repo.ensure_sync_state(
+            workspace_id=ws_id, mailbox_id=mb_id, connection_generation=1
+        )
+        sqlite_session.commit()
+
+        now = datetime.now(UTC) + timedelta(seconds=5)
+        claimed = repo.claim_due_sync_states(lease_owner="scheduler", now=now)
+        sqlite_session.commit()
+
+        assert len(claimed) == 1
+        owner = claimed[0]["lease_owner"]
+        # Each claim gets its own token so two dispatches can never share one.
+        assert owner.startswith("scheduler:") and owner != "scheduler:"
+        # A lease that is already claimed is not claimed a second time.
+        assert repo.claim_due_sync_states(lease_owner="scheduler", now=now) == []
+
+        # The mailbox.sync task receives that token and must be able to take
+        # over the lease the scheduler claimed for it ...
+        lease = repo.acquire_sync_lease(
+            workspace_id=ws_id,
+            mailbox_id=mb_id,
+            lease_owner=owner,
+            lease_duration_seconds=120,
+        )
+        assert lease is not None
+        assert lease["lease_owner"] == owner
+        # ... while any other worker is still locked out.
+        assert (
+            repo.acquire_sync_lease(
+                workspace_id=ws_id, mailbox_id=mb_id, lease_owner="worker-2"
+            )
+            is None
+        )
+
+    def test_recover_stale_sync_leases_clears_only_expired_leases(
+        self, sqlite_session: Session
+    ) -> None:
+        repo = ReplyRepository(sqlite_session)
+        ws_id = uuid.uuid4()
+        expired_mb, active_mb = uuid.uuid4(), uuid.uuid4()
+        for mailbox_id in (expired_mb, active_mb):
+            repo.ensure_sync_state(
+                workspace_id=ws_id, mailbox_id=mailbox_id, connection_generation=1
+            )
+            assert repo.acquire_sync_lease(
+                workspace_id=ws_id,
+                mailbox_id=mailbox_id,
+                lease_owner=f"worker-{mailbox_id}",
+                lease_duration_seconds=120,
+            )
+        sqlite_session.commit()
+
+        now = datetime.now(UTC)
+        sqlite_session.execute(
+            text(
+                "UPDATE public.mailbox_sync_states SET lease_expires_at = :past "
+                "WHERE mailbox_id = :mb"
+            ),
+            {"past": now - timedelta(seconds=30), "mb": str(expired_mb)},
+        )
+        sqlite_session.commit()
+
+        assert repo.recover_stale_sync_leases(now=now) == 1
+        sqlite_session.commit()
+
+        owners = dict(
+            sqlite_session.execute(
+                text(
+                    "SELECT mailbox_id, lease_owner FROM public.mailbox_sync_states"
+                )
+            ).all()
+        )
+        assert owners[str(expired_mb)] is None
+        assert owners[str(active_mb)] == f"worker-{active_mb}"
 
     def test_inbound_message_deduplication(self, sqlite_session: Session) -> None:
         repo = ReplyRepository(sqlite_session)

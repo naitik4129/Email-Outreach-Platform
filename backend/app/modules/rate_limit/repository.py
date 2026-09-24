@@ -201,6 +201,9 @@ class RateControlRepository:
         )
         return dict(row) if row else None
 
+    # `version` and `updated_at` are maintained by the rate_control_touch_row
+    # trigger (app_touch_row). app_rate_controller is intentionally not granted
+    # UPDATE on them (migration 0005), so these statements must not assign them.
     def enter_recovering(self, *, next_generation: int) -> None:
         _safe_set_role(self.session, "app_rate_controller")
         self.session.execute(
@@ -215,8 +218,7 @@ class RateControlRepository:
                     generation = EXCLUDED.generation,
                     status = 'RECOVERING',
                     recovery_watermark = NULL,
-                    recovery_started_at = pg_catalog.transaction_timestamp(),
-                    version = public.rate_control.version + 1
+                    recovery_started_at = pg_catalog.transaction_timestamp()
                 """
             ),
             {"generation": next_generation},
@@ -229,8 +231,7 @@ class RateControlRepository:
                 """
                 UPDATE public.rate_control
                 SET status = 'READY',
-                    recovery_watermark = :watermark,
-                    version = version + 1
+                    recovery_watermark = :watermark
                 WHERE id AND generation = :generation AND status = 'RECOVERING'
                 """
             ),

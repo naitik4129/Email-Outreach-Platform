@@ -93,17 +93,20 @@ class ReplyRepository:
         if existing:
             return existing
 
+        # version/created_at/updated_at are DB-managed (column defaults plus the
+        # mailbox_sync_states_touch_row trigger); app_worker_sync has no grant
+        # on them (migrations 0003/0015), so they must not appear in this SQL.
         now = datetime.now(UTC)
         insert_query = text(
             """
             INSERT INTO public.mailbox_sync_states (
                 workspace_id, mailbox_id, connection_generation, sync_scope,
                 cursor_data, lease_owner, lease_generation, lease_expires_at,
-                next_due_at, status, failure_count, version, created_at, updated_at
+                next_due_at, status, failure_count
             ) VALUES (
                 :ws, :mbid, :gen, :scope,
                 NULL, NULL, 1, NULL,
-                :now, 'INITIALIZING', 0, 1, :now, :now
+                :now, 'INITIALIZING', 0
             )
             ON CONFLICT (workspace_id, mailbox_id, sync_scope) DO NOTHING
             """
@@ -175,20 +178,27 @@ class ReplyRepository:
         if lease_expiry and lease_expiry.tzinfo is None:
             lease_expiry = lease_expiry.replace(tzinfo=UTC)
 
-        is_free = current_owner is None or lease_expiry is None or lease_expiry <= now
+        # A lease already held by this exact owner is the scheduler's hand-off:
+        # claim_due_sync_states leases the row under a unique per-claim owner
+        # and passes that owner to the mailbox.sync task, which must be able to
+        # take over. Any other unexpired owner still blocks.
+        is_free = (
+            current_owner is None
+            or lease_expiry is None
+            or lease_expiry <= now
+            or current_owner == lease_owner
+        )
         if not is_free:
             # Locked by another active worker
             return None
 
-        # Update lease
+        # Update lease (version/updated_at are maintained by the touch trigger)
         update_query = text(
             """
             UPDATE public.mailbox_sync_states
             SET lease_owner = :owner,
                 lease_expires_at = :expires_at,
-                lease_generation = lease_generation + 1,
-                version = version + 1,
-                updated_at = :now
+                lease_generation = lease_generation + 1
             WHERE workspace_id = :ws AND mailbox_id = :mbid AND sync_scope = :scope
               AND version = :ver
             """
@@ -198,7 +208,6 @@ class ReplyRepository:
             {
                 "owner": lease_owner,
                 "expires_at": expires_at,
-                "now": now,
                 "ws": str(workspace_id),
                 "mbid": str(mailbox_id),
                 "scope": sync_scope,
@@ -238,9 +247,7 @@ class ReplyRepository:
                 status = :status,
                 last_complete_at = :now,
                 next_due_at = COALESCE(:next_due_at, next_due_at),
-                failure_count = 0,
-                version = version + 1,
-                updated_at = :now
+                failure_count = 0
             WHERE workspace_id = :ws AND mailbox_id = :mbid AND sync_scope = :scope
             """
         )
@@ -271,7 +278,6 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
         failure_incr = 1 if failure else 0
         query = text(
             """
@@ -279,9 +285,7 @@ class ReplyRepository:
             SET lease_owner = NULL,
                 lease_expires_at = NULL,
                 failure_count = failure_count + :failure_incr,
-                next_due_at = COALESCE(:next_due_at, next_due_at),
-                version = version + 1,
-                updated_at = :now
+                next_due_at = COALESCE(:next_due_at, next_due_at)
             WHERE workspace_id = :ws AND mailbox_id = :mbid AND sync_scope = :scope
               AND lease_owner = :owner
             """
@@ -291,7 +295,6 @@ class ReplyRepository:
             {
                 "failure_incr": failure_incr,
                 "next_due_at": next_due_at,
-                "now": now,
                 "ws": str(workspace_id),
                 "mbid": str(mailbox_id),
                 "scope": sync_scope,
@@ -309,21 +312,17 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
         query = text(
             """
             UPDATE public.mailbox_sync_states
             SET status = 'RESYNC_REQUIRED',
-                cursor_data = NULL,
-                version = version + 1,
-                updated_at = :now
+                cursor_data = NULL
             WHERE workspace_id = :ws AND mailbox_id = :mbid AND sync_scope = :scope
             """
         )
         self.session.execute(
             query,
             {
-                "now": now,
                 "ws": str(workspace_id),
                 "mbid": str(mailbox_id),
                 "scope": sync_scope,
@@ -331,27 +330,55 @@ class ReplyRepository:
         )
 
     def recover_stale_sync_leases(self, *, now: datetime, batch_size: int = 50) -> int:
-        """Recover sync leases whose lease_expires_at has elapsed."""
-        _safe_set_role(self.session, "app_worker_sync")
+        """Recover sync leases whose lease_expires_at has elapsed.
+
+        Discovery is cross-workspace, so it runs as app_scheduler, which has a
+        read-only discovery policy on mailbox_sync_states (migration 0019).
+        app_worker_sync is scoped to one workspace per transaction and would
+        see no rows here. Each recovery is then written as app_worker_sync
+        inside that row's workspace, guarded by the row's version.
+        """
+        _safe_set_role(self.session, "app_scheduler")
         _safe_set_workspace(self.session, None)
 
-        query = text(
-            """
-            UPDATE public.mailbox_sync_states
-            SET lease_owner = NULL,
-                lease_expires_at = NULL,
-                version = version + 1,
-                updated_at = :now
-            WHERE id IN (
-                SELECT id FROM public.mailbox_sync_states
+        stale = self.session.execute(
+            text(
+                """
+                SELECT id, workspace_id, version
+                FROM public.mailbox_sync_states
                 WHERE lease_owner IS NOT NULL
                   AND lease_expires_at < :now
+                ORDER BY lease_expires_at ASC
                 LIMIT :limit
+                """
+            ),
+            {"now": now, "limit": batch_size},
+        ).mappings().all()
+
+        recovered = 0
+        for row in stale:
+            _safe_set_role(self.session, "app_worker_sync")
+            _safe_set_workspace(self.session, UUID(str(row["workspace_id"])))
+            res = self.session.execute(
+                text(
+                    """
+                    UPDATE public.mailbox_sync_states
+                    SET lease_owner = NULL,
+                        lease_expires_at = NULL
+                    WHERE id = :id AND workspace_id = :ws AND version = :ver
+                      AND lease_owner IS NOT NULL
+                      AND lease_expires_at < :now
+                    """
+                ),
+                {
+                    "id": row["id"],
+                    "ws": str(row["workspace_id"]),
+                    "ver": row["version"],
+                    "now": now,
+                },
             )
-            """
-        )
-        res = self.session.execute(query, {"now": now, "limit": batch_size})
-        return res.rowcount
+            recovered += res.rowcount
+        return recovered
 
     def claim_due_sync_states(
         self,
@@ -362,18 +389,25 @@ class ReplyRepository:
         lease_duration_seconds: int = 120,
         sync_scope: str = "INBOX",
     ) -> list[dict[str, Any]]:
-        """Find and claim due sync states across mailboxes."""
-        _safe_set_role(self.session, "app_worker_sync")
+        """Find and claim due sync states across mailboxes.
+
+        Discovery is cross-workspace, so it runs as app_scheduler (read-only
+        discovery policy and a column-limited grant that excludes cursor_data,
+        migration 0019). Each claim is then written as app_worker_sync inside
+        that row's workspace, guarded by the row's version so concurrent
+        claimers cannot both win. Every claim gets its own owner token, which
+        the dispatcher passes to the mailbox.sync task; acquire_sync_lease lets
+        that same owner take over the lease.
+        """
+        _safe_set_role(self.session, "app_scheduler")
         _safe_set_workspace(self.session, None)
 
-        is_sqlite = self._is_sqlite()
-        lock_clause = "" if is_sqlite else "FOR UPDATE SKIP LOCKED"
         expires_at = now + timedelta(seconds=lease_duration_seconds)
 
         select_query = text(
-            f"""
+            """
             SELECT id, workspace_id, mailbox_id, connection_generation, sync_scope,
-                   cursor_data, lease_owner, lease_generation, lease_expires_at,
+                   lease_owner, lease_generation, lease_expires_at,
                    next_due_at, status, failure_count, version
             FROM public.mailbox_sync_states
             WHERE sync_scope = :scope
@@ -382,7 +416,6 @@ class ReplyRepository:
               AND (lease_owner IS NULL OR lease_expires_at < :now)
             ORDER BY next_due_at ASC NULLS FIRST
             LIMIT :limit
-            {lock_clause}
             """
         )
         rows = self.session.execute(
@@ -392,30 +425,33 @@ class ReplyRepository:
 
         claimed: list[dict[str, Any]] = []
         for r in rows:
+            claim_owner = f"{lease_owner}:{uuid4().hex}"
+            _safe_set_role(self.session, "app_worker_sync")
+            _safe_set_workspace(self.session, UUID(str(r["workspace_id"])))
             update_query = text(
                 """
                 UPDATE public.mailbox_sync_states
                 SET lease_owner = :owner,
                     lease_expires_at = :expires_at,
-                    lease_generation = lease_generation + 1,
-                    version = version + 1,
-                    updated_at = :now
-                WHERE id = :id AND version = :ver
+                    lease_generation = lease_generation + 1
+                WHERE id = :id AND workspace_id = :ws AND version = :ver
+                  AND (lease_owner IS NULL OR lease_expires_at < :now)
                 """
             )
             res = self.session.execute(
                 update_query,
                 {
-                    "owner": lease_owner,
+                    "owner": claim_owner,
                     "expires_at": expires_at,
                     "now": now,
                     "id": r["id"],
+                    "ws": str(r["workspace_id"]),
                     "ver": r["version"],
                 },
             )
             if res.rowcount > 0:
                 item = dict(r)
-                item["lease_owner"] = lease_owner
+                item["lease_owner"] = claim_owner
                 item["lease_expires_at"] = expires_at
                 claimed.append(item)
 
@@ -514,7 +550,9 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
+        # version/updated_at/created_at are DB-managed (defaults plus the
+        # conversations_touch_row trigger), and app_worker_sync has no grant on
+        # them, so none of the statements below may assign them.
 
         # 1. Search by provider_thread_id
         if provider_thread_id:
@@ -533,13 +571,11 @@ class ReplyRepository:
                 upd = text(
                     """
                     UPDATE public.conversations
-                    SET latest_activity_at = GREATEST(latest_activity_at, :act),
-                        updated_at = :now,
-                        version = version + 1
+                    SET latest_activity_at = GREATEST(latest_activity_at, :act)
                     WHERE id = :id
                     """
                 )
-                self.session.execute(upd, {"act": activity_at, "now": now, "id": row[0]})
+                self.session.execute(upd, {"act": activity_at, "id": row[0]})
                 return row[0]
 
         # 2. Search by local_anchor_id
@@ -559,13 +595,11 @@ class ReplyRepository:
                 upd = text(
                     """
                     UPDATE public.conversations
-                    SET latest_activity_at = GREATEST(latest_activity_at, :act),
-                        updated_at = :now,
-                        version = version + 1
+                    SET latest_activity_at = GREATEST(latest_activity_at, :act)
                     WHERE id = :id
                     """
                 )
-                self.session.execute(upd, {"act": activity_at, "now": now, "id": row[0]})
+                self.session.execute(upd, {"act": activity_at, "id": row[0]})
                 return row[0]
 
         # 3. Create new conversation
@@ -574,10 +608,10 @@ class ReplyRepository:
             """
             INSERT INTO public.conversations (
                 id, workspace_id, mailbox_id, provider_thread_id, local_anchor_id,
-                campaign_summary_id, created_at, latest_activity_at, version, updated_at
+                campaign_summary_id, latest_activity_at
             ) VALUES (
                 :id, :ws, :mbid, :thread, :anchor,
-                :camp, :act, :act, 1, :now
+                :camp, :act
             )
             """
         )
@@ -591,7 +625,6 @@ class ReplyRepository:
                 "anchor": local_anchor_id if not provider_thread_id else None,
                 "camp": str(campaign_summary_id) if campaign_summary_id else None,
                 "act": activity_at,
-                "now": now,
             },
         )
         return conv_id
@@ -647,12 +680,12 @@ class ReplyRepository:
                 id, workspace_id, mailbox_id, conversation_id, connection_generation,
                 provider_message_id, rfc_message_id, in_reply_to, references_header,
                 participants, subject, content_text, received_at, observed_at,
-                direction, classification, association_status, version, created_at, updated_at
+                direction, classification, association_status
             ) VALUES (
                 :id, :ws, :mbid, :cid, :gen,
                 :pmid, :rfc_id, :in_reply_to, :refs,
                 CAST(:participants AS jsonb), :subject, :content_text, :received_at, :observed_at,
-                'INBOUND', :classification, :association_status, 1, :now, :now
+                'INBOUND', :classification, :association_status
             )
             ON CONFLICT (workspace_id, mailbox_id, provider_message_id) DO NOTHING
             """
@@ -676,7 +709,6 @@ class ReplyRepository:
                 "observed_at": now,
                 "classification": inbound.classification,
                 "association_status": association_status,
-                "now": now,
             },
         )
 
@@ -720,18 +752,16 @@ class ReplyRepository:
             INSERT INTO public.inbound_outreach_links (
                 id, workspace_id, mailbox_id, inbound_message_id, outbound_message_id,
                 campaign_id, enrollment_id, evidence_type, confidence,
-                status, matched_at, version, created_at, updated_at
+                status, matched_at
             ) VALUES (
                 :id, :ws, :mbid, :inbound_id, :outbound_id,
                 :camp_id, :enr_id, :evidence, :conf,
-                :status, :matched_at, 1, :now, :now
+                :status, :matched_at
             )
             ON CONFLICT (workspace_id, inbound_message_id, outbound_message_id)
             DO UPDATE SET
                 status = EXCLUDED.status,
-                matched_at = EXCLUDED.matched_at,
-                version = inbound_outreach_links.version + 1,
-                updated_at = :now
+                matched_at = EXCLUDED.matched_at
             """
         )
         self.session.execute(
@@ -748,7 +778,6 @@ class ReplyRepository:
                 "conf": confidence,
                 "status": status,
                 "matched_at": effective_matched_at,
-                "now": now,
             },
         )
         return link_id
@@ -777,6 +806,9 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
+        # version/updated_at/created_at are DB-managed (defaults plus touch
+        # triggers) and not granted to app_worker_sync, so no statement below
+        # may assign them.
         now = datetime.now(UTC)
         source_key = provider_message_id[:200]
 
@@ -785,10 +817,10 @@ class ReplyRepository:
             """
             INSERT INTO public.recipient_outcomes (
                 id, workspace_id, enrollment_id, kind, source_key,
-                occurred_at, observed_at, inbound_message_id, created_at
+                occurred_at, observed_at, inbound_message_id
             ) VALUES (
                 :id, :ws, :eid, 'REPLIED', :source_key,
-                :occurred_at, :now, :inbound_id, :now
+                :occurred_at, :now, :inbound_id
             )
             ON CONFLICT (workspace_id, enrollment_id, kind, source_key) DO NOTHING
             """
@@ -812,15 +844,13 @@ class ReplyRepository:
             UPDATE public.campaign_enrollments
             SET state = 'STOPPED',
                 stop_reason = 'REPLIED',
-                next_step_id = NULL,
-                version = version + 1,
-                updated_at = :now
+                next_step_id = NULL
             WHERE workspace_id = :ws AND id = :eid AND state = 'ACTIVE'
             """
         )
         enr_res = self.session.execute(
             stop_enrollment_query,
-            {"ws": str(workspace_id), "eid": str(enrollment_id), "now": now},
+            {"ws": str(workspace_id), "eid": str(enrollment_id)},
         )
         enrollments_stopped = enr_res.rowcount
 
@@ -829,16 +859,14 @@ class ReplyRepository:
             """
             UPDATE public.messages
             SET status = 'CANCELLED',
-                terminal_reason = 'recipient_replied',
-                version = version + 1,
-                updated_at = :now
+                terminal_reason = 'recipient_replied'
             WHERE workspace_id = :ws AND enrollment_id = :eid
               AND status IN ('PLANNED', 'SCHEDULED', 'QUEUED', 'RETRY_SCHEDULED')
             """
         )
         msg_res = self.session.execute(
             cancel_messages_query,
-            {"ws": str(workspace_id), "eid": str(enrollment_id), "now": now},
+            {"ws": str(workspace_id), "eid": str(enrollment_id)},
         )
         messages_cancelled = msg_res.rowcount
 
@@ -882,10 +910,10 @@ class ReplyRepository:
             """
             INSERT INTO public.outbox_work (
                 id, workspace_id, kind, resource_id, resource_type,
-                event_id, semantic_key, created_at, available_at
+                event_id, semantic_key, available_at
             ) VALUES (
                 :id, :ws, 'domain_event', :eid, 'campaign_enrollment',
-                :eid_fk, :key, :now, :now
+                :eid_fk, :key, :now
             )
             ON CONFLICT (workspace_id, kind, semantic_key) DO NOTHING
             """
@@ -925,15 +953,14 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
         query = text(
             """
             INSERT INTO public.safety_holds (
                 id, workspace_id, source_work_identity, target_kind, target_mailbox_id,
-                status, reason, created_at, version, updated_at
+                status, reason
             ) VALUES (
                 :id, :ws, :source_id, 'MAILBOX', :mbid,
-                'ACTIVE', :reason, :now, 1, :now
+                'ACTIVE', :reason
             )
             ON CONFLICT (workspace_id, source_work_identity) DO NOTHING
             """
@@ -946,7 +973,6 @@ class ReplyRepository:
                 "source_id": source_identity[:100],
                 "mbid": str(mailbox_id),
                 "reason": reason[:500],
-                "now": now,
             },
         )
 
@@ -965,9 +991,7 @@ class ReplyRepository:
             """
             UPDATE public.safety_holds
             SET status = 'RESOLVED',
-                resolved_at = :now,
-                version = version + 1,
-                updated_at = :now
+                resolved_at = :now
             WHERE workspace_id = :ws AND source_work_identity = :source_id
               AND status = 'ACTIVE'
             """
@@ -1019,17 +1043,14 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
         query = text(
             """
             UPDATE public.inbound_messages
-            SET association_status = 'MATCHED',
-                version = version + 1,
-                updated_at = :now
+            SET association_status = 'MATCHED'
             WHERE workspace_id = :ws AND id = :id
             """
         )
-        self.session.execute(query, {"ws": str(workspace_id), "id": str(inbound_message_id), "now": now})
+        self.session.execute(query, {"ws": str(workspace_id), "id": str(inbound_message_id)})
 
     # -------------------------------------------------------------------------
     # Mailbox & Connection Helpers
@@ -1101,17 +1122,16 @@ class ReplyRepository:
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
+        # version/created_at/updated_at are DB-managed (defaults plus touch
+        # triggers) and not granted to app_worker_sync; see ensure_sync_state.
         ins = text(
             """
             INSERT INTO public.mailbox_connections (
                 id, workspace_id, mailbox_id, generation, credential_ciphertext,
-                encryption_key_id, nonce, auth_mechanism, granted_scopes, expires_at,
-                version, created_at, updated_at
+                encryption_key_id, nonce, auth_mechanism, granted_scopes, expires_at
             ) VALUES (
                 :id, :ws, :mbid, :gen, :ct,
-                :kid, :nonce, :auth, CAST(:scopes AS jsonb), :exp,
-                1, :now, :now
+                :kid, :nonce, :auth, CAST(:scopes AS jsonb), :exp
             )
             """
         )
@@ -1128,7 +1148,6 @@ class ReplyRepository:
                 "auth": auth_mechanism,
                 "scopes": json.dumps(granted_scopes),
                 "exp": expires_at,
-                "now": now,
             },
         )
         upd_mb = text(
@@ -1137,27 +1156,23 @@ class ReplyRepository:
             SET connected_generation = :gen,
                 current_connection_generation = :gen,
                 connection_state = 'CONNECTED',
-                health_state = 'HEALTHY',
-                version = version + 1,
-                updated_at = :now
+                health_state = 'HEALTHY'
             WHERE workspace_id = :ws AND id = :mbid
             """
         )
         self.session.execute(
             upd_mb,
-            {"gen": new_generation, "ws": str(workspace_id), "mbid": str(mailbox_id), "now": now},
+            {"gen": new_generation, "ws": str(workspace_id), "mbid": str(mailbox_id)},
         )
         upd_sync = text(
             """
             UPDATE public.mailbox_sync_states
-            SET connection_generation = :gen,
-                version = version + 1,
-                updated_at = :now
+            SET connection_generation = :gen
             WHERE workspace_id = :ws AND mailbox_id = :mbid
             """
         )
         self.session.execute(
             upd_sync,
-            {"gen": new_generation, "ws": str(workspace_id), "mbid": str(mailbox_id), "now": now},
+            {"gen": new_generation, "ws": str(workspace_id), "mbid": str(mailbox_id)},
         )
 

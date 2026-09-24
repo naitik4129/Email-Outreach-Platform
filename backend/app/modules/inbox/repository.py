@@ -596,6 +596,9 @@ class InboxRepository:
             messages=messages,
         )
 
+    # conversations.updated_at/version are maintained by the
+    # conversations_touch_row trigger; app_api is only granted read_at and
+    # archived_at (migrations 0004/0016), so these UPDATEs must not assign them.
     def mark_read(self, workspace_id: UUID, conversation_id: UUID) -> dict[str, Any] | None:
         """Mark conversation as read idempotently."""
         _safe_set_role(self.session, "app_api")
@@ -605,9 +608,7 @@ class InboxRepository:
         query = text(
             """
             UPDATE public.conversations
-            SET read_at = :now,
-                updated_at = :now,
-                version = version + 1
+            SET read_at = :now
             WHERE workspace_id = :ws AND id = :cid
             """
         )
@@ -635,17 +636,14 @@ class InboxRepository:
         _safe_set_role(self.session, "app_api")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
         query = text(
             """
             UPDATE public.conversations
-            SET read_at = NULL,
-                updated_at = :now,
-                version = version + 1
+            SET read_at = NULL
             WHERE workspace_id = :ws AND id = :cid
             """
         )
-        res = self.session.execute(query, {"ws": str(workspace_id), "cid": str(conversation_id), "now": now})
+        res = self.session.execute(query, {"ws": str(workspace_id), "cid": str(conversation_id)})
         if res.rowcount == 0:
             return None
 
@@ -672,9 +670,7 @@ class InboxRepository:
         query = text(
             """
             UPDATE public.conversations
-            SET archived_at = COALESCE(archived_at, :now),
-                updated_at = :now,
-                version = version + 1
+            SET archived_at = COALESCE(archived_at, :now)
             WHERE workspace_id = :ws AND id = :cid
             """
         )
@@ -706,17 +702,14 @@ class InboxRepository:
         _safe_set_role(self.session, "app_api")
         _safe_set_workspace(self.session, workspace_id)
 
-        now = datetime.now(UTC)
         query = text(
             """
             UPDATE public.conversations
-            SET archived_at = NULL,
-                updated_at = :now,
-                version = version + 1
+            SET archived_at = NULL
             WHERE workspace_id = :ws AND id = :cid
             """
         )
-        res = self.session.execute(query, {"ws": str(workspace_id), "cid": str(conversation_id), "now": now})
+        res = self.session.execute(query, {"ws": str(workspace_id), "cid": str(conversation_id)})
         if res.rowcount == 0:
             return None
 

@@ -52,16 +52,20 @@ class ReconciliationService:
         now: datetime | None = None,
     ) -> dict[str, int]:
         now = now or datetime.now(UTC)
-        bind = self.session.get_bind()
-        is_sqlite = bind and getattr(bind.dialect, "name", "") == "sqlite"
 
-        lock_clause = "" if is_sqlite else "FOR UPDATE SKIP LOCKED"
         ws_clause = "AND m.workspace_id = :ws" if workspace_id else ""
         query_params: dict[str, Any] = {"limit": limit}
         if workspace_id:
             query_params["ws"] = str(workspace_id)
 
-        _safe_set_role(self.session, "app_worker_send")
+        # Discovery spans every workspace, so it runs as app_scheduler, whose
+        # read-only discovery policies on messages, mailboxes and
+        # message_attempts (migrations 0011/0013) allow that; app_worker_send is
+        # scoped to one workspace and would see no rows. No FOR UPDATE here:
+        # it is invalid across this LEFT JOIN, and every write below is done per
+        # row as app_worker_send inside that row's workspace, guarded by
+        # status and version, so concurrent runs cannot both apply a result.
+        _safe_set_role(self.session, "app_scheduler")
         _safe_set_workspace(self.session, workspace_id)
 
         stmt = text(
@@ -80,7 +84,6 @@ class ReconciliationService:
               {ws_clause}
             ORDER BY m.updated_at ASC
             LIMIT :limit
-            {lock_clause}
             """
         )
 

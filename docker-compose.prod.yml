@@ -26,7 +26,16 @@ x-app-env: &app-env
     # (a local-dev .env commonly points at localhost).
     REDIS_URL: redis://redis:6379/0
 
+# Cap container logs: this stack shares a server, and unbounded json-file logs
+# would slowly fill its disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-worker: &worker
+  logging: *default-logging
   build:
     context: .
     dockerfile: workers/Dockerfile
@@ -42,6 +51,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no"]
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -56,6 +66,7 @@ services:
       dockerfile: backend/Dockerfile
     <<: *app-env
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
     depends_on:
@@ -129,6 +140,7 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?Set NEXT_PUBLIC_SUPABASE_URL in .env}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?Set NEXT_PUBLIC_SUPABASE_ANON_KEY in .env}
     restart: unless-stopped
+    logging: *default-logging
     environment:
       HOSTNAME: 0.0.0.0
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
