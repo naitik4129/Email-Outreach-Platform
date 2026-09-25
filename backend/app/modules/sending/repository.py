@@ -233,6 +233,11 @@ class SendingRepository:
         # on mailbox_connections is what the send worker actually runs
         # under, per the DB role separation in WORKERS.md/DATABASE.md.
         _safe_set_role(self.session, "app_worker_send")
+        # app.workspace_id is transaction-local: the send commits its
+        # authorization transaction before the provider call, so every
+        # later transaction must set the workspace again or RLS hides
+        # every row (and rejects every insert) for this role.
+        _safe_set_workspace(self.session, workspace_id)
         row = (
             self.session.execute(
                 text(
@@ -272,6 +277,7 @@ class SendingRepository:
         rather than app_connection, matching this repository's own grant.
         """
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         self.session.execute(
             text(
                 """
@@ -309,6 +315,7 @@ class SendingRepository:
         current_connection_generation: int,
     ) -> None:
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         self.session.execute(
             text(
                 """
@@ -338,6 +345,7 @@ class SendingRepository:
         blocked_until: datetime,
     ) -> None:
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         self.session.execute(
             text(
                 """
@@ -377,6 +385,7 @@ class SendingRepository:
         integrity, cross-tenant/provider mismatch) -- there is no
         message_attempts row to finalize for these."""
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         result = self.session.execute(
             text(
                 """
@@ -419,6 +428,7 @@ class SendingRepository:
         AttemptAlreadyClaimed, never proceed to the provider.
         """
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         savepoint = self.session.begin_nested()
         try:
             self.session.execute(
@@ -453,6 +463,7 @@ class SendingRepository:
 
     def next_attempt_ordinal(self, *, workspace_id: UUID, message_id: UUID) -> int:
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         max_ordinal = self.session.execute(
             text(
                 "SELECT MAX(ordinal) FROM public.message_attempts "
@@ -482,6 +493,7 @@ class SendingRepository:
         from uuid import uuid4
 
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         debit_id = uuid4()
         self.session.execute(
             text(
@@ -538,6 +550,7 @@ class SendingRepository:
         self, *, workspace_id: UUID, message_id: UUID, expected_version: int
     ) -> bool:
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         result = self.session.execute(
             text(
                 """
@@ -578,6 +591,7 @@ class SendingRepository:
         due_at: datetime | None = None,
     ) -> None:
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         now_col = (
             "CURRENT_TIMESTAMP"
             if self._is_sqlite()
@@ -654,6 +668,7 @@ class SendingRepository:
         from uuid import uuid4
 
         _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
         self.session.execute(
             text(
                 """
