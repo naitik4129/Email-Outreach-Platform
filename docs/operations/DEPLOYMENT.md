@@ -369,6 +369,16 @@ Open `infrastructure/vps/Caddyfile.snippet` for the block to add.
 
 ### 8A — Caddy runs directly on the server (this server)
 
+**Result on this server (checked 2026-09-24):** there is no wildcard-certificate block. Each site is
+its own explicit host block in `/etc/caddy/Caddyfile` or in a per-site file under `/etc/caddy/sites/`
+(pulled in by `import /etc/caddy/sites/*.caddy`), for example
+`supa.b2botix.ai { reverse_proxy localhost:8000 }`. Caddy obtains a certificate for each new host
+automatically on its first request, so Outly needs only its own file, `/etc/caddy/sites/outly.caddy`. Some
+files in that directory are written by an automatic deploy service (owned by `deploy-svc`); hand-made
+ones are root-owned, as Outly's should be. The global options block also imports
+`custom-domains-global.caddy` (on-demand TLS for customer domains); an explicit host block like Outly's
+always wins its own hostname over that catch-all.
+
 **Step 1: see how your existing sites are written.** `/etc/caddy/` contains `Caddyfile`, a `sites`
 directory and `custom-domains*.caddy` files. These commands hide anything that looks like a secret:
 
