@@ -6,11 +6,12 @@ import type {
   LeadListMemberPage,
   LeadListPage,
   LeadPage,
+  LeadProfile,
   LeadStatus,
   LeadValidationStatus,
 } from "@/types/domain";
 
-export type LeadPayload = {
+export type LeadPayload = Partial<LeadProfile> & {
   email: string;
   first_name?: string | null;
   last_name?: string | null;

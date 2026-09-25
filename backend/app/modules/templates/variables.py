@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from app.core.errors import AppError
+from app.modules.leads.fields import PROFILE_FIELD_NAMES
 
 # Canonical set of supported lead fields in email outreach templates
 STANDARD_VARIABLES: frozenset[str] = frozenset({
@@ -14,6 +15,7 @@ STANDARD_VARIABLES: frozenset[str] = frozenset({
     "title",
     "job_title",
     "email",
+    *PROFILE_FIELD_NAMES,
 })
 
 # Canonical alias mapping

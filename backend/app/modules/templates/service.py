@@ -14,6 +14,7 @@ from app.modules.templates.rendering import (
     DEFAULT_SAMPLE_DATA,
     build_lead_render_context,
     render_template_content,
+    resolve_variable_value,
 )
 from app.modules.templates.repository import TemplateRepository
 from app.modules.templates.sanitizer import sanitize_html_preview
@@ -218,10 +219,12 @@ class TemplateService:
             for m in _PLACEHOLDER_RE.finditer(text_source):
                 var_name = m.group(1).strip()
                 fallback = m.group(2)
-                val = render_context.get(var_name)
-                if val is None or str(val).strip() == "":
-                    if fallback is None:
-                        missing.add(var_name)
+                # Same lookup the renderer uses, so aliases and custom.* /
+                # custom_fields.* resolve here exactly as they will when sent.
+                if fallback is None and not resolve_variable_value(
+                    var_name, None, render_context
+                ):
+                    missing.add(var_name)
 
         rendered_subject, rendered_body = render_template_content(
             subject=clean_subject,

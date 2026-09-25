@@ -8,6 +8,18 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.modules.leads.fields import PROFILE_FIELD_NAMES, SEARCHABLE_PROFILE_COLUMNS
+
+
+def contains_pattern(value: str) -> str:
+    """A LIKE pattern matching `value` literally, anywhere in the column.
+
+    "%" and "_" in what the user typed are ordinary characters, not wildcards;
+    queries using this must say ESCAPE '\\'.
+    """
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
 
 class LeadRepository:
     def __init__(self, session: Session) -> None:
@@ -45,21 +57,25 @@ class LeadRepository:
         last_name: str | None,
         company: str | None,
         title: str | None,
+        profile: Mapping[str, Any],
         custom_fields: dict[str, Any],
     ) -> Mapping[str, Any]:
+        # Column names come from the fixed PROFILE_FIELD_NAMES tuple, never from input.
+        profile_columns = ", ".join(PROFILE_FIELD_NAMES)
+        profile_params = ", ".join(f":{name}" for name in PROFILE_FIELD_NAMES)
         return cast(
             Mapping[str, Any],
             self.session.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO leads
                         (workspace_id, original_address, canonical_address,
                          normalization_version, first_name, last_name, company,
-                         title, custom_fields)
+                         title, {profile_columns}, custom_fields)
                     VALUES
                         (:workspace_id, :original_address, :canonical_address, 1,
                          :first_name, :last_name, :company, :title,
-                         CAST(:custom_fields AS jsonb))
+                         {profile_params}, CAST(:custom_fields AS jsonb))
                     RETURNING *
                     """
                 ),
@@ -71,6 +87,7 @@ class LeadRepository:
                     "last_name": last_name,
                     "company": company,
                     "title": title,
+                    **{name: profile.get(name) for name in PROFILE_FIELD_NAMES},
                     "custom_fields": json.dumps(custom_fields),
                 },
             )
@@ -97,17 +114,19 @@ class LeadRepository:
             clauses.append("l.status = :status")
             params["status"] = status
         if query:
-            clauses.append(
-                """
-                (
-                    l.canonical_address ILIKE :query
-                    OR l.first_name ILIKE :query
-                    OR l.last_name ILIKE :query
-                    OR l.company ILIKE :query
-                )
-                """
+            searchable = [
+                "canonical_address",
+                "first_name",
+                "last_name",
+                "company",
+                "title",
+                *SEARCHABLE_PROFILE_COLUMNS,
+            ]
+            matches = " OR ".join(
+                f"l.{column} ILIKE :query ESCAPE '\\'" for column in searchable
             )
-            params["query"] = f"%{query}%"
+            clauses.append(f"({matches})")
+            params["query"] = contains_pattern(query)
         if list_id is not None:
             clauses.append(
                 """

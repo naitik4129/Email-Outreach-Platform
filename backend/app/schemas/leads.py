@@ -17,7 +17,28 @@ LeadValidationStatus = Literal[
 ]
 
 
-class LeadCreateIn(BaseModel):
+class LeadProfileIn(BaseModel):
+    """Optional profile fields shared by create and update.
+
+    Field names must match app.modules.leads.fields.PROFILE_FIELDS; formats are
+    enforced there, these bounds only reject oversized input early.
+    """
+
+    phone: str | None = Field(default=None, max_length=64)
+    department: str | None = Field(default=None, max_length=200)
+    experience_years: int | None = Field(default=None, ge=0, le=80)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    website: str | None = Field(default=None, max_length=500)
+    city: str | None = Field(default=None, max_length=200)
+    state: str | None = Field(default=None, max_length=200)
+    country: str | None = Field(default=None, max_length=200)
+    company_website: str | None = Field(default=None, max_length=500)
+    company_industry: str | None = Field(default=None, max_length=200)
+    company_founded_year: int | None = Field(default=None, ge=1600, le=2100)
+    company_linkedin_url: str | None = Field(default=None, max_length=500)
+
+
+class LeadCreateIn(LeadProfileIn):
     email: str = Field(min_length=3, max_length=320)
     first_name: str | None = Field(default=None, max_length=200)
     last_name: str | None = Field(default=None, max_length=200)
@@ -27,7 +48,7 @@ class LeadCreateIn(BaseModel):
     list_id: UUID | None = None
 
 
-class LeadUpdateIn(BaseModel):
+class LeadUpdateIn(LeadProfileIn):
     email: str | None = Field(default=None, min_length=3, max_length=320)
     first_name: str | None = Field(default=None, max_length=200)
     last_name: str | None = Field(default=None, max_length=200)
@@ -52,6 +73,18 @@ class LeadOut(BaseModel):
     last_name: str | None
     company: str | None
     title: str | None
+    phone: str | None
+    department: str | None
+    experience_years: int | None
+    linkedin_url: str | None
+    website: str | None
+    city: str | None
+    state: str | None
+    country: str | None
+    company_website: str | None
+    company_industry: str | None
+    company_founded_year: int | None
+    company_linkedin_url: str | None
     custom_fields: dict[str, Any]
     status: LeadStatus
     validation_status: LeadValidationStatus

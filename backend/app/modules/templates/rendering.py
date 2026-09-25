@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from app.modules.leads.fields import PROFILE_FIELD_NAMES
 from app.modules.templates.variables import (
     _PLACEHOLDER_RE,
     VARIABLE_ALIASES,
@@ -18,6 +19,18 @@ DEFAULT_SAMPLE_DATA: dict[str, Any] = {
     "title": "Head of Growth",
     "job_title": "Head of Growth",
     "email": "alex.taylor@acme.example.com",
+    "phone": "+1 (415) 555-0132",
+    "department": "Growth",
+    "experience_years": 12,
+    "linkedin_url": "https://www.linkedin.com/in/alex-taylor",
+    "website": "https://alextaylor.example.com",
+    "city": "San Francisco",
+    "state": "California",
+    "country": "United States",
+    "company_website": "https://acme.example.com",
+    "company_industry": "Software",
+    "company_founded_year": 2010,
+    "company_linkedin_url": "https://www.linkedin.com/company/acme",
     "custom_fields": {
         "industry": "Software",
         "city": "San Francisco",
@@ -39,6 +52,7 @@ def build_lead_render_context(lead: Mapping[str, Any]) -> dict[str, Any]:
         "title": lead.get("title"),
         "job_title": lead.get("title"),
         "email": lead.get("original_address") or lead.get("canonical_address") or lead.get("email"),
+        **{name: lead.get(name) for name in PROFILE_FIELD_NAMES},
         "custom_fields": custom_fields,
     }
 

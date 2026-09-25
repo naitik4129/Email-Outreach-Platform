@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext
 from app.core.errors import AppError
+from app.modules.leads.fields import PROFILE_FIELD_NAMES, clean_profile_fields
 from app.modules.leads.normalization import (
     clean_optional_text,
     normalize_email,
@@ -88,6 +89,7 @@ def _lead_out(row: Mapping[str, Any]) -> LeadOut:
         last_name=row["last_name"],
         company=row["company"],
         title=row["title"],
+        **{name: row[name] for name in PROFILE_FIELD_NAMES},
         custom_fields=row["custom_fields"],
         status=row["status"],
         validation_status=row["validation_status"],
@@ -121,6 +123,9 @@ class LeadService:
     def create_lead(self, context: WorkspaceContext, payload: LeadCreateIn) -> LeadOut:
         email = normalize_email(payload.email)
         custom_fields = validate_custom_fields(payload.custom_fields)
+        profile = clean_profile_fields(
+            {name: getattr(payload, name) for name in PROFILE_FIELD_NAMES}
+        )
         try:
             self.repo.ensure_recipient_address(
                 workspace_id=context.workspace_id,
@@ -135,6 +140,7 @@ class LeadService:
                 last_name=clean_optional_text(payload.last_name, "Last name"),
                 company=clean_optional_text(payload.company, "Company"),
                 title=clean_optional_text(payload.title, "Title"),
+                profile=profile,
                 custom_fields=custom_fields,
             )
             if payload.list_id is not None:
@@ -240,6 +246,16 @@ class LeadService:
         ):
             if attr in payload.model_fields_set:
                 values[attr] = clean_optional_text(getattr(payload, attr), label)
+        # model_fields_set keeps "not sent" apart from an explicit null that clears.
+        values.update(
+            clean_profile_fields(
+                {
+                    name: getattr(payload, name)
+                    for name in PROFILE_FIELD_NAMES
+                    if name in payload.model_fields_set
+                }
+            )
+        )
         if payload.custom_fields is not None:
             values["custom_fields"] = validate_custom_fields(payload.custom_fields)
         if payload.validation_status is not None:

@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.errors import AppError
 
@@ -100,6 +101,139 @@ def clean_optional_text(value: str | None, field_name: str) -> str | None:
             status_code=422,
         )
     return cleaned
+
+
+_MAX_URL_CHARS = 500
+_MAX_PHONE_CHARS = 32
+# "word:" that is not "host:port". These are rejected rather than treated as a
+# hostname so "javascript:alert(1)" can never be stored as a link.
+_NON_HTTP_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?:/|$))")
+_EXPLICIT_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+_PHONE_EXTENSION_RE = re.compile(
+    r"^(?P<main>.*?)(?:\s*(?:ext\.?|x)\s*(?P<ext>\d{1,6}))?$", re.I
+)
+_PHONE_MAIN_RE = re.compile(r"^\+?[0-9()\-.\s]+$")
+
+
+def clean_optional_url(
+    value: str | None, field_name: str, *, linkedin: bool = False
+) -> str | None:
+    """Return an http(s) URL, defaulting a missing scheme to https.
+
+    Values are rendered into emails and UI links, so any other scheme is
+    rejected outright instead of being silently rewritten.
+    """
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if cleaned == "":
+        return None
+    invalid = AppError(
+        "validation_error",
+        f"{field_name} must be a valid http(s) URL",
+        status_code=422,
+    )
+    if any(ch.isspace() for ch in cleaned):
+        raise invalid
+    if not _EXPLICIT_SCHEME_RE.match(cleaned):
+        if _NON_HTTP_SCHEME_RE.match(cleaned):
+            raise invalid
+        cleaned = f"https://{cleaned.lstrip('/')}"
+    if len(cleaned) > _MAX_URL_CHARS:
+        raise AppError(
+            "validation_error",
+            f"{field_name} must be {_MAX_URL_CHARS} characters or fewer",
+            status_code=422,
+        )
+    try:
+        parts = urlsplit(cleaned)
+        host = parts.hostname
+        _ = parts.port  # raises ValueError for a malformed port
+    except ValueError as exc:
+        raise invalid from exc
+    if parts.scheme.lower() not in {"http", "https"} or not host:
+        raise invalid
+    if parts.username is not None or parts.password is not None:
+        raise invalid
+    try:
+        ascii_host = host.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise invalid from exc
+    labels = ascii_host.split(".")
+    if len(labels) < 2 or any(
+        not _DOMAIN_LABEL_RE.fullmatch(label) for label in labels
+    ):
+        raise invalid
+    if linkedin and not (
+        ascii_host == "linkedin.com" or ascii_host.endswith(".linkedin.com")
+    ):
+        raise AppError(
+            "validation_error",
+            f"{field_name} must be a linkedin.com URL",
+            status_code=422,
+        )
+    return cleaned
+
+
+def clean_phone(value: str | None, field_name: str) -> str | None:
+    """Validate a phone number without rewriting it to E.164.
+
+    Formats vary too much across imported CSVs to normalize safely without a
+    dedicated library, so the value is kept as entered (whitespace collapsed).
+    """
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    if cleaned == "":
+        return None
+    invalid = AppError(
+        "validation_error",
+        f"{field_name} must be a valid phone number",
+        status_code=422,
+    )
+    if len(cleaned) > _MAX_PHONE_CHARS:
+        raise AppError(
+            "validation_error",
+            f"{field_name} must be {_MAX_PHONE_CHARS} characters or fewer",
+            status_code=422,
+        )
+    match = _PHONE_EXTENSION_RE.match(cleaned)
+    main = match.group("main").strip() if match else ""
+    if not _PHONE_MAIN_RE.fullmatch(main):
+        raise invalid
+    digits = sum(ch.isdigit() for ch in main)
+    if not 7 <= digits <= 15:
+        raise invalid
+    return cleaned
+
+
+def clean_int_range(
+    value: int | str | None, field_name: str, *, minimum: int, maximum: int
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise AppError(
+            "validation_error", f"{field_name} must be a whole number", status_code=422
+        )
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == "":
+            return None
+        if not re.fullmatch(r"-?\d{1,9}", stripped):
+            raise AppError(
+                "validation_error",
+                f"{field_name} must be a whole number",
+                status_code=422,
+            )
+        value = int(stripped)
+    if not minimum <= value <= maximum:
+        raise AppError(
+            "validation_error",
+            f"{field_name} must be between {minimum} and {maximum}",
+            status_code=422,
+        )
+    return value
 
 
 def validate_custom_fields(value: dict[str, Any]) -> dict[str, Any]:

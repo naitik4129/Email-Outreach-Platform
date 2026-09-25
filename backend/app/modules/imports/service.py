@@ -19,6 +19,7 @@ from app.modules.imports.storage import (
     SupabaseStorageClient,
     map_storage_error,
 )
+from app.modules.leads.fields import PROFILE_FIELD_NAMES, clean_profile_fields_lenient
 from app.modules.leads.normalization import clean_optional_text, normalize_email
 from app.modules.leads.pagination import decode_cursor, encode_cursor, normalize_limit
 from app.schemas.imports import (
@@ -388,6 +389,16 @@ class ImportService:
             )
             company = clean_optional_text(row.get(mapping.get("company", ""), None), "Company")
             title = clean_optional_text(row.get(mapping.get("title", ""), None), "Title")
+            # A malformed optional cell (bad URL, phone, year...) drops that value
+            # instead of rejecting an otherwise valid lead; the drop is recorded
+            # on the row result below.
+            profile, ignored = clean_profile_fields_lenient(
+                {
+                    name: row.get(mapping[name])
+                    for name in PROFILE_FIELD_NAMES
+                    if name in mapping
+                }
+            )
             lead_id, was_new = self.repo.upsert_lead(
                 workspace_id=workspace_id,
                 original_address=normalized.original,
@@ -396,6 +407,7 @@ class ImportService:
                 last_name=last_name,
                 company=company,
                 title=title,
+                profile=profile,
             )
             if list_id is not None:
                 self.repo.add_member_if_missing(
@@ -405,12 +417,18 @@ class ImportService:
                     actor_id=initiator_id,
                 )
             status = "ACCEPTED" if was_new else "DUPLICATE"
+            # An existing lead is never updated by import, so dropped values only
+            # matter (and are only reported) when this row created the lead.
+            warning = (
+                f"ignored_invalid:{','.join(ignored)}" if ignored and was_new else None
+            )
             self.repo.insert_row_result(
                 workspace_id=workspace_id,
                 import_id=import_id,
                 row_number=row_number,
                 status=status,
                 lead_id=lead_id,
+                validation_reason=warning,
             )
             return status
 

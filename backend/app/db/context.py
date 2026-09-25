@@ -29,3 +29,17 @@ def set_transaction_context(
             {"name": "app.workspace_id", "value": str(workspace_id)},
         )
 
+
+def enter_worker_scope(session: Session, *, workspace_id: UUID, role_name: str) -> None:
+    """Bind a worker transaction to one workspace and one least-privilege role.
+
+    Both the GUC and SET LOCAL ROLE are transaction-scoped, so a worker that
+    commits or rolls back must call this again before its next statement.
+    The role is a fixed constant supplied by the worker, never task input.
+    SQLite (unit tests) has no roles.
+    """
+    set_transaction_context(session, workspace_id=workspace_id)
+    bind = session.get_bind()
+    if bind is not None and getattr(bind.dialect, "name", "") != "sqlite":
+        session.execute(text(f"RESET ROLE; SET LOCAL ROLE {role_name}"))
+

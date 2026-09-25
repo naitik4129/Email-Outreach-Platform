@@ -10,7 +10,16 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  LeadProfileDetails,
+  LeadProfileFields,
+} from "@/components/leads/lead-profile-fields";
 import { ApiError } from "@/lib/api-client";
+import {
+  profilePayload,
+  profileValuesFromLead,
+  type LeadProfileFormValues,
+} from "@/lib/lead-fields";
 import { archiveLead, getLead, updateLead } from "@/lib/leads-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { LeadDetail } from "@/types/domain";
@@ -21,6 +30,7 @@ type EditState = {
   last_name: string;
   company: string;
   title: string;
+  profile: LeadProfileFormValues;
   custom_fields: string;
 };
 
@@ -39,6 +49,7 @@ function editStateFromLead(lead: LeadDetail): EditState {
     last_name: lead.last_name ?? "",
     company: lead.company ?? "",
     title: lead.title ?? "",
+    profile: profileValuesFromLead(lead),
     custom_fields: JSON.stringify(lead.custom_fields, null, 2),
   };
 }
@@ -88,6 +99,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         last_name: form.last_name || null,
         company: form.company || null,
         title: form.title || null,
+        ...profilePayload(form.profile),
         custom_fields: customFields,
         expected_version: leadQuery.data.version,
       });
@@ -230,13 +242,26 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
                 disabled={saveMutation.isPending}
               />
             </Field>
-            <Field id="edit-title" label="Title">
+            <Field id="edit-title" label="Job title">
               <Input
                 value={form.title}
                 onChange={(event) => setForm({ ...form, title: event.target.value })}
                 disabled={saveMutation.isPending}
               />
             </Field>
+            <LeadProfileFields
+              idPrefix="edit"
+              values={form.profile}
+              onChange={(key, value) =>
+                setForm((current) =>
+                  current
+                    ? { ...current, profile: { ...current.profile, [key]: value } }
+                    : current,
+                )
+              }
+              disabled={saveMutation.isPending}
+              defaultOpen
+            />
             <div className="space-y-1.5 md:col-span-2">
               <label
                 htmlFor="edit-custom-fields"
@@ -289,11 +314,12 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
               <dd className="mt-1 text-slate-950">{lead.company ?? "No company"}</dd>
             </div>
             <div>
-              <dt className="font-medium text-slate-500">Title</dt>
+              <dt className="font-medium text-slate-500">Job title</dt>
               <dd className="mt-1 text-slate-950">{lead.title ?? "No title"}</dd>
             </div>
           </dl>
         )}
+        {editing && mayManage ? null : <LeadProfileDetails lead={lead} />}
       </section>
 
       <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">

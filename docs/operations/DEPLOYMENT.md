@@ -146,7 +146,7 @@ All later commands run from `~/outly`.
 > want a clean production start instead, create a second Supabase Cloud project and run all
 > of Part 5 against it.
 
-### 5.1 Database tables (migrations `0001`–`0018`)
+### 5.1 Database tables (all files in `supabase/migrations/`)
 
 Check whether your Supabase project already has them. If it is the project used in development,
 it most likely does. Get the **Session pooler** string (port **5432**) from
@@ -158,8 +158,11 @@ export DB="postgresql://postgres.PROJECT_REF:DB_PASSWORD@aws-0-REGION.pooler.sup
 psql "$DB" -c "select count(*) as app_roles from pg_roles where rolname like 'app\_%';"
 ```
 
-- **Greater than 0** → migrations are already applied. Skip the rest of 5.1. Never re-run them
-  (applied migrations are permanent history, `AGENTS.md` sections 6–8).
+- **Greater than 0** → the initial chain is already applied. Skip the loop below and never
+  re-run applied migrations (permanent history, `AGENTS.md` sections 6–8). This check does **not**
+  show that the project is up to date: compare the newest file in `supabase/migrations/` with what
+  the project has actually applied, and review and apply only the missing newer files, one at a
+  time, in order.
 - **0** → empty project. Apply them in order. This changes your database, so do it deliberately;
   the loop stops at the first error:
 

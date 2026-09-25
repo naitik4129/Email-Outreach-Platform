@@ -9,6 +9,8 @@ from uuid import UUID
 from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
+from app.modules.leads.fields import PROFILE_FIELD_NAMES
+
 
 def _safe_set_role(session: Session, role_name: str) -> None:
     """Attempt SET LOCAL ROLE if running against PostgreSQL; ignore in SQLite.
@@ -139,14 +141,18 @@ class CampaignWorkerRepository:
         leads has no direct address_id FK) and correlates the suppression
         check per row rather than issuing one query per lead."""
         _safe_set_role(self.session, "app_worker_general")
+        # Every profile field must be selected here: build_lead_render_context reads
+        # them from this row, and a missing column would render as empty in the
+        # frozen snapshot rather than fail.
+        profile_columns = ", ".join(f"l.{name}" for name in PROFILE_FIELD_NAMES)
         rows = (
             self.session.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                         l.id AS lead_id, l.status AS lead_status,
                         l.contact_revision, l.first_name, l.last_name,
-                        l.company, l.title, l.custom_fields,
+                        l.company, l.title, {profile_columns}, l.custom_fields,
                         l.original_address, l.canonical_address,
                         ra.id AS address_id,
                         EXISTS (

@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.modules.leads.fields import PROFILE_FIELD_NAMES
 from app.modules.leads.repository import LeadRepository
 
 
@@ -128,13 +129,15 @@ class ImportRepository:
     ) -> Mapping[str, Any] | None:
         """Compare-and-swap claim: only one concurrent delivery can win this.
 
-        Matches PENDING jobs, or PROCESSING jobs whose lease has expired
-        (crashed-worker recovery). A job that is already being processed
-        under a live lease, or is already terminal, matches neither branch
-        and this simply returns None -- the caller must treat that as a
-        no-op, never as an error (CLAUDE.md Phase 3 task, "Worker
-        Execution": reload authoritative state, do not trust a stale queue
-        payload).
+        Matches PENDING jobs, PROCESSING jobs whose lease has expired
+        (crashed-worker recovery), and PROCESSING jobs already leased to this
+        same owner: a Celery retry keeps its task id, so that is how a
+        multi-chunk import continues on its own lease instead of stalling
+        until it expires. A job being processed under someone else's live
+        lease, or already terminal, matches none of these and this simply
+        returns None -- the caller must treat that as a no-op, never as an
+        error (CLAUDE.md Phase 3 task, "Worker Execution": reload
+        authoritative state, do not trust a stale queue payload).
         """
         return cast(
             Mapping[str, Any] | None,
@@ -153,7 +156,8 @@ class ImportRepository:
                       AND (
                           status = 'PENDING'
                           OR (status = 'PROCESSING'
-                              AND lease_expires_at < pg_catalog.transaction_timestamp())
+                              AND (lease_expires_at < pg_catalog.transaction_timestamp()
+                                   OR lease_owner = :lease_owner))
                       )
                     RETURNING *
                     """
@@ -364,16 +368,22 @@ class ImportRepository:
         last_name: str | None,
         company: str | None,
         title: str | None,
+        profile: Mapping[str, Any],
     ) -> tuple[UUID, bool]:
+        # Column names come from the fixed PROFILE_FIELD_NAMES tuple, never from input.
+        profile_columns = ", ".join(PROFILE_FIELD_NAMES)
+        profile_params = ", ".join(f":{name}" for name in PROFILE_FIELD_NAMES)
         row = self.session.execute(
             text(
-                """
+                f"""
                 INSERT INTO leads
                     (workspace_id, original_address, canonical_address,
-                     normalization_version, first_name, last_name, company, title)
+                     normalization_version, first_name, last_name, company, title,
+                     {profile_columns})
                 VALUES
                     (:workspace_id, :original_address, :canonical_address, 1,
-                     :first_name, :last_name, :company, :title)
+                     :first_name, :last_name, :company, :title,
+                     {profile_params})
                 ON CONFLICT (workspace_id, canonical_address, normalization_version)
                 DO NOTHING
                 RETURNING id
@@ -387,6 +397,7 @@ class ImportRepository:
                 "last_name": last_name,
                 "company": company,
                 "title": title,
+                **{name: profile.get(name) for name in PROFILE_FIELD_NAMES},
             },
         ).first()
         if row is not None:

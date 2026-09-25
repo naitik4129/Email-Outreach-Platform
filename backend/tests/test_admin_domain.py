@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, event, text
@@ -23,10 +23,22 @@ def admin_db():
         connect_args={"check_same_thread": False},
     )
 
+    last_timestamp = [datetime.now(UTC)]
+
+    def strictly_increasing_timestamp() -> str:
+        # datetime.now() can repeat (Windows' clock ticks in ~15ms steps), and the
+        # service orders audit events by recorded_at, so equal values would make
+        # the order of two back-to-back events arbitrary.
+        now = datetime.now(UTC)
+        if now <= last_timestamp[0]:
+            now = last_timestamp[0] + timedelta(microseconds=1)
+        last_timestamp[0] = now
+        return now.isoformat()
+
     @event.listens_for(engine, "connect")
     def register_functions(dbapi_con, con_record):
         dbapi_con.create_function(
-            "statement_timestamp", 0, lambda: datetime.now(UTC).isoformat()
+            "statement_timestamp", 0, strictly_increasing_timestamp
         )
 
     session_factory = sessionmaker(bind=engine)

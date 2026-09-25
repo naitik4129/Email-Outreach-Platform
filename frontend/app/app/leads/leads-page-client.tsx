@@ -10,7 +10,14 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { LeadProfileFields } from "@/components/leads/lead-profile-fields";
 import { ApiError } from "@/lib/api-client";
+import {
+  emptyProfileValues,
+  formatLocation,
+  profilePayload,
+  type LeadProfileFormValues,
+} from "@/lib/lead-fields";
 import { createLead, listLeadLists, listLeads } from "@/lib/leads-api";
 import { useWorkspace } from "@/lib/workspace-context";
 
@@ -23,6 +30,7 @@ type LeadFormState = {
   company: string;
   title: string;
   list_id: string;
+  profile: LeadProfileFormValues;
 };
 
 const emptyForm: LeadFormState = {
@@ -32,6 +40,7 @@ const emptyForm: LeadFormState = {
   company: "",
   title: "",
   list_id: "",
+  profile: emptyProfileValues,
 };
 
 function canManageContacts(role?: string) {
@@ -122,6 +131,7 @@ export function LeadsPageClient() {
         last_name: form.last_name || null,
         company: form.company || null,
         title: form.title || null,
+        ...profilePayload(form.profile),
         custom_fields: {},
         list_id: form.list_id || null,
       }),
@@ -231,13 +241,24 @@ export function LeadsPageClient() {
                 disabled={createMutation.isPending}
               />
             </Field>
-            <Field id="lead-title" label="Title">
+            <Field id="lead-title" label="Job title">
               <Input
                 value={form.title}
                 onChange={(event) => setForm({ ...form, title: event.target.value })}
                 disabled={createMutation.isPending}
               />
             </Field>
+            <LeadProfileFields
+              idPrefix="lead"
+              values={form.profile}
+              onChange={(key, value) =>
+                setForm((current) => ({
+                  ...current,
+                  profile: { ...current.profile, [key]: value },
+                }))
+              }
+              disabled={createMutation.isPending}
+            />
             <div className="space-y-1.5 md:col-span-2">
               <label htmlFor="lead-list" className="text-sm font-medium text-slate-700">
                 List
@@ -287,7 +308,7 @@ export function LeadsPageClient() {
             <Input
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Search email, name, or company"
+              placeholder="Search name, email, company, title, or location"
               className="pl-9"
             />
           </div>
@@ -342,6 +363,8 @@ export function LeadsPageClient() {
                     <th className="px-4 py-3">Lead</th>
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Company</th>
+                    <th className="px-4 py-3">Job title</th>
+                    <th className="px-4 py-3">Location</th>
                     <th className="px-4 py-3">Lists</th>
                     <th className="px-4 py-3">Created</th>
                   </tr>
@@ -357,6 +380,10 @@ export function LeadsPageClient() {
                       <td className="px-4 py-3 text-slate-700">{lead.email}</td>
                       <td className="px-4 py-3 text-slate-700">
                         {lead.company ?? "No company"}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">{lead.title ?? "—"}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {formatLocation(lead) || "—"}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{lead.list_count}</td>
                       <td className="px-4 py-3 text-slate-700">

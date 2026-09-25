@@ -9,13 +9,18 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
 import { createImport, uploadImportFile } from "@/lib/imports-api";
+import {
+  LEAD_IMPORT_FIELDS,
+  SUPPRESSION_IMPORT_FIELDS,
+  autoMapHeaders,
+  duplicateMappedFields,
+  toApiColumns,
+} from "@/lib/lead-fields";
 import { listLeadLists } from "@/lib/leads-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { ImportKind, ImportUploadOut } from "@/types/domain";
 
 type Step = "UPLOAD" | "MAP" | "CONFIRM";
-
-const LEADS_MAPPABLE_FIELDS = ["email", "first_name", "last_name", "company", "title"];
 
 export function NewImportPageClient() {
   const router = useRouter();
@@ -28,6 +33,8 @@ export function NewImportPageClient() {
   const [uploadResult, setUploadResult] = useState<ImportUploadOut | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const mappableFields =
+    importKind === "LEADS" ? LEAD_IMPORT_FIELDS : SUPPRESSION_IMPORT_FIELDS;
 
   const listsQuery = useQuery({
     queryKey: ["workspace", activeWorkspaceId, "lead-lists", "picker"],
@@ -39,24 +46,7 @@ export function NewImportPageClient() {
     mutationFn: () => uploadImportFile(activeWorkspaceId!, file!),
     onSuccess: (data) => {
       setUploadResult(data);
-      // Auto-map based on exact or fuzzy match
-      const initialMap: Record<string, string> = {};
-      const mappable = importKind === "LEADS" ? LEADS_MAPPABLE_FIELDS : ["email"];
-      
-      data.headers.forEach((header) => {
-        const lower = header.toLowerCase();
-        if (mappable.includes(lower)) {
-          initialMap[header] = lower;
-        } else if (lower.includes("email")) {
-          initialMap[header] = "email";
-        } else if (lower.includes("first")) {
-          initialMap[header] = "first_name";
-        } else if (lower.includes("last")) {
-          initialMap[header] = "last_name";
-        }
-      });
-      
-      setMapping(initialMap);
+      setMapping(autoMapHeaders(data.headers, mappableFields));
       setStep("MAP");
       setError(null);
     },
@@ -73,7 +63,8 @@ export function NewImportPageClient() {
         storage_object_digest: uploadResult!.storage_object_digest,
         import_kind: importKind,
         mapping: {
-          columns: mapping,
+          // The UI maps header -> field; the API expects field -> header.
+          columns: toApiColumns(mapping),
           source_filename: file!.name,
         },
         list_id: listId || null,
@@ -100,6 +91,16 @@ export function NewImportPageClient() {
     // Validate mapping: at least 'email' must be mapped
     if (!Object.values(mapping).includes("email")) {
       setError("You must map at least one column to 'email'.");
+      return;
+    }
+    // The server takes one source column per field, so a shared target would
+    // silently drop one of the columns.
+    const duplicates = duplicateMappedFields(mapping);
+    if (duplicates.length > 0) {
+      const labels = duplicates.map(
+        (key) => mappableFields.find((field) => field.key === key)?.label ?? key,
+      );
+      setError(`Each field can be mapped to one column only: ${labels.join(", ")}.`);
       return;
     }
     setStep("CONFIRM");
@@ -241,15 +242,11 @@ export function NewImportPageClient() {
                       className="block w-full rounded-md border-slate-200 text-sm focus:border-teal-600 focus:ring-teal-600"
                     >
                       <option value="">-- Ignore --</option>
-                      <option value="email">Email</option>
-                      {importKind === "LEADS" && (
-                        <>
-                          <option value="first_name">First Name</option>
-                          <option value="last_name">Last Name</option>
-                          <option value="company">Company</option>
-                          <option value="title">Title</option>
-                        </>
-                      )}
+                      {mappableFields.map((field) => (
+                        <option key={field.key} value={field.key}>
+                          {field.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>

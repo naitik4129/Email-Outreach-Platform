@@ -367,3 +367,69 @@ def test_rls_and_same_workspace_fk_safety_for_leads(
             },
         )
     raw_db.rollback()
+
+
+def test_lead_profile_fields_round_trip_search_clear_and_revision(
+    api_client: TestClient, make_test_user
+) -> None:
+    """Requires migration 0021 (new columns, grants, contact_revision trigger)."""
+    user = make_test_user()
+    workspace = _bootstrap(api_client, user, "Lead Profile")
+    base = f"/api/v1/workspaces/{workspace['id']}/leads"
+
+    created = api_client.post(
+        base,
+        json={
+            "email": "profile@example.com",
+            "phone": " +1 (555) 123-4567 ",
+            "website": "example.com",
+            "linkedin_url": "linkedin.com/in/ada",
+            "city": "Berlin",
+            "country": "Germany",
+            "experience_years": 7,
+            "company_industry": "Software",
+            "company_founded_year": 1999,
+            "company_linkedin_url": "https://www.linkedin.com/company/acme",
+        },
+        headers=user.auth_header,
+    )
+    assert created.status_code == 201, created.text
+    lead = created.json()
+    assert lead["phone"] == "+1 (555) 123-4567"
+    assert lead["website"] == "https://example.com"
+    assert lead["linkedin_url"] == "https://linkedin.com/in/ada"
+    assert lead["experience_years"] == 7
+    assert lead["department"] is None
+
+    fetched = api_client.get(f"{base}/{lead['id']}", headers=user.auth_header).json()
+    assert fetched["city"] == "Berlin"
+    assert fetched["company_founded_year"] == 1999
+
+    found = api_client.get(f"{base}?q=berlin", headers=user.auth_header).json()
+    assert [item["id"] for item in found["items"]] == [lead["id"]]
+    by_industry = api_client.get(f"{base}?q=softw", headers=user.auth_header).json()
+    assert [item["id"] for item in by_industry["items"]] == [lead["id"]]
+
+    # Invalid values are 422 and leave the lead untouched.
+    bad = api_client.patch(
+        f"{base}/{lead['id']}",
+        json={"website": "javascript:alert(1)", "expected_version": lead["version"]},
+        headers=user.auth_header,
+    )
+    assert bad.status_code == 422
+    unchanged = api_client.get(f"{base}/{lead['id']}", headers=user.auth_header).json()
+    assert unchanged["version"] == lead["version"]
+    assert unchanged["website"] == "https://example.com"
+
+    # Explicit null clears one field; fields that were not sent are kept.
+    cleared = api_client.patch(
+        f"{base}/{lead['id']}",
+        json={"city": None, "expected_version": lead["version"]},
+        headers=user.auth_header,
+    )
+    assert cleared.status_code == 200, cleared.text
+    body = cleared.json()
+    assert body["city"] is None
+    assert body["country"] == "Germany"
+    # Profile fields feed merge variables, so editing one must invalidate snapshots.
+    assert body["contact_revision"] == lead["contact_revision"] + 1

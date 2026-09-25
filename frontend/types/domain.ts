@@ -54,7 +54,25 @@ export type LeadValidationStatus =
   | "CATCH_ALL"
   | "DISPOSABLE";
 
-export type Lead = {
+// Optional profile fields; names match backend app/modules/leads/fields.py.
+export type LeadProfile = {
+  phone: string | null;
+  department: string | null;
+  experience_years: number | null;
+  linkedin_url: string | null;
+  website: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  company_website: string | null;
+  company_industry: string | null;
+  company_founded_year: number | null;
+  company_linkedin_url: string | null;
+};
+
+export type LeadProfileKey = keyof LeadProfile;
+
+export type Lead = LeadProfile & {
   id: string;
   workspace_id: string;
   email: string;

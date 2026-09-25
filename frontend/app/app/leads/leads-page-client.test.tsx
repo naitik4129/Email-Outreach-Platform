@@ -29,6 +29,22 @@ vi.mock("@/lib/workspace-context", () => ({ useWorkspace }));
 
 import { LeadsPageClient } from "./leads-page-client";
 
+// Every profile field is present on the wire, null when not provided.
+const emptyProfile = {
+  phone: null,
+  department: null,
+  experience_years: null,
+  linkedin_url: null,
+  website: null,
+  city: null,
+  state: null,
+  country: null,
+  company_website: null,
+  company_industry: null,
+  company_founded_year: null,
+  company_linkedin_url: null,
+};
+
 function renderWithClient(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -88,6 +104,7 @@ describe("LeadsPageClient", () => {
       last_name: "Lovelace",
       company: null,
       title: null,
+      ...emptyProfile,
       custom_fields: {},
       status: "ACTIVE",
       validation_status: "UNKNOWN",
@@ -115,6 +132,7 @@ describe("LeadsPageClient", () => {
         last_name: null,
         company: null,
         title: null,
+        ...emptyProfile,
         custom_fields: {},
         list_id: "list-1",
       }),
@@ -123,5 +141,84 @@ describe("LeadsPageClient", () => {
       "ws-1",
       expect.objectContaining({ limit: 25 }),
     );
+  });
+
+  it("sends profile fields as trimmed strings, numbers, or null", async () => {
+    mockWorkspace("MEMBER");
+    listLeads.mockResolvedValue({ items: [], next_cursor: null });
+    listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+    createLead.mockResolvedValue({});
+
+    const user = userEvent.setup();
+    renderWithClient(<LeadsPageClient />);
+
+    await user.click(await screen.findByRole("button", { name: /add lead/i }));
+    await user.type(screen.getByLabelText("Email"), "ada@example.com");
+    await user.type(screen.getByLabelText("Job title"), "Founder");
+    await user.type(screen.getByLabelText("Phone"), "  +1 555 123 4567 ");
+    await user.type(screen.getByLabelText("Experience (years)"), "7");
+    await user.type(screen.getByLabelText("City"), "Berlin");
+    await user.type(screen.getByLabelText("Company founded year"), "1999");
+    await user.type(screen.getByLabelText("Company website"), "acme.example.com");
+    await user.click(screen.getByRole("button", { name: /create/i }));
+
+    await waitFor(() =>
+      expect(createLead).toHaveBeenCalledWith("ws-1", {
+        email: "ada@example.com",
+        first_name: null,
+        last_name: null,
+        company: null,
+        title: "Founder",
+        ...emptyProfile,
+        phone: "+1 555 123 4567",
+        experience_years: 7,
+        city: "Berlin",
+        company_founded_year: 1999,
+        company_website: "acme.example.com",
+        custom_fields: {},
+        list_id: null,
+      }),
+    );
+  });
+
+  it("shows job title, location and company columns for existing leads", async () => {
+    mockWorkspace("MEMBER");
+    listLeads.mockResolvedValue({
+      items: [
+        {
+          id: "lead-1",
+          email: "ada@example.com",
+          first_name: "Ada",
+          last_name: "Lovelace",
+          company: "Analytical Engines",
+          title: "Founder",
+          ...emptyProfile,
+          city: "London",
+          country: "United Kingdom",
+          list_count: 0,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          id: "lead-2",
+          email: "grace@example.com",
+          first_name: "Grace",
+          last_name: "Hopper",
+          company: null,
+          title: null,
+          ...emptyProfile,
+          list_count: 0,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      next_cursor: null,
+    });
+    listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+
+    renderWithClient(<LeadsPageClient />);
+
+    expect(await screen.findByText("London, United Kingdom")).toBeInTheDocument();
+    expect(screen.getByText("Founder")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Job title" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Location" })).toBeInTheDocument();
   });
 });

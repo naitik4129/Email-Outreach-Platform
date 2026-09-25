@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.modules.leads.fields import PROFILE_FIELD_NAMES
+
 ImportKind = Literal["LEADS", "SUPPRESSION"]
 ImportStatus = Literal[
     "PENDING",
@@ -20,7 +22,7 @@ ImportRowStatus = Literal["ACCEPTED", "DUPLICATE", "REJECTED"]
 # workspace_id/id/created_at/version/status and every other internal or
 # security-relevant column -- see CLAUDE.md Phase 3 task, "Column Mapping".
 LEADS_MAPPABLE_FIELDS = frozenset(
-    {"email", "first_name", "last_name", "company", "title"}
+    {"email", "first_name", "last_name", "company", "title", *PROFILE_FIELD_NAMES}
 )
 # A SUPPRESSION-kind import may only ever create MANUAL suppressions; reason
 # is never a mapping target (see docs/architecture/SUPPRESSION.md and

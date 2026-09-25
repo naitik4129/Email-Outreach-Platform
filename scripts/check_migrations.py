@@ -95,7 +95,10 @@ def check():
                 if 'FORCE' in u: forced.add(name)
                 if 'ADD' in u:
                     for part in split(t[5:]):
-                        if part[0].upper() == 'ADD': constraint(name,part[1:])
+                        if part[0].upper() == 'ADD':
+                            # Later migrations add columns; grants may reference them.
+                            if part[1].upper() == 'COLUMN' and name in tables: tables[name].add(part[2])
+                            constraint(name,part[1:])
             elif u[:2] == ['CREATE','INDEX'] or u[:3] == ['CREATE','UNIQUE','INDEX']:
                 pos = u.index('ON')
                 name = t[pos+3]
@@ -111,9 +114,10 @@ def check():
                 policies.add(name)
                 relation = t[u.index('ON')+3]
                 if relation not in tables: error(f'policy unknown table {relation}')
-            elif u[:2] == ['CREATE','FUNCTION']:
-                name=t[4]
-                if name in functions: error(f'duplicate function {name}')
+            elif u[:2] == ['CREATE','FUNCTION'] or u[:4] == ['CREATE','OR','REPLACE','FUNCTION']:
+                name=t[4] if u[1] == 'FUNCTION' else t[6]
+                # OR REPLACE legitimately redefines a function from an earlier migration.
+                if u[1] == 'FUNCTION' and name in functions: error(f'duplicate function {name}')
                 functions.add(name)
                 if 'DEFINER' in u: definers.add(name)
                 if 'SECURITY' not in u or "''" not in t: error(f'function missing security/search path {name}')

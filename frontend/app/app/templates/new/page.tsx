@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api-client";
+import { LEAD_TEMPLATE_VARIABLES } from "@/lib/lead-fields";
 import { createTemplate, previewTemplate } from "@/lib/templates-api";
 import { useWorkspace } from "@/lib/workspace-context";
 
@@ -22,16 +23,6 @@ function canManageTemplates(role?: string) {
     role === "MEMBER"
   );
 }
-
-const COMMON_VARIABLES = [
-  { label: "First Name", code: "{{first_name}}" },
-  { label: "First Name (with fallback)", code: "{{first_name|there}}" },
-  { label: "Last Name", code: "{{last_name}}" },
-  { label: "Company", code: "{{company}}" },
-  { label: "Title", code: "{{title}}" },
-  { label: "Email", code: "{{email}}" },
-  { label: "Custom Field", code: "{{custom.industry}}" },
-];
 
 export default function NewTemplatePage() {
   const router = useRouter();
@@ -265,7 +256,7 @@ export default function NewTemplatePage() {
                 Insert Variable (targets {activeField === "subject" ? "Subject" : "Body"})
               </label>
               <div className="flex flex-wrap gap-1.5">
-                {COMMON_VARIABLES.map((v) => (
+                {LEAD_TEMPLATE_VARIABLES.map((v) => (
                   <button
                     key={v.label}
                     type="button"

@@ -17,16 +17,10 @@ import {
   reorderSequenceSteps,
   updateSequenceStep,
 } from "@/lib/campaigns-api";
+import { LEAD_TEMPLATE_VARIABLES } from "@/lib/lead-fields";
 import { canDraftCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { SequenceStep } from "@/types/domain";
-
-const COMMON_VARIABLES = [
-  { label: "First name", code: "{{first_name}}" },
-  { label: "First name (fallback)", code: "{{first_name|there}}" },
-  { label: "Company", code: "{{company}}" },
-  { label: "Title", code: "{{title}}" },
-];
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -73,7 +67,7 @@ function EmailStepEditor({
         />
       </Field>
       <div className="flex flex-wrap gap-1.5">
-        {COMMON_VARIABLES.map((v) => (
+        {LEAD_TEMPLATE_VARIABLES.map((v) => (
           <button
             key={v.code}
             type="button"
