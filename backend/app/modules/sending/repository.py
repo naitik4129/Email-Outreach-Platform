@@ -85,7 +85,7 @@ class SendingRepository:
                    mailbox_id, address_id, status, dispatch_generation, version,
                    retry_count, retry_budget, content_subject, content_body_html,
                    content_digest, renderer_version, rendered_at, frozen_destination,
-                   frozen_sender_address, frozen_sender_name, rfc_message_id
+                   frozen_sender_address, frozen_sender_name, rfc_message_id, step_id
             FROM public.messages
             WHERE workspace_id = :ws AND id = :mid
             {lock_clause}
@@ -225,6 +225,32 @@ class SendingRepository:
             raw=dict(msg),
         )
 
+
+    def list_step_attachments(
+        self, *, workspace_id: UUID, step_id: UUID
+    ) -> list[dict[str, Any]]:
+        """ Attachment rows for the step a campaign message was rendered from.
+        The rows are immutable once the sequence is frozen, so they are exactly
+        what was approved at activation."""
+        _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                SELECT id, storage_key, filename, content_type, size_bytes,
+                       sha256, disposition, content_id
+                FROM public.campaign_step_attachments
+                WHERE workspace_id = :ws AND step_id = :sid
+                ORDER BY created_at ASC, id ASC
+                """
+                ),
+                {"ws": str(workspace_id), "sid": str(step_id)},
+            )
+            .mappings()
+            .all()
+        )
+        return [dict(r) for r in rows]
 
     def get_mailbox_connection(
         self, *, workspace_id: UUID, mailbox_id: UUID, generation: int

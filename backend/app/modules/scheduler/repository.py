@@ -46,6 +46,36 @@ class SchedulerRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def find_running_campaigns(
+        self, *, after_id: UUID | None, limit: int
+    ) -> list[tuple[UUID, UUID]]:
+        """(workspace_id, campaign_id) of RUNNING campaigns whose planning is
+        READY, keyset-paginated on campaign id.
+
+        Uses the cross-tenant campaigns discovery policy the scheduler already
+        relies on for due-message discovery. Enrollments are NOT readable
+        cross-tenant by this role, so it cannot tell which campaigns actually
+        have follow-ups to plan; the progression task does that per workspace.
+        """
+        _safe_set_role(self.session, "app_scheduler")
+        _safe_set_workspace(self.session, None)
+        rows = self.session.execute(
+            text(
+                """
+                SELECT c.workspace_id, c.id
+                FROM campaigns c
+                WHERE c.status = 'RUNNING'
+                  AND c.planning_status = 'READY'
+                  AND (CAST(:after_id AS uuid) IS NULL
+                       OR c.id > CAST(:after_id AS uuid))
+                ORDER BY c.id
+                LIMIT :limit
+                """
+            ),
+            {"after_id": str(after_id) if after_id else None, "limit": limit},
+        ).all()
+        return [(UUID(str(ws)), UUID(str(cid))) for ws, cid in rows]
+
     def find_due_messages(
         self,
         *,

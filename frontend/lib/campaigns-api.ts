@@ -8,9 +8,12 @@ import type {
   CampaignReview,
   CampaignSequence,
   CampaignSettings,
+  MailboxTestSendResult,
   PreflightResult,
+  SequencePreviewRecipients,
   SequenceStep,
   SequenceStepKind,
+  StepAttachment,
 } from "@/types/domain";
 
 function workspacePath(workspaceId: string, path: string) {
@@ -128,7 +131,11 @@ export async function addSequenceStep(
     position: number;
     email_subject?: string | null;
     email_body_html?: string | null;
+    email_preheader?: string | null;
     source_template_version_id?: string | null;
+    // EMAIL only: insert a WAIT of this many minutes directly before the new
+    // step, in the same transaction.
+    leading_wait_minutes?: number | null;
     wait_duration_minutes?: number | null;
   },
 ) {
@@ -146,6 +153,8 @@ export async function updateSequenceStep(
     expected_version: number;
     email_subject?: string | null;
     email_body_html?: string | null;
+    // "" clears the pre-header; omit to leave it unchanged.
+    email_preheader?: string | null;
     source_template_version_id?: string | null;
     wait_duration_minutes?: number | null;
   },
@@ -163,12 +172,120 @@ export async function deleteSequenceStep(
   workspaceId: string,
   campaignId: string,
   stepId: string,
+  // When deleting an EMAIL step, also remove its neighbouring WAIT atomically so
+  // the Email/Wait alternation stays valid.
+  options: { withAdjacentWait?: boolean } = {},
+) {
+  const path = appendSearch(
+    workspacePath(workspaceId, `/campaigns/${campaignId}/sequence/steps/${stepId}`),
+    { with_adjacent_wait: options.withAdjacentWait ? "true" : undefined },
+  );
+  await apiRequest<void>(path, { method: "DELETE" });
+}
+
+export async function listSequencePreviewRecipients(
+  workspaceId: string,
+  campaignId: string,
+  params: { limit?: number; afterOrdinal?: number | null } = {},
+) {
+  const path = appendSearch(
+    workspacePath(workspaceId, `/campaigns/${campaignId}/sequence/preview-recipients`),
+    {
+      limit: params.limit?.toString(),
+      after_ordinal:
+        params.afterOrdinal === null || params.afterOrdinal === undefined
+          ? undefined
+          : String(params.afterOrdinal),
+    },
+  );
+  return (await apiRequest<SequencePreviewRecipients>(path)).data;
+}
+
+// Sends one real, rendered copy of the step to an address the caller confirms.
+// Unsaved editor content can be passed to test exactly what is on screen.
+export async function sendSequenceStepTestEmail(
+  workspaceId: string,
+  campaignId: string,
+  stepId: string,
+  payload: {
+    mailbox_id: string;
+    recipient_email: string;
+    confirm_recipient: boolean;
+    audience_member_id?: string | null;
+    email_subject?: string | null;
+    email_body_html?: string | null;
+    email_preheader?: string | null;
+  },
+  idempotencyKey: string,
 ) {
   const path = workspacePath(
     workspaceId,
-    `/campaigns/${campaignId}/sequence/steps/${stepId}`,
+    `/campaigns/${campaignId}/sequence/steps/${stepId}/test-send`,
+  );
+  return (
+    await apiRequest<MailboxTestSendResult>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      idempotencyKey,
+    })
+  ).data;
+}
+
+// Files are stored immediately (they are not part of the step's text draft).
+export async function uploadStepAttachment(
+  workspaceId: string,
+  campaignId: string,
+  stepId: string,
+  file: File,
+  disposition: "ATTACHMENT" | "INLINE",
+) {
+  const path = workspacePath(
+    workspaceId,
+    `/campaigns/${campaignId}/sequence/steps/${stepId}/attachments`,
+  );
+  const form = new FormData();
+  form.append("file", file);
+  form.append("disposition", disposition);
+  return (await apiRequest<StepAttachment>(path, { method: "POST", body: form })).data;
+}
+
+export async function deleteStepAttachment(
+  workspaceId: string,
+  campaignId: string,
+  stepId: string,
+  attachmentId: string,
+) {
+  const path = workspacePath(
+    workspaceId,
+    `/campaigns/${campaignId}/sequence/steps/${stepId}/attachments/${attachmentId}`,
   );
   await apiRequest<void>(path, { method: "DELETE" });
+}
+
+// Short-lived URL for showing a private file (e.g. an inline image) in the browser.
+export async function getStepAttachmentUrl(
+  workspaceId: string,
+  campaignId: string,
+  stepId: string,
+  attachmentId: string,
+) {
+  const path = workspacePath(
+    workspaceId,
+    `/campaigns/${campaignId}/sequence/steps/${stepId}/attachments/${attachmentId}/url`,
+  );
+  return (await apiRequest<{ url: string; expires_in: number }>(path)).data;
+}
+
+export async function duplicateSequenceStep(
+  workspaceId: string,
+  campaignId: string,
+  stepId: string,
+) {
+  const path = workspacePath(
+    workspaceId,
+    `/campaigns/${campaignId}/sequence/steps/${stepId}/duplicate`,
+  );
+  return (await apiRequest<CampaignSequence>(path, { method: "POST" })).data;
 }
 
 export async function reorderSequenceSteps(

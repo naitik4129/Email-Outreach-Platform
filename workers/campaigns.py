@@ -14,6 +14,7 @@ from app.db.context import set_transaction_context
 from app.db.session import SessionLocal
 from app.modules.campaigns.mailbox_assignment import assign_mailbox_for_recipient
 from app.modules.campaigns.message_rendering import render_step_content
+from app.modules.campaigns.progression import ProgressionService
 from app.modules.campaigns.scheduling import project_into_window
 from app.modules.campaigns.worker_repository import CampaignWorkerRepository
 from app.modules.suppression.checks import is_address_suppressed
@@ -549,6 +550,7 @@ def render_messages_chunk(
                 rendered = render_step_content(
                     subject=row["email_subject"],
                     body_html=row["email_body_html"],
+                    preheader=row["email_preheader"],
                     frozen_variables=row["frozen_variables"] or {},
                     renderer_version=1,
                 )
@@ -639,3 +641,74 @@ def render_messages_chunk(
                     error_reason="An unexpected error occurred during rendering",
                 )
                 session.commit()
+
+
+@celery_app.task(
+    name="campaigns.advance_enrollments_chunk",
+    queue="campaigns",
+    bind=True,
+    max_retries=None,
+)
+def advance_enrollments_chunk(
+    self: Any,
+    workspace_id: str,
+    campaign_id: str,
+    after_enrollment_id: str | None = None,
+) -> None:
+    """One bounded chunk of follow-up progression for a RUNNING campaign.
+
+    Builds the next email for every enrollment whose current email was accepted
+    by the provider (see app.modules.campaigns.progression). Safe to repeat:
+    the whole chunk is one transaction, so a crash replays it unchanged, and the
+    unique (enrollment, step) message key stops two workers double-planning.
+    A full chunk re-queues itself from the last enrollment it looked at.
+    """
+    settings = Settings.current()
+    if not settings.sequence_progression_enabled:
+        return
+    ws_uuid = UUID(workspace_id)
+    campaign_uuid = UUID(campaign_id)
+    limit = settings.sequence_progression_batch_size
+
+    with SessionLocal() as session:
+        set_transaction_context(session, workspace_id=ws_uuid)
+        repo = CampaignWorkerRepository(session)
+        service = ProgressionService(
+            repo,
+            is_suppressed=lambda ws, address_id: is_address_suppressed(
+                session, ws, address_id
+            ),
+        )
+        try:
+            summary = service.advance_batch(
+                workspace_id=ws_uuid,
+                campaign_id=campaign_uuid,
+                limit=limit,
+                after_id=UUID(after_enrollment_id) if after_enrollment_id else None,
+            )
+            session.commit()
+        except Exception:
+            logger.exception(
+                f"Unexpected error advancing enrollments for campaign {campaign_id}"
+            )
+            session.rollback()
+            return
+
+        if summary.fetched:
+            # Counts and reason codes only: never recipient data or content.
+            logger.info(
+                f"Campaign {campaign_id} progression: fetched={summary.fetched} "
+                f"advanced={summary.advanced} completed={summary.completed} "
+                f"failed={summary.failed} skipped={summary.skipped} "
+                f"reasons={summary.reasons}"
+            )
+        if summary.fetched >= limit and summary.last_enrollment_id is not None:
+            self.retry(
+                kwargs={
+                    "workspace_id": workspace_id,
+                    "campaign_id": campaign_id,
+                    "after_enrollment_id": str(summary.last_enrollment_id),
+                },
+                countdown=1,
+                max_retries=self.request.retries + 1,
+            )

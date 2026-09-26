@@ -170,7 +170,7 @@ class CampaignService:
                 sequence_id=UUID(str(source_sequence["id"])),
             )
             for step in source_steps:
-                self.repo.insert_step(
+                new_step = self.repo.insert_step(
                     workspace_id=context.workspace_id,
                     sequence_id=UUID(str(new_sequence["id"])),
                     campaign_id=new_campaign_id,
@@ -178,6 +178,7 @@ class CampaignService:
                     kind=step["kind"],
                     email_subject=step["email_subject"],
                     email_body_html=step["email_body_html"],
+                    email_preheader=step["email_preheader"],
                     email_variable_schema=step["email_variable_schema"],
                     wait_duration_minutes=step["wait_duration_minutes"],
                     source_template_version_id=(
@@ -186,6 +187,16 @@ class CampaignService:
                         else None
                     ),
                 )
+                if step["kind"] == "EMAIL":
+                    # Images/attachments come along (shared storage objects, same
+                    # content ids, so the copied body still resolves them).
+                    self.repo.copy_step_attachments(
+                        workspace_id=context.workspace_id,
+                        from_step_id=UUID(str(step["id"])),
+                        to_campaign_id=new_campaign_id,
+                        to_sequence_id=UUID(str(new_sequence["id"])),
+                        to_step_id=UUID(str(new_step["id"])),
+                    )
 
         source_mailboxes = self.repo.list_campaign_mailboxes(
             workspace_id=context.workspace_id, campaign_id=campaign_id

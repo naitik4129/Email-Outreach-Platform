@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext, get_db, get_workspace_context
 from app.core.permissions import require_permission
 from app.modules.campaigns.activation_service import CampaignActivationService
+from app.modules.campaigns.attachment_service import StepAttachmentService
+from app.modules.campaigns.attachments import MAX_FILE_BYTES
 from app.modules.campaigns.audience_service import AudienceService
 from app.modules.campaigns.mailbox_service import CampaignMailboxService
 from app.modules.campaigns.preflight import PreflightService
@@ -31,17 +43,23 @@ from app.modules.campaigns.schemas import (
     CampaignUpdateIn,
     PauseIn,
     PreflightResult,
+    PreviewRecipientsOut,
     ResumeIn,
     SequenceOut,
     SequenceStepCreateIn,
     SequenceStepOut,
     SequenceStepsReorderIn,
     SequenceStepUpdateIn,
+    StepAttachmentOut,
+    StepAttachmentUrlOut,
+    StepTestSendIn,
 )
 from app.modules.campaigns.sequence_service import SequenceService
 from app.modules.campaigns.service import CampaignService
 from app.modules.campaigns.settings_service import CampaignSettingsService
+from app.modules.campaigns.step_test_send_service import StepTestSendService
 from app.modules.leads.pagination import DEFAULT_LIMIT
+from app.modules.mailboxes.schemas import MailboxTestSendResult
 
 router = APIRouter()
 
@@ -214,6 +232,116 @@ def update_sequence_step(
     return SequenceService(db).update_step(context, campaign_id, step_id, payload)
 
 
+@router.get(
+    "/campaigns/{campaign_id}/sequence/preview-recipients",
+    response_model=PreviewRecipientsOut,
+)
+def list_sequence_preview_recipients(
+    campaign_id: UUID,
+    limit: int = Query(default=25, ge=1, le=100),
+    after_ordinal: int | None = Query(default=None, ge=0),
+    context: WorkspaceContext = Depends(get_workspace_context),
+    db: Session = Depends(get_db),
+) -> PreviewRecipientsOut:
+    return SequenceService(db).list_preview_recipients(
+        context, campaign_id, limit=limit, after_ordinal=after_ordinal
+    )
+
+
+@router.post(
+    "/campaigns/{campaign_id}/sequence/steps/{step_id}/test-send",
+    response_model=MailboxTestSendResult,
+)
+def test_send_sequence_step(
+    campaign_id: UUID,
+    step_id: UUID,
+    payload: StepTestSendIn,
+    idempotency_key: str = Header(
+        ..., alias="Idempotency-Key", min_length=1, max_length=200
+    ),
+    context: WorkspaceContext = Depends(require_permission("campaigns.execute")),
+    db: Session = Depends(get_db),
+) -> MailboxTestSendResult:
+    return StepTestSendService(db).send(
+        context, campaign_id, step_id, payload, idempotency_key
+    )
+
+
+@router.post(
+    "/campaigns/{campaign_id}/sequence/steps/{step_id}/attachments",
+    response_model=StepAttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def upload_step_attachment(
+    campaign_id: UUID,
+    step_id: UUID,
+    response: Response,
+    file: UploadFile = File(...),
+    disposition: str = Form(default="ATTACHMENT"),
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> StepAttachmentOut:
+    # Read at most one byte over the cap so an oversized upload is rejected
+    # without buffering the whole body.
+    data = file.file.read(MAX_FILE_BYTES + 1)
+    attachment, created = StepAttachmentService(db).upload(
+        context,
+        campaign_id,
+        step_id,
+        filename=file.filename,
+        data=data,
+        disposition=disposition,
+    )
+    if not created:
+        # The same file was already attached: idempotent no-op.
+        response.status_code = status.HTTP_200_OK
+    return attachment
+
+
+@router.delete(
+    "/campaigns/{campaign_id}/sequence/steps/{step_id}/attachments/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_step_attachment(
+    campaign_id: UUID,
+    step_id: UUID,
+    attachment_id: UUID,
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> None:
+    StepAttachmentService(db).delete(context, campaign_id, step_id, attachment_id)
+
+
+@router.get(
+    "/campaigns/{campaign_id}/sequence/steps/{step_id}/attachments/{attachment_id}/url",
+    response_model=StepAttachmentUrlOut,
+)
+def get_step_attachment_url(
+    campaign_id: UUID,
+    step_id: UUID,
+    attachment_id: UUID,
+    context: WorkspaceContext = Depends(get_workspace_context),
+    db: Session = Depends(get_db),
+) -> StepAttachmentUrlOut:
+    return StepAttachmentService(db).signed_url(
+        context, campaign_id, step_id, attachment_id
+    )
+
+
+@router.post(
+    "/campaigns/{campaign_id}/sequence/steps/{step_id}/duplicate",
+    response_model=SequenceOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_sequence_step(
+    campaign_id: UUID,
+    step_id: UUID,
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> SequenceOut:
+    return SequenceService(db).duplicate_step(context, campaign_id, step_id)
+
+
 @router.post(
     "/campaigns/{campaign_id}/sequence/steps/reorder", response_model=SequenceOut
 )
@@ -233,10 +361,13 @@ def reorder_sequence_steps(
 def delete_sequence_step(
     campaign_id: UUID,
     step_id: UUID,
+    with_adjacent_wait: bool = Query(default=False),
     context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
     db: Session = Depends(get_db),
 ) -> None:
-    SequenceService(db).delete_step(context, campaign_id, step_id)
+    SequenceService(db).delete_step(
+        context, campaign_id, step_id, with_adjacent_wait=with_adjacent_wait
+    )
 
 
 # ---------------------------------------------------------------------------

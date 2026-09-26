@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     outbox_lease_seconds: int = Field(default=60, ge=5, le=600)
     outbox_max_attempts: int = Field(default=10, ge=1, le=100)
 
+    # Follow-up progression (email step N>1 after a Wait). Off by default so that
+    # deploying it never starts sending step 2 for campaigns that are already
+    # running; enable it deliberately. See docs/adr/0009.
+    sequence_progression_enabled: bool = False
+    sequence_progression_interval_seconds: float = Field(default=30.0, gt=0, le=3600)
+    sequence_progression_campaigns_per_run: int = Field(default=200, ge=1, le=5000)
+    sequence_progression_batch_size: int = Field(default=100, ge=1, le=1000)
+
     # Phase 10: while false, the email.send Celery task keeps the Phase 9
     # placeholder behavior (validates the payload, never calls a provider).
     # Lets the sending-worker/rate-limiter modules land and be tested
@@ -79,6 +87,8 @@ class Settings(BaseSettings):
     supabase_jwt_audience: str = "authenticated"
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "imports"
+    # Private bucket for sequence-step attachments and inline images.
+    supabase_attachments_bucket: str = "email-attachments"
 
     import_max_file_bytes: int = Field(default=10_000_000, ge=1)
     import_max_rows: int = Field(default=50_000, ge=1)

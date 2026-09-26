@@ -90,10 +90,12 @@ export async function apiRequest<T>(
   const { idempotencyKey, headers: extraHeaders, ...rest } = init;
 
   async function doFetch(accessToken: string | null): Promise<Response> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      ...extraHeaders,
-    };
+    // A FormData body needs the browser to set the multipart boundary itself,
+    // so it must not be labelled as JSON.
+    const headers: Record<string, string> =
+      rest.body instanceof FormData
+        ? { ...extraHeaders }
+        : { "Content-Type": "application/json", ...extraHeaders };
     if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     return fetch(apiUrl(path), { ...rest, headers });

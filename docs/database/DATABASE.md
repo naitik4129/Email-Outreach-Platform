@@ -176,7 +176,7 @@ Name, current version FK, mode STANDARD for MVP, archive timestamp. Index `(work
 
 ### template_versions (T)
 
-Template FK, positive revision, subject/body, variable schema, content digest and renderer/content schema version. Unique `(workspace_id,template_id,revision)` plus `(workspace_id,template_id,id)` candidate key. Bounded content and required subject/body checks. Parent/revision index supports version selection. Immutable after publication; template copy/activation freezes independent campaign content. T-read, publish-only T-service; retention of referenced versions.
+Template FK, positive revision, subject/body, optional pre-header (`preheader`, 1–255 chars, no control characters; migration 0024), variable schema, content digest and renderer/content schema version. Unique `(workspace_id,template_id,revision)` plus `(workspace_id,template_id,id)` candidate key. Bounded content and required subject/body checks. Parent/revision index supports version selection. Immutable after publication; template copy/activation freezes independent campaign content. T-read, publish-only T-service; retention of referenced versions.
 
 ### mailboxes (T)
 
@@ -208,7 +208,11 @@ Campaign FK, revision, DRAFT/FROZEN marker and frozen_at, content digest. Unique
 
 ### sequence_steps (T)
 
-Sequence and campaign composite FK, unique `(workspace_id,sequence_id,position)`, kind EMAIL/WAIT, email subject/body/variable schema or positive wait duration, optional source template-version FK. Check exactly one payload shape per kind and bounded nonnegative position. Unique candidate key includes sequence/id for message relationship. Ordered parent index interprets sequence. Alternation/start/end validation occurs under sequence lock in activation service because a row CHECK cannot express multi-row structure. Frozen steps immutable; disposable draft steps may be removed by edit command.
+Sequence and campaign composite FK, unique `(workspace_id,sequence_id,position)`, kind EMAIL/WAIT, email subject/body/variable schema (and an optional EMAIL-only `email_preheader`, 1–255 chars; migration 0024) or positive wait duration, optional source template-version FK. Check exactly one payload shape per kind and bounded nonnegative position. Unique candidate key includes sequence/id for message relationship. Ordered parent index interprets sequence. Alternation/start/end validation occurs under sequence lock in activation service because a row CHECK cannot express multi-row structure. Frozen steps immutable; disposable draft steps may be removed by edit command.
+
+### campaign_step_attachments (T)
+
+Files attached to an EMAIL step (migration 0025; [ADR-0010](../adr/0010-step-attachments-and-inline-images.md)). Composite FK `(workspace_id,sequence_id,step_id)` to `sequence_steps` (draft step deletion cascades), campaign FK, disposition ATTACHMENT/INLINE, `content_id` (stable `cid:` token), private-bucket `storage_key`, filename, allow-listed content type, size 1..2.5 MiB, SHA-256. Unique `(workspace_id,step_id,content_id)` and `(workspace_id,step_id,sha256,disposition)`; indexes by step and by storage key (reference counting). RLS enabled and forced: `app_api` may SELECT (`product.read`) and INSERT/DELETE (`campaigns.draft`) — no UPDATE, rows are immutable; `app_worker_send` SELECT only. A trigger rejects any change once the parent sequence is FROZEN. Copied rows share the storage object and content id. The frozen sequence digest covers each row's content id, SHA-256 and disposition.
 
 ### campaign_settings_versions (T)
 

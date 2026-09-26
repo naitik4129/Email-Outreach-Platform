@@ -486,6 +486,7 @@ class CampaignRepository:
         email_variable_schema: dict[str, Any] | None,
         wait_duration_minutes: int | None,
         source_template_version_id: UUID | None,
+        email_preheader: str | None = None,
     ) -> RowMapping:
         existing = self.list_steps_ordered(
             workspace_id=workspace_id, sequence_id=sequence_id
@@ -508,12 +509,13 @@ class CampaignRepository:
                     """
                     INSERT INTO sequence_steps
                         (id, workspace_id, sequence_id, campaign_id, position, kind,
-                         email_subject, email_body_html, email_variable_schema,
+                         email_subject, email_body_html, email_preheader,
+                         email_variable_schema,
                          wait_duration_minutes, source_template_version_id)
                     VALUES
                         (:id, :workspace_id, :sequence_id, :campaign_id, :position,
                          :kind,
-                         :email_subject, :email_body_html,
+                         :email_subject, :email_body_html, :email_preheader,
                          CAST(:email_variable_schema AS jsonb),
                          :wait_duration_minutes, :source_template_version_id)
                     RETURNING *
@@ -528,6 +530,7 @@ class CampaignRepository:
                     "kind": kind,
                     "email_subject": email_subject,
                     "email_body_html": email_body_html,
+                    "email_preheader": email_preheader,
                     "email_variable_schema": (
                         json.dumps(email_variable_schema)
                         if email_variable_schema is not None
@@ -559,6 +562,8 @@ class CampaignRepository:
         wait_duration_minutes: int | None,
         source_template_version_id: UUID | None,
         source_template_version_id_provided: bool,
+        email_preheader: str | None = None,
+        email_preheader_provided: bool = False,
     ) -> RowMapping | None:
         existing = self.get_step(
             workspace_id=workspace_id, step_id=step_id, for_update=True
@@ -593,6 +598,11 @@ class CampaignRepository:
                 if source_template_version_id_provided
                 else existing["source_template_version_id"]
             )
+            new_preheader = (
+                email_preheader
+                if email_preheader_provided
+                else existing["email_preheader"]
+            )
             row = (
                 self.session.execute(
                     text(
@@ -600,6 +610,7 @@ class CampaignRepository:
                         UPDATE sequence_steps
                         SET email_subject = :email_subject,
                             email_body_html = :email_body_html,
+                            email_preheader = :email_preheader,
                             email_variable_schema =
                                 CAST(:email_variable_schema AS jsonb),
                             source_template_version_id = :source_template_version_id
@@ -614,6 +625,7 @@ class CampaignRepository:
                         "expected_version": expected_version,
                         "email_subject": new_subject,
                         "email_body_html": new_body,
+                        "email_preheader": new_preheader,
                         "email_variable_schema": (
                             json.dumps(new_schema) if new_schema is not None else None
                         ),
@@ -1164,6 +1176,277 @@ class CampaignRepository:
             .one()
         )
         return {"accepted": int(row["accepted"]), "excluded": int(row["excluded"])}
+
+    # -------------------------------------------------------------------
+    # Step attachments (campaign_step_attachments, migration 0025)
+    # -------------------------------------------------------------------
+
+    def list_step_attachments(
+        self, *, workspace_id: UUID, step_id: UUID
+    ) -> list[RowMapping]:
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT * FROM campaign_step_attachments
+                    WHERE workspace_id = :workspace_id AND step_id = :step_id
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ),
+                {"workspace_id": str(workspace_id), "step_id": str(step_id)},
+            )
+            .mappings()
+            .all()
+        )
+        return list(rows)
+
+    def list_sequence_attachments(
+        self, *, workspace_id: UUID, sequence_id: UUID
+    ) -> list[RowMapping]:
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT * FROM campaign_step_attachments
+                    WHERE workspace_id = :workspace_id AND sequence_id = :sequence_id
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ),
+                {"workspace_id": str(workspace_id), "sequence_id": str(sequence_id)},
+            )
+            .mappings()
+            .all()
+        )
+        return list(rows)
+
+    def get_attachment(
+        self, *, workspace_id: UUID, step_id: UUID, attachment_id: UUID
+    ) -> RowMapping | None:
+        return (
+            self.session.execute(
+                text(
+                    """
+                    SELECT * FROM campaign_step_attachments
+                    WHERE workspace_id = :workspace_id AND step_id = :step_id
+                      AND id = :attachment_id
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "step_id": str(step_id),
+                    "attachment_id": str(attachment_id),
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+    def find_attachment_by_content(
+        self, *, workspace_id: UUID, step_id: UUID, sha256: str, disposition: str
+    ) -> RowMapping | None:
+        return (
+            self.session.execute(
+                text(
+                    """
+                    SELECT * FROM campaign_step_attachments
+                    WHERE workspace_id = :workspace_id AND step_id = :step_id
+                      AND sha256 = :sha256 AND disposition = :disposition
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "step_id": str(step_id),
+                    "sha256": sha256,
+                    "disposition": disposition,
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+    def insert_attachment(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        sequence_id: UUID,
+        step_id: UUID,
+        disposition: str,
+        content_id: str,
+        storage_key: str,
+        filename: str,
+        content_type: str,
+        size_bytes: int,
+        sha256: str,
+        created_by: UUID | None,
+    ) -> RowMapping | None:
+        """None when the same file (sha256 + disposition) is already attached to
+        this step -- the unique key makes a repeated/raced upload a no-op."""
+        return (
+            self.session.execute(
+                text(
+                    """
+                    INSERT INTO campaign_step_attachments
+                        (id, workspace_id, campaign_id, sequence_id, step_id,
+                         disposition, content_id, storage_key, filename,
+                         content_type, size_bytes, sha256, created_by)
+                    VALUES
+                        (:id, :workspace_id, :campaign_id, :sequence_id, :step_id,
+                         :disposition, :content_id, :storage_key, :filename,
+                         :content_type, :size_bytes, :sha256, :created_by)
+                    ON CONFLICT DO NOTHING
+                    RETURNING *
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "sequence_id": str(sequence_id),
+                    "step_id": str(step_id),
+                    "disposition": disposition,
+                    "content_id": content_id,
+                    "storage_key": storage_key,
+                    "filename": filename,
+                    "content_type": content_type,
+                    "size_bytes": size_bytes,
+                    "sha256": sha256,
+                    "created_by": str(created_by) if created_by else None,
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+    def delete_attachment(self, *, workspace_id: UUID, attachment_id: UUID) -> bool:
+        row = self.session.execute(
+            text(
+                """
+                DELETE FROM campaign_step_attachments
+                WHERE workspace_id = :workspace_id AND id = :attachment_id
+                RETURNING id
+                """
+            ),
+            {"workspace_id": str(workspace_id), "attachment_id": str(attachment_id)},
+        ).first()
+        return row is not None
+
+    def count_storage_key_references(
+        self, *, workspace_id: UUID, storage_key: str
+    ) -> int:
+        return int(
+            self.session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM campaign_step_attachments
+                    WHERE workspace_id = :workspace_id AND storage_key = :storage_key
+                    """
+                ),
+                {"workspace_id": str(workspace_id), "storage_key": storage_key},
+            ).scalar_one()
+        )
+
+    def copy_step_attachments(
+        self,
+        *,
+        workspace_id: UUID,
+        from_step_id: UUID,
+        to_campaign_id: UUID,
+        to_sequence_id: UUID,
+        to_step_id: UUID,
+    ) -> None:
+        """Copy attachment rows to another step. The rows share the storage
+        object and keep their content ids, so the copied body's cid references
+        stay valid; deleting one copy leaves the object while others use it."""
+        self.session.execute(
+            text(
+                """
+                INSERT INTO campaign_step_attachments
+                    (id, workspace_id, campaign_id, sequence_id, step_id,
+                     disposition, content_id, storage_key, filename, content_type,
+                     size_bytes, sha256, created_by)
+                SELECT pg_catalog.gen_random_uuid(), workspace_id,
+                       :to_campaign_id, :to_sequence_id, :to_step_id,
+                       disposition, content_id, storage_key, filename,
+                       content_type, size_bytes, sha256, created_by
+                FROM campaign_step_attachments
+                WHERE workspace_id = :workspace_id AND step_id = :from_step_id
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "from_step_id": str(from_step_id),
+                "to_campaign_id": str(to_campaign_id),
+                "to_sequence_id": str(to_sequence_id),
+                "to_step_id": str(to_step_id),
+            },
+        )
+
+    def list_accepted_audience_members(
+        self,
+        *,
+        workspace_id: UUID,
+        audience_id: UUID,
+        after_ordinal: int | None,
+        limit: int,
+    ) -> list[RowMapping]:
+        """ACCEPTED members in capture order, keyset-paginated on the unique
+        (workspace, audience, capture_ordinal) key. Read-only; used by the
+        sequence preview."""
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT id, lead_id, capture_ordinal, frozen_variables
+                    FROM campaign_audience_members
+                    WHERE workspace_id = :workspace_id
+                      AND audience_id = :audience_id
+                      AND eligibility_status = 'ACCEPTED'
+                      AND (CAST(:after_ordinal AS bigint) IS NULL
+                           OR capture_ordinal > CAST(:after_ordinal AS bigint))
+                    ORDER BY capture_ordinal ASC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "audience_id": str(audience_id),
+                    "after_ordinal": after_ordinal,
+                    "limit": limit,
+                },
+            )
+            .mappings()
+            .all()
+        )
+        return list(rows)
+
+    def get_accepted_audience_member(
+        self, *, workspace_id: UUID, campaign_id: UUID, member_id: UUID
+    ) -> RowMapping | None:
+        """One accepted member of THIS campaign (workspace + campaign scoped, so
+        another tenant's or campaign's member id resolves to None)."""
+        row = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT id, lead_id, frozen_variables
+                    FROM campaign_audience_members
+                    WHERE workspace_id = :workspace_id
+                      AND campaign_id = :campaign_id
+                      AND id = :member_id
+                      AND eligibility_status = 'ACCEPTED'
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "member_id": str(member_id),
+                },
+            )
+            .mappings()
+            .first()
+        )
+        return row
 
     # -------------------------------------------------------------------
     # Activation (app_api-permitted parts only -- ENROLL/RENDER planning

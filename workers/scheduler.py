@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import signal
+import time
 from threading import Event
+from uuid import UUID
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
@@ -16,6 +18,10 @@ class SchedulerRuntime:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings.current()
         self.stopped = Event()
+        # Follow-up progression is swept on its own, slower cadence, walking the
+        # RUNNING campaigns in id order across runs.
+        self._progression_last_run = float("-inf")
+        self._progression_cursor: UUID | None = None
 
     def stop(self, signum: int | None = None, frame: object | None = None) -> None:
         logger.info("Scheduler shutdown requested")
@@ -100,6 +106,14 @@ class SchedulerRuntime:
         except Exception:
             logger.exception("Error during message outcome reconciliation")
 
+        # 7b. Plan follow-up emails for enrollments whose email was accepted
+        try:
+            queued = self._dispatch_progression()
+            if queued > 0:
+                logger.info(f"Scheduler queued progression for {queued} campaigns")
+        except Exception:
+            logger.exception("Error during follow-up progression dispatch")
+
         # 8. Discover and enqueue due mailbox reply syncs (Phase 13)
         if self.settings.reply_sync_enabled:
             try:
@@ -149,6 +163,42 @@ class SchedulerRuntime:
                         logger.info("Scheduler recovered %d stale sync leases", recovered_sync_leases)
             except Exception:
                 logger.exception("Error during stale sync lease recovery")
+
+    def _dispatch_progression(self) -> int:
+        """Queue a follow-up progression task for each RUNNING campaign (a bounded
+        slice per interval). The scheduler role cannot read enrollments across
+        tenants, so it only names campaigns; the task does the per-workspace
+        work. Returns the number of tasks queued."""
+        if not self.settings.sequence_progression_enabled:
+            return 0
+        now = time.monotonic()
+        if now - self._progression_last_run < (
+            self.settings.sequence_progression_interval_seconds
+        ):
+            return 0
+        self._progression_last_run = now
+
+        from app.modules.scheduler.repository import SchedulerRepository
+
+        from workers.celery_app import celery_app
+
+        limit = self.settings.sequence_progression_campaigns_per_run
+        with session_scope(self.settings) as session:
+            campaigns = SchedulerRepository(session).find_running_campaigns(
+                after_id=self._progression_cursor, limit=limit
+            )
+        # Wrap around once the end is reached so every campaign is visited.
+        self._progression_cursor = campaigns[-1][1] if len(campaigns) >= limit else None
+        for workspace_id, campaign_id in campaigns:
+            celery_app.send_task(
+                "campaigns.advance_enrollments_chunk",
+                kwargs={
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                },
+                queue="campaigns",
+            )
+        return len(campaigns)
 
     def _recover_imports(self) -> None:
         from app.db.session import session_scope

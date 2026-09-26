@@ -87,6 +87,18 @@ class ConnectionValidationResult:
 
 
 @dataclass(frozen=True)
+class EnvelopeAttachment:
+    """A file carried by an outbound message. `content_id` set means an inline
+    image referenced from the HTML as cid:<content_id>; None is a regular
+    attachment."""
+
+    filename: str
+    content_type: str
+    data: bytes = field(repr=False)
+    content_id: str | None = None
+
+
+@dataclass(frozen=True)
 class OutboundMessageEnvelope:
     to_address: str
     from_address: str
@@ -95,6 +107,7 @@ class OutboundMessageEnvelope:
     body_html: str = ""
     body_text: str | None = None
     rfc_message_id: str | None = None
+    attachments: tuple[EnvelopeAttachment, ...] = ()
 
 
 @dataclass(frozen=True)

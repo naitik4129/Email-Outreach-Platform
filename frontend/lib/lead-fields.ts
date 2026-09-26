@@ -231,3 +231,48 @@ export const LEAD_TEMPLATE_VARIABLES: TemplateVariable[] = [
   })),
   { label: "Custom field", code: "{{custom.industry}}" },
 ];
+
+export type TemplateVariableGroup = { label: string; variables: TemplateVariable[] };
+
+function profileVariable(key: LeadProfileKey, label?: string): TemplateVariable {
+  const field = LEAD_PROFILE_FIELDS.find((f) => f.key === key);
+  return { label: label ?? field?.label ?? key, code: `{{${key}}}` };
+}
+
+// Grouped view of the same supported variables for the email editor's picker.
+// Every code here must be accepted by backend app/modules/templates/variables.py.
+export const TEMPLATE_VARIABLE_GROUPS: TemplateVariableGroup[] = [
+  {
+    label: "Contact",
+    variables: [
+      { label: "First name", code: "{{first_name}}" },
+      { label: "Last name", code: "{{last_name}}" },
+      { label: "Email", code: "{{email}}" },
+    ],
+  },
+  {
+    label: "Company",
+    variables: [
+      { label: "Company", code: "{{company}}" },
+      { label: "Job title", code: "{{title}}" },
+      profileVariable("company_industry", "Industry"),
+      profileVariable("company_website"),
+      profileVariable("company_linkedin_url"),
+      profileVariable("company_founded_year"),
+    ],
+  },
+  {
+    label: "Location",
+    variables: [profileVariable("city"), profileVariable("state"), profileVariable("country")],
+  },
+  {
+    label: "More about the contact",
+    variables: [
+      profileVariable("phone"),
+      profileVariable("department"),
+      profileVariable("experience_years"),
+      profileVariable("linkedin_url"),
+      profileVariable("website"),
+    ],
+  },
+];

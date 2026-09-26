@@ -44,6 +44,13 @@ Only the next email intent is materialized for an active enrollment. The immutab
 
 Choose a mailbox deterministically from eligible selected mailboxes using persisted allocation position and stable recipient ordering. Persist the assignment; retries never reroll. After the first authorized send, pin that enrollment to the mailbox for thread continuity. A disconnected mailbox holds work; it does not trigger sender rotation on an unknown attempt. Before any attempt, reassignment may be an explicit paused command that invalidates rendering and queue generation. This command remains an Open Decision for product approval.
 
+### Implementation notes (follow-up progression, pre-header, attachments)
+
+- **Progression** is implemented as a level-triggered sweeper, not inside the send-result transaction — see [ADR-0009](../adr/0009-sequence-progression-sweeper.md). For each ACTIVE enrollment whose current email is SENT it creates the next email (anchor = persisted acceptance time + summed waits, projected into the window), renders it from the frozen variables, and moves `next_step_id`; the last accepted email completes the enrollment and a permanently FAILED email fails it. It is idempotent (unique `(enrollment,step)` message key, guarded pointer update) and disabled unless `SEQUENCE_PROGRESSION_ENABLED=true`. Campaign-level completion is not part of this change.
+- **Pre-header** is stored on the step/template version and folded into the rendered body as a hidden preview-text element before the content digest is computed, so the existing digest and the send gate's recomputation cover it unchanged. Steps without one render and hash exactly as before.
+- **Attachments and inline images** are described in [ADR-0010](../adr/0010-step-attachments-and-inline-images.md) and `campaign_step_attachments` in [DATABASE](../database/DATABASE.md). Explicit editor content always wins over a picked template's text; the template reference is provenance only.
+- A step-level "start on Day N" in the editor edits the WAIT step before it (whole days), so the documented Email/Wait alternation is unchanged.
+
 ## Three independent lifecycles
 
 Campaign status controls global execution; enrollment controls one recipient's sequence; message status controls one intended email. A provider outage or cooldown is usually a temporary hold, not a failed campaign. A bounce event after SENT does not turn acceptance into an unsent retry.

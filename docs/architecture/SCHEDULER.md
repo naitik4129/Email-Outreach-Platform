@@ -14,6 +14,10 @@ Candidate discovery does not lock messages and then reverse the documented lock 
 
 Relay publishes the committed outbox through [EVENT_SYSTEM](EVENT_SYSTEM.md). QUEUED means dispatch requested, not guaranteed Redis presence. Publication failure leaves durable retryable delivery. Publish-success/local-mark failure can duplicate task transport but cannot duplicate message authorization.
 
+## Follow-up progression sweep
+
+Follow-up emails are planned by a separate, slower pass (`SEQUENCE_PROGRESSION_INTERVAL_SECONDS`, default 30) when `SEQUENCE_PROGRESSION_ENABLED=true`. The scheduler role can read campaigns cross-tenant but not enrollments, so it only lists RUNNING campaigns with READY planning (keyset by campaign id, a bounded slice per interval, wrapping around) and queues `campaigns.advance_enrollments_chunk` for each. The task runs per workspace as `app_worker_general`; see [ADR-0009](../adr/0009-sequence-progression-sweeper.md). It never sends and never bypasses the due-discovery/claim path: planned follow-ups are ordinary SCHEDULED messages stamped with the campaign's current schedule generation.
+
 ## Dispatch lease and lost work
 
 Dispatch lease bounds time until a worker authorizes an attempt, not how long an accepted provider request may run. Worker validates generation and lease. Expired QUEUED with no attempt returns to its recorded origin, increments generation and recomputes due time; stale outbox deliveries are superseded. Old workers/tasks cannot authorize the new generation.

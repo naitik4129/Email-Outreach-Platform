@@ -17,6 +17,7 @@ from app.core.crypto import (
 )
 from app.core.errors import AppError
 from app.modules.mailboxes.providers.base import (
+    EnvelopeAttachment,
     OutboundMessageEnvelope,
     ProviderCapability,
 )
@@ -1047,7 +1048,22 @@ class MailboxService:
         mailbox_id: UUID,
         recipient_email: str | None = None,
         request_key: str | None = None,
+        *,
+        subject: str | None = None,
+        body_html: str | None = None,
+        operation: str = "mailbox.test_send",
+        payload_fingerprint: str | None = None,
+        attachments: tuple[EnvelopeAttachment, ...] = (),
     ) -> MailboxTestSendResult:
+        """Send one controlled test email through the mailbox.
+
+        With no `subject`/`body_html` this sends the fixed mailbox connectivity
+        test. Callers that render real content (a campaign step's test send)
+        pass it in and reuse every safety step below (mailbox state, recipient
+        validation, suppression, authorization, attempt bookkeeping) instead of
+        forking a second send path. `operation` scopes the idempotency receipt
+        and `payload_fingerprint` binds it to the content being sent.
+        """
         # 1. Validate Mailbox State
         mailbox = self.repo.get_mailbox(workspace_id, mailbox_id)
         if not mailbox:
@@ -1099,9 +1115,13 @@ class MailboxService:
         # 4. Resolve Membership & Idempotency
         membership_id = self.repo.get_user_membership_id(workspace_id, user_id)
         req_key = request_key or str(uuid4())
-        payload_hash = hashlib.sha256(f"{target_email}".encode()).hexdigest()
+        payload_hash = hashlib.sha256(
+            f"{target_email}\x00{payload_fingerprint}".encode()
+            if payload_fingerprint
+            else f"{target_email}".encode()
+        ).hexdigest()
         receipt_id = self.repo.ensure_command_receipt(
-            workspace_id, user_id, "mailbox.test_send", req_key, payload_hash
+            workspace_id, user_id, operation, req_key, payload_hash
         )
 
         # 5. Create Authorization
@@ -1240,12 +1260,14 @@ class MailboxService:
         sender_label = (
             mailbox["sender_display_name"] or mailbox["original_address"]
         )
-        subject = f"Test Email from {sender_label}"
-        body_html = (
-            f"<p>This is a controlled test email from the Email Outreach Platform.</p>"
-            f"<p>Mailbox: <strong>{mailbox['original_address']}</strong></p>"
-            f"<p>Timestamp (UTC): {now.isoformat()}</p>"
-        )
+        if subject is None or body_html is None:
+            subject = f"Test Email from {sender_label}"
+            body_html = (
+                f"<p>This is a controlled test email from the Email Outreach "
+                f"Platform.</p>"
+                f"<p>Mailbox: <strong>{mailbox['original_address']}</strong></p>"
+                f"<p>Timestamp (UTC): {now.isoformat()}</p>"
+            )
         content_digest = hashlib.sha256(
             f"{subject}\n{body_html}".encode()
         ).hexdigest()
@@ -1285,6 +1307,7 @@ class MailboxService:
             subject=subject,
             body_html=body_html,
             rfc_message_id=rfc_message_id,
+            attachments=attachments,
         )
 
         send_result = provider.send_message(credential, envelope)

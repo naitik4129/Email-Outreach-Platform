@@ -104,9 +104,10 @@ def parse_and_validate_variables(
 
 
 def validate_template_content(
-    subject: str, body_html: str
+    subject: str, body_html: str, preheader: str | None = None
 ) -> dict[str, Any]:
-    """Validate subject and body_html bounds and placeholder syntax.
+    """Validate subject, body_html and optional pre-header bounds and
+    placeholder syntax.
 
     Returns combined variable_schema suitable for template_versions.variable_schema.
     """
@@ -127,14 +128,32 @@ def validate_template_content(
             status_code=422,
         )
 
+    if preheader is not None and len(preheader) > 255:
+        raise AppError(
+            "validation_error",
+            "Pre-header must be 255 characters or fewer",
+            status_code=422,
+        )
+    if preheader is not None and re.search(r"[\x00-\x1f\x7f]", preheader):
+        raise AppError(
+            "validation_error",
+            "Pre-header must not contain control characters",
+            status_code=422,
+        )
+
     _, subject_schema = parse_and_validate_variables(clean_subject, "subject")
     _, body_schema = parse_and_validate_variables(body_html, "body")
+    _, preheader_schema = parse_and_validate_variables(preheader or "", "pre-header")
 
     combined_standard = sorted(
-        set(subject_schema["standard"]) | set(body_schema["standard"])
+        set(subject_schema["standard"])
+        | set(body_schema["standard"])
+        | set(preheader_schema["standard"])
     )
     combined_custom = sorted(
-        set(subject_schema["custom"]) | set(body_schema["custom"])
+        set(subject_schema["custom"])
+        | set(body_schema["custom"])
+        | set(preheader_schema["custom"])
     )
 
     return {

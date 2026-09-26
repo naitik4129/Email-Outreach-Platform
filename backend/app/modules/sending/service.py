@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -20,8 +22,14 @@ from app.core.metrics import (
     record_retry_scheduled,
     record_terminal_failure,
 )
+from app.modules.imports.storage import (
+    StorageError,
+    StorageObjectMissingError,
+    StorageUnavailableError,
+)
 from app.modules.mailboxes.providers.base import (
     EmailProvider,
+    EnvelopeAttachment,
     OutboundMessageEnvelope,
     ProviderCapability,
     ProviderSendResult,
@@ -66,8 +74,10 @@ class SendingService:
         session: Session,
         settings: Settings | None = None,
         rate_limiter: RedisRateLimiter | None = None,
+        storage_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.session = session
+        self._storage_factory = storage_factory
         self.settings = settings or Settings.current()
         self.repository = SendingRepository(session)
         self.rate_policy_repository = RatePolicyRepository(session)
@@ -355,6 +365,22 @@ class SendingService:
                 attempt_id=attempt_id,
             )
 
+        # Files are fetched now, outside any DB transaction, and verified against
+        # the digests recorded when they were uploaded. A problem here means the
+        # provider was never invoked, so the message can be failed or retried
+        # without any ambiguity about whether it was sent.
+        try:
+            attachments = self._load_attachments(ctx)
+        except _CredentialFailure as exc:
+            self._finalize_not_invoked(ctx, attempt_id, exc)
+            self.session.commit()
+            return SendOutcome(
+                message_id=ctx.message_id,
+                outcome=exc.message_status,
+                reason=exc.error_category,
+                attempt_id=attempt_id,
+            )
+
         envelope = OutboundMessageEnvelope(
             to_address=ctx.frozen_destination or "",
             from_address=ctx.frozen_sender_address or ctx.mailbox_original_address,
@@ -362,6 +388,7 @@ class SendingService:
             subject=ctx.content_subject or "",
             body_html=ctx.content_body_html or "",
             rfc_message_id=ctx.rfc_message_id,
+            attachments=attachments,
         )
 
         try:
@@ -411,6 +438,73 @@ class SendingService:
                     raise
                 self._finalize_send_result(ctx, attempt_id, send_result)
         return outcome
+
+    def _load_attachments(
+        self, ctx: LoadedSendContext
+    ) -> tuple[EnvelopeAttachment, ...]:
+        step_id = ctx.raw.get("step_id")
+        if ctx.purpose != "CAMPAIGN" or not step_id:
+            return ()
+        rows = self.repository.list_step_attachments(
+            workspace_id=ctx.workspace_id, step_id=UUID(str(step_id))
+        )
+        # End the read transaction before any network I/O.
+        self.session.commit()
+        if not rows:
+            return ()
+
+        if self._storage_factory is not None:
+            storage = self._storage_factory()
+        else:
+            from app.modules.campaigns.attachment_service import (
+                default_storage_client,
+            )
+
+            storage = default_storage_client()
+
+        loaded: list[EnvelopeAttachment] = []
+        for row in rows:
+            try:
+                data = storage.download_object(row["storage_key"])
+            except StorageObjectMissingError:
+                raise _CredentialFailure(
+                    error_category="CONFIGURATION_FAILURE",
+                    error_code="attachment_missing",
+                    message_status="FAILED",
+                ) from None
+            except StorageUnavailableError:
+                raise _CredentialFailure(
+                    error_category="TRANSIENT_FAILURE",
+                    error_code="attachment_storage_unavailable",
+                    message_status="RETRY_SCHEDULED",
+                    hold_reason="attachment_storage_unavailable",
+                ) from None
+            except StorageError:
+                raise _CredentialFailure(
+                    error_category="CONFIGURATION_FAILURE",
+                    error_code="attachment_unreadable",
+                    message_status="FAILED",
+                ) from None
+            if (
+                len(data) != row["size_bytes"]
+                or hashlib.sha256(data).hexdigest() != row["sha256"]
+            ):
+                raise _CredentialFailure(
+                    error_category="CONFIGURATION_FAILURE",
+                    error_code="attachment_corrupt",
+                    message_status="FAILED",
+                )
+            loaded.append(
+                EnvelopeAttachment(
+                    filename=row["filename"],
+                    content_type=row["content_type"],
+                    data=data,
+                    content_id=(
+                        row["content_id"] if row["disposition"] == "INLINE" else None
+                    ),
+                )
+            )
+        return tuple(loaded)
 
     def _load_and_refresh_credential(
         self,
@@ -763,6 +857,11 @@ class _AuthorizationAborted(Exception):
 
 
 class _CredentialFailure(Exception):
+    """ A failure detected BEFORE the provider is invoked (bad/missing credential,
+    unreadable attachment). Despite the name it covers any pre-send payload
+    problem: the provider was never called, so the message can be failed or
+    retried with no ambiguity about whether it went out."""
+
     def __init__(
         self,
         *,

@@ -85,17 +85,24 @@ class SequenceStepCreateIn(BaseModel):
     # EMAIL payload
     email_subject: str | None = Field(default=None, min_length=1, max_length=500)
     email_body_html: str | None = Field(default=None, max_length=200_000)
+    # "" clears; None means "not provided".
+    email_preheader: str | None = Field(default=None, max_length=255)
     source_template_version_id: UUID | None = None
-    # WAIT payload
-    wait_duration_minutes: int | None = Field(default=None, gt=0)
+    # EMAIL only: also insert a WAIT of this many minutes directly before the
+    # new step, atomically, so alternation can never be left half-built.
+    leading_wait_minutes: int | None = Field(default=None, gt=0, le=525_600)
+    # WAIT payload (at most one year)
+    wait_duration_minutes: int | None = Field(default=None, gt=0, le=525_600)
 
 
 class SequenceStepUpdateIn(BaseModel):
     expected_version: int = Field(ge=1)
     email_subject: str | None = Field(default=None, min_length=1, max_length=500)
     email_body_html: str | None = Field(default=None, max_length=200_000)
+    # "" clears the pre-header; None leaves it unchanged.
+    email_preheader: str | None = Field(default=None, max_length=255)
     source_template_version_id: UUID | None = None
-    wait_duration_minutes: int | None = Field(default=None, gt=0)
+    wait_duration_minutes: int | None = Field(default=None, gt=0, le=525_600)
 
 
 class SequenceStepReorderEntry(BaseModel):
@@ -107,6 +114,23 @@ class SequenceStepsReorderIn(BaseModel):
     steps: list[SequenceStepReorderEntry] = Field(min_length=1)
 
 
+class StepAttachmentOut(BaseModel):
+    id: UUID
+    step_id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+    disposition: Literal["ATTACHMENT", "INLINE"]
+    # The token used in the body as <img src="cid:CONTENT_ID">.
+    content_id: str
+    created_at: datetime
+
+
+class StepAttachmentUrlOut(BaseModel):
+    url: str
+    expires_in: int
+
+
 class SequenceStepOut(BaseModel):
     id: UUID
     sequence_id: UUID
@@ -115,6 +139,8 @@ class SequenceStepOut(BaseModel):
     kind: str
     email_subject: str | None = None
     email_body_html: str | None = None
+    email_preheader: str | None = None
+    attachments: list[StepAttachmentOut] = Field(default_factory=list)
     email_variable_schema: dict[str, Any] | None = None
     wait_duration_minutes: int | None = None
     source_template_version_id: UUID | None = None
@@ -129,6 +155,40 @@ class SequenceOut(BaseModel):
     revision: int
     status: str
     steps: list[SequenceStepOut]
+
+
+class PreviewRecipientOut(BaseModel):
+    audience_member_id: UUID
+    lead_id: UUID
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    company: str | None = None
+    # Exactly what the message will render with (the captured snapshot), so the
+    # preview never disagrees with what is sent.
+    variables: dict[str, Any]
+
+
+class PreviewRecipientsOut(BaseModel):
+    # "NONE" until the campaign has a ready audience; the UI then falls back to
+    # sample data.
+    source: Literal["AUDIENCE", "NONE"]
+    items: list[PreviewRecipientOut]
+    total: int | None = None
+    next_cursor: int | None = None
+
+
+class StepTestSendIn(BaseModel):
+    mailbox_id: UUID
+    recipient_email: str = Field(min_length=3, max_length=320)
+    # The sender must explicitly confirm the destination: a test email goes to a
+    # real inbox, so it is never sent to a default or implied address.
+    confirm_recipient: bool
+    audience_member_id: UUID | None = None
+    # Unsaved editor content overrides the saved step for the test only.
+    email_subject: str | None = Field(default=None, min_length=1, max_length=500)
+    email_body_html: str | None = Field(default=None, max_length=200_000)
+    email_preheader: str | None = Field(default=None, max_length=255)
 
 
 # ---------------------------------------------------------------------------

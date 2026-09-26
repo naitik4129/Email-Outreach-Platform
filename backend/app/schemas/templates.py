@@ -11,6 +11,7 @@ class TemplateCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     subject: str = Field(min_length=1, max_length=500)
     body_html: str = Field(default="", max_length=200_000)
+    preheader: str | None = Field(default=None, max_length=255)
     mode: Literal["STANDARD"] = "STANDARD"
 
 
@@ -19,6 +20,8 @@ class TemplateUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     subject: str | None = Field(default=None, min_length=1, max_length=500)
     body_html: str | None = Field(default=None, max_length=200_000)
+    # "" clears the pre-header; None leaves it unchanged.
+    preheader: str | None = Field(default=None, max_length=255)
 
 
 class TemplateDuplicateIn(BaseModel):
@@ -32,6 +35,7 @@ class TemplateArchiveIn(BaseModel):
 class TemplatePreviewIn(BaseModel):
     subject: str = Field(min_length=1, max_length=500)
     body_html: str = Field(default="", max_length=200_000)
+    preheader: str | None = Field(default=None, max_length=255)
     lead_id: UUID | None = None
     sample_data: dict[str, Any] | None = None
 
@@ -39,6 +43,9 @@ class TemplatePreviewIn(BaseModel):
 class TemplatePreviewOut(BaseModel):
     subject: str
     body_html: str
+    # Rendered pre-header text ("" when none); returned separately so the UI can
+    # show it as inbox preview text rather than as body content.
+    preheader: str = ""
     detected_variables: list[str]
     missing_variables: list[str]
 
@@ -49,6 +56,7 @@ class TemplateVersionOut(BaseModel):
     revision: int
     subject: str
     body_html: str
+    preheader: str | None = None
     variable_schema: dict[str, Any]
     content_digest: str
     renderer_version: int
@@ -87,6 +95,7 @@ class TemplateDetailOut(BaseModel):
     current_revision: int | None = None
     subject: str
     body_html: str
+    preheader: str | None = None
     variable_schema: dict[str, Any] = Field(default_factory=dict)
     content_digest: str
     renderer_version: int

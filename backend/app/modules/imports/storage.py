@@ -46,8 +46,13 @@ class SupabaseStorageClient:
     Security": do not expose server secrets).
     """
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, *, bucket: str | None = None
+    ) -> None:
         self._settings = settings or Settings.current()
+        # Defaults to the imports bucket; other features pass their own so one
+        # client class serves every private bucket.
+        self._bucket = bucket or self._settings.supabase_storage_bucket
 
     def _headers(self, *, content_type: str | None = None) -> dict[str, str]:
         key = self._settings.supabase_service_role_key
@@ -61,7 +66,7 @@ class SupabaseStorageClient:
 
     def upload_object(self, key: str, *, content_type: str, data: bytes) -> StoredObject:
         digest = hashlib.sha256(data).hexdigest()
-        bucket = self._settings.supabase_storage_bucket
+        bucket = self._bucket
         try:
             response = httpx.post(
                 f"{self._base_url()}/object/{bucket}/{key}",
@@ -82,7 +87,7 @@ class SupabaseStorageClient:
         return StoredObject(key=key, version=version, digest=digest, size=len(data))
 
     def download_object(self, key: str) -> bytes:
-        bucket = self._settings.supabase_storage_bucket
+        bucket = self._bucket
         try:
             response = httpx.get(
                 f"{self._base_url()}/object/{bucket}/{key}",
@@ -94,8 +99,41 @@ class SupabaseStorageClient:
         self._raise_for_status(response, action="download")
         return response.content
 
+    def delete_object(self, key: str) -> None:
+        """Remove an object. A missing object is not an error (delete is
+        idempotent), so a retried cleanup converges."""
+        try:
+            response = httpx.delete(
+                f"{self._base_url()}/object/{self._bucket}/{key}",
+                headers=self._headers(),
+                timeout=30.0,
+            )
+        except httpx.TransportError as exc:
+            raise StorageUnavailableError(str(exc)) from exc
+        if response.status_code == 404:
+            return
+        self._raise_for_status(response, action="delete")
+
+    def create_signed_url(self, key: str, *, expires_in: int = 300) -> str:
+        """Short-lived URL for previewing a private object in the browser."""
+        try:
+            response = httpx.post(
+                f"{self._base_url()}/object/sign/{self._bucket}/{key}",
+                headers=self._headers(content_type="application/json"),
+                json={"expiresIn": expires_in},
+                timeout=15.0,
+            )
+        except httpx.TransportError as exc:
+            raise StorageUnavailableError(str(exc)) from exc
+        self._raise_for_status(response, action="sign")
+        signed = str(response.json().get("signedURL", ""))
+        if not signed:
+            raise StorageError("Storage did not return a signed URL")
+        path = signed if signed.startswith("/") else f"/{signed}"
+        return f"{self._base_url()}{path}"
+
     def object_exists(self, key: str) -> bool:
-        bucket = self._settings.supabase_storage_bucket
+        bucket = self._bucket
         prefix, _, name = key.rpartition("/")
         try:
             response = httpx.post(

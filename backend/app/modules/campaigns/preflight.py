@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+import re
 from uuid import UUID
 
 from sqlalchemy import RowMapping
@@ -7,14 +9,28 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext
 from app.core.errors import AppError
+from app.modules.campaigns.attachments import extract_cid_references
 from app.modules.campaigns.audience_service import AudienceService
 from app.modules.campaigns.mailbox_service import CampaignMailboxService
 from app.modules.campaigns.repository import CampaignRepository
 from app.modules.campaigns.schemas import PreflightIssue, PreflightResult
 from app.modules.campaigns.sequence_service import SequenceService
 from app.modules.campaigns.settings_service import CampaignSettingsService
+from app.modules.templates.variables import validate_template_content
 
 _HIGH_EXCLUSION_RATE_THRESHOLD = 0.5
+_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def _has_visible_content(body_html: str | None) -> bool:
+    """True when the body would show something: an image or non-blank text once
+    tags and non-breaking spaces are removed (so `<p></p>` counts as empty)."""
+    if not body_html:
+        return False
+    if re.search(r"<img\b", body_html, re.IGNORECASE):
+        return True
+    text_only = html.unescape(_TAG_RE.sub("", body_html))
+    return bool(text_only.replace("\xa0", " ").strip())
 _UNHEALTHY_CONNECTION_STATES = {"DISCONNECTED", "RECONNECT_REQUIRED"}
 _UNHEALTHY_POLICY_STATES = {"DISABLED", "RESTRICTED"}
 
@@ -96,13 +112,53 @@ class PreflightService:
             )
 
         for step in sequence.steps:
-            if step.kind == "EMAIL" and not (step.email_subject or "").strip():
+            if step.kind != "EMAIL":
+                continue
+            field_path = f"sequence.steps[{step.position}]"
+            if not (step.email_subject or "").strip():
                 errors.append(
                     PreflightIssue(
                         code="sequence_step_missing_content",
                         message=f"Email step at position {step.position} "
                         "has no subject.",
-                        field_path=f"sequence.steps[{step.position}]",
+                        field_path=field_path,
+                    )
+                )
+            if not _has_visible_content(step.email_body_html):
+                errors.append(
+                    PreflightIssue(
+                        code="sequence_step_missing_body",
+                        message=f"Email step at position {step.position} "
+                        "has an empty body.",
+                        field_path=field_path,
+                    )
+                )
+            inline_ids = {
+                a.content_id for a in step.attachments if a.disposition == "INLINE"
+            }
+            if extract_cid_references(step.email_body_html) - inline_ids:
+                errors.append(
+                    PreflightIssue(
+                        code="sequence_step_missing_image",
+                        message=f"Email step at position {step.position} uses an "
+                        "image that is no longer attached. Remove it or insert "
+                        "the image again.",
+                        field_path=field_path,
+                    )
+                )
+            try:
+                validate_template_content(
+                    step.email_subject or " ",
+                    step.email_body_html or "",
+                    step.email_preheader,
+                )
+            except AppError as exc:
+                errors.append(
+                    PreflightIssue(
+                        code="sequence_step_invalid_variable",
+                        message=f"Email step at position {step.position}: "
+                        f"{exc.message}",
+                        field_path=field_path,
                     )
                 )
 

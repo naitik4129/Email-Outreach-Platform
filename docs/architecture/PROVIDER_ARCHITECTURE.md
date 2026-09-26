@@ -20,7 +20,7 @@ Capabilities are resolved per connection from adapter support, granted scopes an
 |---|---|---|---|---|
 | Validate connection | Protected credential reference; normalized account identity, scopes, safe diagnostic stages | OAuth/API | OAuth/Graph | DNS/TCP/TLS/auth stages |
 | Refresh credentials | Expected credential generation; new encrypted generation or classified failure | OAuth where authorized | OAuth where authorized | Only configured authentication mechanism supports it; no invented refresh for passwords |
-| Send | Immutable content, envelope, attempt ID, optional correlation/thread context, bounded deadline | Gmail API | Graph | Authenticated submission |
+| Send | Immutable content, envelope (including verified attachments and `cid:` inline images), attempt ID, optional correlation/thread context, bounded deadline | Gmail API | Graph | Authenticated submission |
 | Account status | Safe health/capability facts and observation timestamp | Available facts only | Available facts only | Successful connection does not prove future delivery |
 | Message lookup | Scoped IDs/correlation plus evidence strength | Account/scopes dependent | Account/scopes dependent | Not supplied by SMTP itself |
 | Reply sync | Cursor → bounded normalized page + checkpoint | Gmail history/full sync | Graph folder delta | Separate explicitly supported IMAP/API connection required |

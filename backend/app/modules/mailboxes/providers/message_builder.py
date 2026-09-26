@@ -51,4 +51,27 @@ def build_rfc5322_message(envelope: OutboundMessageEnvelope) -> EmailMessage:
     else:
         msg.set_content(envelope.body_text or "")
 
+    inline = [a for a in envelope.attachments if a.content_id]
+    regular = [a for a in envelope.attachments if not a.content_id]
+    if inline:
+        html_part = msg.get_body(preferencelist=("html",))
+        if html_part is not None:
+            for image in inline:
+                maintype, _, subtype = image.content_type.partition("/")
+                # multipart/related: the image travels with the HTML that
+                # references it as cid:<content_id>.
+                html_part.add_related(
+                    image.data,
+                    maintype,
+                    subtype,
+                    cid=f"<{image.content_id}>",
+                    filename=image.filename,
+                    disposition="inline",
+                )
+    for attachment in regular:
+        maintype, _, subtype = attachment.content_type.partition("/")
+        msg.add_attachment(
+            attachment.data, maintype, subtype, filename=attachment.filename
+        )
+
     return msg

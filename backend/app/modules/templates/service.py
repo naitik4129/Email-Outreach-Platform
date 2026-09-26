@@ -13,6 +13,7 @@ from app.modules.leads.repository import LeadRepository
 from app.modules.templates.rendering import (
     DEFAULT_SAMPLE_DATA,
     build_lead_render_context,
+    render_preheader,
     render_template_content,
     resolve_variable_value,
 )
@@ -60,8 +61,9 @@ class TemplateService:
         self, context: WorkspaceContext, payload: TemplateCreateIn
     ) -> TemplateDetailOut:
         clean_name = _validate_name(payload.name)
+        clean_preheader = (payload.preheader or "").strip() or None
         variable_schema = validate_template_content(
-            payload.subject, payload.body_html
+            payload.subject, payload.body_html, clean_preheader
         )
 
         row = self.repo.create_template_with_version(
@@ -71,6 +73,7 @@ class TemplateService:
             body_html=payload.body_html,
             variable_schema=variable_schema,
             actor_id=context.user_id,
+            preheader=clean_preheader,
         )
         return self._to_detail_out(row)
 
@@ -148,6 +151,7 @@ class TemplateService:
             subject=payload.subject,
             body_html=payload.body_html,
             actor_id=context.user_id,
+            preheader=payload.preheader,
         )
         if row is None:
             raise AppError("not_found", "Template not found", status_code=404)
@@ -198,7 +202,9 @@ class TemplateService:
         # Validate variables in subject and body
         subj_vars, _ = parse_and_validate_variables(clean_subject, "subject")
         body_vars, _ = parse_and_validate_variables(payload.body_html, "body")
-        detected_vars = sorted(subj_vars | body_vars)
+        clean_preheader = (payload.preheader or "").strip()
+        preheader_vars, _ = parse_and_validate_variables(clean_preheader, "pre-header")
+        detected_vars = sorted(subj_vars | body_vars | preheader_vars)
 
         render_context: dict[str, Any] = {}
         if payload.lead_id is not None:
@@ -215,7 +221,7 @@ class TemplateService:
 
         # Check for missing variables (no value in context and no fallback)
         missing: set[str] = set()
-        for text_source in (clean_subject, payload.body_html):
+        for text_source in (clean_subject, payload.body_html, clean_preheader):
             for m in _PLACEHOLDER_RE.finditer(text_source):
                 var_name = m.group(1).strip()
                 fallback = m.group(2)
@@ -237,6 +243,7 @@ class TemplateService:
         return TemplatePreviewOut(
             subject=rendered_subject,
             body_html=sanitized_body,
+            preheader=render_preheader(clean_preheader, render_context),
             detected_variables=detected_vars,
             missing_variables=sorted(missing),
         )
@@ -260,6 +267,7 @@ class TemplateService:
                 revision=r["revision"],
                 subject=r["subject"],
                 body_html=r["body_html"],
+                preheader=r["preheader"],
                 variable_schema=r["variable_schema"] or {},
                 content_digest=r["content_digest"],
                 renderer_version=r["renderer_version"],
@@ -282,6 +290,7 @@ class TemplateService:
             current_revision=row["current_revision"],
             subject=row["subject"] or "",
             body_html=row["body_html"] or "",
+            preheader=row["preheader"],
             variable_schema=row["variable_schema"] or {},
             content_digest=row["content_digest"] or "",
             renderer_version=row["renderer_version"] or 1,

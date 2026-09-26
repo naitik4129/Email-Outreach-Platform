@@ -42,6 +42,24 @@ describe("apiRequest", () => {
     expect(init.headers.Authorization).toBe("Bearer token-123");
   });
 
+  it("labels JSON requests as JSON but leaves multipart uploads to the browser", async () => {
+    getSession.mockResolvedValue({ data: { session: { access_token: "token-123" } } });
+    // A fresh Response per call: a body can only be read once.
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiRequest("/api/v1/json", { method: "POST", body: JSON.stringify({ a: 1 }) });
+    const form = new FormData();
+    form.append("file", new File(["x"], "a.pdf"));
+    await apiRequest("/api/v1/upload", { method: "POST", body: form });
+
+    expect(fetchMock.mock.calls[0][1].headers["Content-Type"]).toBe("application/json");
+    // The browser must add the multipart boundary itself; a JSON label would break it.
+    expect(fetchMock.mock.calls[1][1].headers["Content-Type"]).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe("Bearer token-123");
+    expect(fetchMock.mock.calls[1][1].body).toBe(form);
+  });
+
   it("sends no Authorization header when there is no session", async () => {
     getSession.mockResolvedValue({ data: { session: null } });
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));

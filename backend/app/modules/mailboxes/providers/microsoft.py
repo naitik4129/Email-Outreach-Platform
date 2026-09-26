@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -305,6 +306,8 @@ class MicrosoftGraphProvider(EmailProvider):
         validate_header_value("From", envelope.from_address)
         validate_header_value("Sender Name", envelope.from_name)
         validate_header_value("Subject", envelope.subject)
+        for attachment in envelope.attachments:
+            validate_header_value("Attachment filename", attachment.filename)
 
         message: dict[str, Any] = {
             "subject": envelope.subject,
@@ -320,6 +323,23 @@ class MicrosoftGraphProvider(EmailProvider):
                 }
             },
         }
+        if envelope.attachments:
+            message["attachments"] = [
+                {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": attachment.filename,
+                    "contentType": attachment.content_type,
+                    "contentBytes": base64.b64encode(attachment.data).decode("ascii"),
+                    # Inline images are matched to the HTML by cid.
+                    "isInline": attachment.content_id is not None,
+                    **(
+                        {"contentId": attachment.content_id}
+                        if attachment.content_id
+                        else {}
+                    ),
+                }
+                for attachment in envelope.attachments
+            ]
         body = {"message": message, "saveToSentItems": "true"}
 
         client = self._get_client()

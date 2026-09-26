@@ -135,7 +135,19 @@ class CampaignActivationService:
         steps = self.repo.list_steps_ordered(
             workspace_id=context.workspace_id, sequence_id=sequence_id
         )
-        content_digest = compute_sequence_content_digest([dict(step) for step in steps])
+        attachments_by_step: dict[str, list[dict]] = {}
+        for attachment in self.repo.list_sequence_attachments(
+            workspace_id=context.workspace_id, sequence_id=sequence_id
+        ):
+            attachments_by_step.setdefault(str(attachment["step_id"]), []).append(
+                dict(attachment)
+            )
+        content_digest = compute_sequence_content_digest(
+            [
+                {**dict(step), "attachments": attachments_by_step.get(str(step["id"]))}
+                for step in steps
+            ]
+        )
         frozen_sequence = self.repo.freeze_sequence(
             workspace_id=context.workspace_id,
             sequence_id=sequence_id,

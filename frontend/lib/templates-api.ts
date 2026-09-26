@@ -48,6 +48,7 @@ export async function createTemplate(
     name: string;
     subject: string;
     body_html: string;
+    preheader?: string | null;
   },
 ) {
   const path = workspacePath(workspaceId, "/templates");
@@ -67,6 +68,7 @@ export async function updateTemplate(
     name?: string | null;
     subject?: string | null;
     body_html?: string | null;
+    preheader?: string | null;
   },
 ) {
   const path = workspacePath(workspaceId, `/templates/${templateId}`);
@@ -111,6 +113,7 @@ export async function previewTemplate(
   payload: {
     subject: string;
     body_html: string;
+    preheader?: string | null;
     lead_id?: string | null;
     sample_data?: Record<string, unknown> | null;
   },

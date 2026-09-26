@@ -5,7 +5,11 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
-from app.modules.templates.rendering import render_template_content
+from app.modules.templates.rendering import (
+    inject_preheader,
+    render_preheader,
+    render_template_content,
+)
 
 
 class RenderedMessageContent(NamedTuple):
@@ -20,6 +24,7 @@ def render_step_content(
     body_html: str,
     frozen_variables: Mapping[str, Any],
     renderer_version: int,
+    preheader: str | None = None,
 ) -> RenderedMessageContent:
     """Render a frozen sequence step's content against an enrollment's frozen
     variables.
@@ -27,9 +32,17 @@ def render_step_content(
     Reuses the same deterministic renderer templates already use
     (app.modules.templates.rendering.render_template_content) -- variable
     substitution/escaping logic is not reimplemented here.
+
+    The pre-header is folded into the rendered body as a hidden leading element
+    *before* the digest is computed. The send gate recomputes the digest from
+    the stored body, so it covers the pre-header with no gate/column change, and
+    a step without a pre-header renders byte-identically to before.
     """
     rendered_subject, rendered_body = render_template_content(
         subject=subject, body_html=body_html, context_data=frozen_variables
+    )
+    rendered_body = inject_preheader(
+        rendered_body, render_preheader(preheader, frozen_variables)
     )
     digest_input = f"{rendered_subject}\x00{rendered_body}\x00{renderer_version}"
     content_digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
@@ -43,15 +56,33 @@ def compute_sequence_content_digest(steps: Sequence[Mapping[str, Any]]) -> str:
     Computed once at activation freeze time. Independent of the input list's
     ordering (sorted by position here) but sensitive to any content change.
     """
-    canonical = [
-        {
+    canonical = []
+    for step in sorted(steps, key=lambda s: s["position"]):
+        entry: dict[str, Any] = {
             "position": step["position"],
             "kind": step["kind"],
             "email_subject": step.get("email_subject"),
             "email_body_html": step.get("email_body_html"),
             "wait_duration_minutes": step.get("wait_duration_minutes"),
         }
-        for step in sorted(steps, key=lambda s: s["position"])
-    ]
+        # Only present when set, so sequences frozen before pre-headers existed
+        # (and steps without one) hash exactly as they always did.
+        if step.get("email_preheader"):
+            entry["email_preheader"] = step["email_preheader"]
+        # Attachment identity (not bytes): content id + sha256 pin the exact files
+        # the frozen sequence will send. Absent when there are none.
+        if step.get("attachments"):
+            entry["attachments"] = sorted(
+                (
+                    {
+                        "content_id": a["content_id"],
+                        "sha256": a["sha256"],
+                        "disposition": a["disposition"],
+                    }
+                    for a in step["attachments"]
+                ),
+                key=lambda a: (a["disposition"], a["content_id"]),
+            )
+        canonical.append(entry)
     payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

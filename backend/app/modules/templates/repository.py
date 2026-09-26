@@ -14,9 +14,22 @@ from app.core.errors import AppError
 from app.modules.templates.variables import validate_template_content
 
 
-def _compute_digest(subject: str, body_html: str) -> str:
-    payload = f"{subject}\n\n{body_html}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+def _compute_digest(
+    subject: str, body_html: str, preheader: str | None = None
+) -> str:
+    # The pre-header is appended only when set, so versions created before
+    # pre-headers existed keep their original digest.
+    text_payload = f"{subject}\n\n{body_html}"
+    if preheader:
+        text_payload += f"\n\n{preheader}"
+    return hashlib.sha256(text_payload.encode("utf-8")).hexdigest()
+
+
+def _clean_preheader(preheader: str | None) -> str | None:
+    if preheader is None:
+        return None
+    cleaned = preheader.strip()
+    return cleaned or None
 
 
 class TemplateRepository:
@@ -32,10 +45,12 @@ class TemplateRepository:
         body_html: str,
         variable_schema: dict[str, Any],
         actor_id: UUID,
+        preheader: str | None = None,
     ) -> Mapping[str, Any]:
         template_id = uuid.uuid4()
         version_id = uuid.uuid4()
-        digest = _compute_digest(subject, body_html)
+        preheader = _clean_preheader(preheader)
+        digest = _compute_digest(subject, body_html, preheader)
 
         # 1. Insert template without current_version_id to satisfy FK
         template_row = (
@@ -66,11 +81,11 @@ class TemplateRepository:
                     """
                     INSERT INTO template_versions
                         (id, workspace_id, template_id, revision, subject,
-                         body_html, variable_schema, content_digest,
+                         body_html, preheader, variable_schema, content_digest,
                          renderer_version)
                     VALUES
                         (:id, :workspace_id, :template_id, 1, :subject,
-                         :body_html, CAST(:variable_schema AS jsonb),
+                         :body_html, :preheader, CAST(:variable_schema AS jsonb),
                          :content_digest, 1)
                     RETURNING *
                     """
@@ -81,6 +96,7 @@ class TemplateRepository:
                     "template_id": str(template_id),
                     "subject": subject,
                     "body_html": body_html,
+                    "preheader": preheader,
                     "variable_schema": json.dumps(variable_schema),
                     "content_digest": digest,
                 },
@@ -137,6 +153,7 @@ class TemplateRepository:
                         t.mode, t.archived_at, t.version, t.created_at,
                         t.updated_at,
                         v.revision AS current_revision, v.subject, v.body_html,
+                        v.preheader,
                         v.variable_schema, v.content_digest,
                         v.renderer_version,
                         v.created_at AS version_created_at
@@ -219,6 +236,7 @@ class TemplateRepository:
         subject: str | None,
         body_html: str | None,
         actor_id: UUID,
+        preheader: str | None = None,
     ) -> Mapping[str, Any] | None:
         # Lock and verify existing record
         existing = (
@@ -229,7 +247,7 @@ class TemplateRepository:
                         t.id, t.workspace_id, t.name, t.current_version_id,
                         t.mode, t.archived_at, t.version,
                         v.revision AS current_revision, v.subject, v.body_html,
-                        v.variable_schema
+                        v.preheader, v.variable_schema
                     FROM templates t
                     LEFT JOIN template_versions v
                         ON v.workspace_id = t.workspace_id
@@ -267,26 +285,37 @@ class TemplateRepository:
         new_subject = subject.strip() if subject is not None else curr_subject
         new_body = body_html if body_html is not None else curr_body
 
-        content_changed = (new_subject != curr_subject) or (new_body != curr_body)
+        curr_preheader = existing["preheader"]
+        new_preheader = (
+            _clean_preheader(preheader) if preheader is not None else curr_preheader
+        )
+
+        content_changed = (
+            (new_subject != curr_subject)
+            or (new_body != curr_body)
+            or (new_preheader != curr_preheader)
+        )
 
         version_id = existing["current_version_id"]
         if content_changed:
             # Validate new content
-            variable_schema = validate_template_content(new_subject, new_body)
+            variable_schema = validate_template_content(
+                new_subject, new_body, new_preheader
+            )
             new_version_id = uuid.uuid4()
             new_revision = (existing["current_revision"] or 0) + 1
-            digest = _compute_digest(new_subject, new_body)
+            digest = _compute_digest(new_subject, new_body, new_preheader)
 
             self.session.execute(
                 text(
                     """
                     INSERT INTO template_versions
                         (id, workspace_id, template_id, revision, subject,
-                         body_html, variable_schema, content_digest,
+                         body_html, preheader, variable_schema, content_digest,
                          renderer_version)
                     VALUES
                         (:id, :workspace_id, :template_id, :revision, :subject,
-                         :body_html, CAST(:variable_schema AS jsonb),
+                         :body_html, :preheader, CAST(:variable_schema AS jsonb),
                          :content_digest, 1)
                     """
                 ),
@@ -297,6 +326,7 @@ class TemplateRepository:
                     "revision": new_revision,
                     "subject": new_subject,
                     "body_html": new_body,
+                    "preheader": new_preheader,
                     "variable_schema": json.dumps(variable_schema),
                     "content_digest": digest,
                 },
@@ -372,6 +402,7 @@ class TemplateRepository:
             body_html=source["body_html"],
             variable_schema=source["variable_schema"] or {},
             actor_id=actor_id,
+            preheader=source["preheader"],
         )
 
     def archive_template(
@@ -463,7 +494,7 @@ class TemplateRepository:
                     """
                     SELECT
                         id, workspace_id, template_id, revision, subject,
-                        body_html, variable_schema, content_digest,
+                        body_html, preheader, variable_schema, content_digest,
                         renderer_version, created_at
                     FROM template_versions
                     WHERE template_id = :template_id
@@ -521,6 +552,7 @@ class TemplateRepository:
         result["current_revision"] = version["revision"]
         result["subject"] = version["subject"]
         result["body_html"] = version["body_html"]
+        result["preheader"] = version["preheader"]
         result["variable_schema"] = version["variable_schema"]
         result["content_digest"] = version["content_digest"]
         result["renderer_version"] = version["renderer_version"]

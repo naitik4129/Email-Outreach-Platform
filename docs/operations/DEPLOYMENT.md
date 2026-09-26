@@ -182,6 +182,8 @@ Finish with `unset DB`.
 
 Supabase → **Storage → New bucket** named `imports`, **Public bucket off**. Skip if it exists.
 
+Create a second bucket named `email-attachments` (also **Public bucket off**) for sequence-step attachments and inline images. Set `SUPABASE_ATTACHMENTS_BUCKET` if you name it differently. Migration 0025 does not create it.
+
 ### 5.3 Login redirect addresses
 
 Supabase → **Authentication → URL Configuration**:
@@ -300,6 +302,15 @@ SCHEDULER_CLAIM_LEASE_SECONDS=300
 OUTBOX_PUBLISH_BATCH_SIZE=50
 OUTBOX_LEASE_SECONDS=60
 OUTBOX_MAX_ATTEMPTS=10
+
+# Follow-up emails (step 2+ after a Wait). Keep false until you have read
+# docs/adr/0009: turning it on makes already-running campaigns start sending
+# their next step.
+SEQUENCE_PROGRESSION_ENABLED=false
+SEQUENCE_PROGRESSION_INTERVAL_SECONDS=30
+SEQUENCE_PROGRESSION_CAMPAIGNS_PER_RUN=200
+SEQUENCE_PROGRESSION_BATCH_SIZE=100
+SUPABASE_ATTACHMENTS_BUCKET="email-attachments"
 
 # Keep false for the first start. Part 9 turns it on after checking.
 SENDING_WORKER_ENABLED=false

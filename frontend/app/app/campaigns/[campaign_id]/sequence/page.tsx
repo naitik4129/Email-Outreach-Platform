@@ -3,134 +3,48 @@
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Loader2, Mail, Plus, Timer, Trash2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
+import { computeTimings } from "@/components/campaigns/sequence/duration";
+import { EmailStepDialog } from "@/components/campaigns/sequence/email-step-dialog";
+import { SequenceTimeline } from "@/components/campaigns/sequence/sequence-timeline";
 import { Alert } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api-client";
 import {
   addSequenceStep,
   deleteSequenceStep,
+  duplicateSequenceStep,
+  getCampaign,
   getSequence,
+  listCampaignMailboxes,
+  listCampaignSettings,
   reorderSequenceSteps,
   updateSequenceStep,
 } from "@/lib/campaigns-api";
-import { LEAD_TEMPLATE_VARIABLES } from "@/lib/lead-fields";
-import { canDraftCampaign } from "@/lib/permissions";
+import { canDraftCampaign, canExecuteCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
-import type { SequenceStep } from "@/types/domain";
+import type { CampaignSequence, CampaignSettings, SequenceStep } from "@/types/domain";
+
+// Wait inserted before a newly added email; two days is the common cadence.
+const DEFAULT_WAIT_MINUTES = 2 * 24 * 60;
+const NEW_EMAIL_SUBJECT = "New email";
+const NEW_EMAIL_BODY = "<p>Hi {{first_name|there}},</p><p></p>";
+
+const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
+  return "We couldn’t complete that request. Please try again.";
 }
 
-function EmailStepEditor({
-  step,
-  onSave,
-  isSaving,
-}: {
-  step: SequenceStep;
-  onSave: (subject: string, bodyHtml: string) => void;
-  isSaving: boolean;
-}) {
-  const [subject, setSubject] = useState(step.email_subject ?? "");
-  const [bodyHtml, setBodyHtml] = useState(step.email_body_html ?? "");
-  const [dirty, setDirty] = useState(false);
-
-  function insertVariable(code: string) {
-    setBodyHtml((prev) => `${prev}${code}`);
-    setDirty(true);
-  }
-
-  return (
-    <div className="space-y-3">
-      <Field label="Subject">
-        <Input
-          value={subject}
-          onChange={(e) => {
-            setSubject(e.target.value);
-            setDirty(true);
-          }}
-        />
-      </Field>
-      <Field label="Body (HTML)">
-        <textarea
-          className="min-h-[120px] w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          value={bodyHtml}
-          onChange={(e) => {
-            setBodyHtml(e.target.value);
-            setDirty(true);
-          }}
-        />
-      </Field>
-      <div className="flex flex-wrap gap-1.5">
-        {LEAD_TEMPLATE_VARIABLES.map((v) => (
-          <button
-            key={v.code}
-            type="button"
-            onClick={() => insertVariable(v.code)}
-            className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
-          >
-            {v.label}
-          </button>
-        ))}
-      </div>
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          disabled={!dirty || !subject.trim() || isSaving}
-          onClick={() => {
-            onSave(subject, bodyHtml);
-            setDirty(false);
-          }}
-        >
-          {isSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-          Save step
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function WaitStepEditor({
-  step,
-  onSave,
-  isSaving,
-}: {
-  step: SequenceStep;
-  onSave: (minutes: number) => void;
-  isSaving: boolean;
-}) {
-  const initialDays = step.wait_duration_minutes
-    ? Math.round(step.wait_duration_minutes / 1440)
-    : 1;
-  const [days, setDays] = useState(initialDays);
-  const dirty = days * 1440 !== step.wait_duration_minutes;
-
-  return (
-    <div className="flex items-end gap-3">
-      <Field label="Wait duration (days)">
-        <Input
-          type="number"
-          min={1}
-          value={days}
-          onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 1))}
-          className="w-32"
-        />
-      </Field>
-      <Button
-        size="sm"
-        disabled={!dirty || isSaving}
-        onClick={() => onSave(days * 1440)}
-      >
-        {isSaving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-        Save
-      </Button>
-    </div>
-  );
+function describeSchedule(settings: CampaignSettings | null): string | null {
+  if (!settings) return null;
+  const days = [...settings.weekdays]
+    .sort((a, b) => a - b)
+    .map((d) => WEEKDAY_NAMES[d - 1])
+    .filter(Boolean)
+    .join(", ");
+  return `${days}, ${settings.window_start_local.slice(0, 5)}–${settings.window_end_local.slice(0, 5)} ${settings.timezone}`;
 }
 
 export default function CampaignSequencePage() {
@@ -140,205 +54,253 @@ export default function CampaignSequencePage() {
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const mayDraft = canDraftCampaign(activeWorkspace?.role_code);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [openStepId, setOpenStepId] = useState<string | null>(null);
+  const [savingWaitId, setSavingWaitId] = useState<string | null>(null);
 
-  const sequenceKey = ["workspace", activeWorkspaceId, "campaigns", campaignId, "sequence"];
+  const campaignKey = ["workspace", activeWorkspaceId, "campaigns", campaignId];
+  const sequenceKey = [...campaignKey, "sequence"];
+  const ready = Boolean(activeWorkspaceId && campaignId);
+
+  const campaignQuery = useQuery({
+    queryKey: campaignKey,
+    queryFn: () => getCampaign(activeWorkspaceId as string, campaignId),
+    enabled: ready,
+  });
 
   const sequenceQuery = useQuery({
     queryKey: sequenceKey,
-    queryFn: () =>
-      activeWorkspaceId && campaignId
-        ? getSequence(activeWorkspaceId, campaignId)
-        : Promise.reject(new Error("No active workspace")),
-    enabled: Boolean(activeWorkspaceId && campaignId),
+    queryFn: () => getSequence(activeWorkspaceId as string, campaignId),
+    enabled: ready,
   });
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: sequenceKey });
-
-  const addStepMutation = useMutation({
-    mutationFn: (kind: "EMAIL" | "WAIT") => {
-      if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
-      const position = (sequenceQuery.data?.steps.length ?? 0) + 1;
-      return kind === "EMAIL"
-        ? addSequenceStep(activeWorkspaceId, campaignId, {
-            kind: "EMAIL",
-            position,
-            email_subject: "New email",
-            email_body_html: "<p>Hi {{first_name|there}},</p>",
-          })
-        : addSequenceStep(activeWorkspaceId, campaignId, {
-            kind: "WAIT",
-            position,
-            wait_duration_minutes: 1440,
-          });
-    },
-    onSuccess: invalidate,
-    onError: (err) => setActionError(errorMessage(err)),
+  const mailboxesQuery = useQuery({
+    queryKey: [...campaignKey, "mailboxes"],
+    queryFn: () => listCampaignMailboxes(activeWorkspaceId as string, campaignId),
+    enabled: ready,
   });
 
-  const updateStepMutation = useMutation({
-    mutationFn: (vars: { step: SequenceStep; patch: Record<string, unknown> }) => {
-      if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
-      return updateSequenceStep(activeWorkspaceId, campaignId, vars.step.id, {
-        expected_version: vars.step.version,
-        ...vars.patch,
-      });
-    },
-    onSuccess: invalidate,
-    onError: (err) => setActionError(errorMessage(err)),
+  const settingsQuery = useQuery({
+    queryKey: [...campaignKey, "settings"],
+    queryFn: () => listCampaignSettings(activeWorkspaceId as string, campaignId),
+    enabled: ready,
   });
 
-  const deleteStepMutation = useMutation({
-    mutationFn: (stepId: string) => {
-      if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
-      return deleteSequenceStep(activeWorkspaceId, campaignId, stepId);
+  const sequence = sequenceQuery.data;
+  const steps = sequence?.steps ?? [];
+  const campaignStatus = campaignQuery.data?.status;
+  // Editing is allowed only while the campaign is a DRAFT (the server enforces
+  // this too and answers state_conflict otherwise).
+  const readOnly =
+    !mayDraft || campaignStatus !== "DRAFT" || sequence?.status === "FROZEN";
+  const latestSettings = settingsQuery.data?.length
+    ? settingsQuery.data.reduce((a, b) => (b.revision > a.revision ? b : a))
+    : null;
+
+  function afterChange(next?: CampaignSequence) {
+    setActionError(null);
+    if (next) queryClient.setQueryData(sequenceKey, next);
+    void queryClient.invalidateQueries({ queryKey: sequenceKey });
+    // The campaign header shows "N items left before ready" from preflight.
+    void queryClient.invalidateQueries({ queryKey: [...campaignKey, "preflight"] });
+  }
+
+  function onMutationError(error: unknown) {
+    setActionError(errorMessage(error));
+    if (error instanceof ApiError && error.code === "state_conflict") {
+      void queryClient.invalidateQueries({ queryKey: campaignKey });
+    }
+    void queryClient.invalidateQueries({ queryKey: sequenceKey });
+  }
+
+  const addMutation = useMutation({
+    mutationFn: async (input: { position: number; withWait: boolean }) =>
+      addSequenceStep(activeWorkspaceId as string, campaignId, {
+        kind: "EMAIL",
+        position: input.position,
+        email_subject: NEW_EMAIL_SUBJECT,
+        email_body_html: NEW_EMAIL_BODY,
+        // Server inserts the wait and the email in one transaction.
+        leading_wait_minutes: input.withWait ? DEFAULT_WAIT_MINUTES : undefined,
+      }),
+    onSuccess: (created) => {
+      afterChange();
+      setOpenStepId(created.id);
     },
-    onSuccess: invalidate,
-    onError: (err) => setActionError(errorMessage(err)),
+    onError: onMutationError,
+  });
+
+  const duplicateMutation = useMutation({
+    mutationFn: (step: SequenceStep) =>
+      duplicateSequenceStep(activeWorkspaceId as string, campaignId, step.id),
+    onSuccess: (next) => afterChange(next),
+    onError: onMutationError,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (step: SequenceStep) =>
+      deleteSequenceStep(activeWorkspaceId as string, campaignId, step.id, {
+        withAdjacentWait: step.kind === "EMAIL",
+      }),
+    onSuccess: () => afterChange(),
+    onError: onMutationError,
   });
 
   const reorderMutation = useMutation({
-    mutationFn: (steps: { step_id: string; position: number }[]) => {
-      if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
-      return reorderSequenceSteps(activeWorkspaceId, campaignId, steps);
-    },
-    onSuccess: invalidate,
-    onError: (err) => setActionError(errorMessage(err)),
+    mutationFn: (ordering: { step_id: string; position: number }[]) =>
+      reorderSequenceSteps(activeWorkspaceId as string, campaignId, ordering),
+    onSuccess: (next) => afterChange(next),
+    onError: onMutationError,
   });
 
-  function move(step: SequenceStep, direction: -1 | 1) {
-    const steps = sequenceQuery.data?.steps ?? [];
-    const index = steps.findIndex((s) => s.id === step.id);
-    const swapIndex = index + direction;
-    if (swapIndex < 0 || swapIndex >= steps.length) return;
-    const reordered = steps.map((s) => ({ step_id: s.id, position: s.position }));
-    const a = reordered[index];
-    const b = reordered[swapIndex];
-    reordered[index] = { ...a, position: b.position };
-    reordered[swapIndex] = { ...b, position: a.position };
-    reorderMutation.mutate(reordered);
+  const waitMutation = useMutation({
+    mutationFn: (input: { step: SequenceStep; minutes: number }) =>
+      updateSequenceStep(activeWorkspaceId as string, campaignId, input.step.id, {
+        expected_version: input.step.version,
+        wait_duration_minutes: input.minutes,
+      }),
+    onMutate: (input) => setSavingWaitId(input.step.id),
+    onSuccess: () => afterChange(),
+    onError: onMutationError,
+    onSettled: () => setSavingWaitId(null),
+  });
+
+  const busy =
+    addMutation.isPending ||
+    duplicateMutation.isPending ||
+    deleteMutation.isPending ||
+    reorderMutation.isPending;
+
+  function onDelete(step: SequenceStep) {
+    const label = step.kind === "EMAIL" ? "this email step and the wait next to it" : "this wait";
+    if (!window.confirm(`Delete ${label}?`)) return;
+    deleteMutation.mutate(step);
   }
 
-  const steps = sequenceQuery.data?.steps ?? [];
+  // Emails swap slots; the waits between slots stay where they are, so the
+  // Email/Wait alternation is preserved and only the email content moves.
+  function onMoveEmail(step: SequenceStep, direction: -1 | 1) {
+    const emails = steps.filter((s) => s.kind === "EMAIL");
+    const index = emails.findIndex((s) => s.id === step.id);
+    const other = emails[index + direction];
+    if (!other) return;
+    reorderMutation.mutate(
+      steps.map((s) => ({
+        step_id: s.id,
+        position:
+          s.id === step.id ? other.position : s.id === other.id ? step.position : s.position,
+      })),
+    );
+  }
+
+  const openStep = openStepId ? steps.find((s) => s.id === openStepId) : undefined;
+  const timings = computeTimings(steps);
+  const emailSteps = steps.filter((s) => s.kind === "EMAIL");
+
+  async function refetchOpenStep() {
+    const latest = await queryClient.fetchQuery({
+      queryKey: sequenceKey,
+      queryFn: () => getSequence(activeWorkspaceId as string, campaignId),
+      staleTime: 0,
+    });
+    const index = latest.steps.findIndex((s) => s.id === openStepId);
+    const current = index >= 0 ? latest.steps[index] : null;
+    const before = index > 0 ? latest.steps[index - 1] : null;
+    return { step: current, wait: before && before.kind === "WAIT" ? before : null };
+  }
+
+  let dialog = null;
+  if (openStep && openStep.kind === "EMAIL" && activeWorkspaceId) {
+    const index = steps.findIndex((s) => s.id === openStep.id);
+    const previous = index > 0 ? steps[index - 1] : null;
+    const precedingWait = previous && previous.kind === "WAIT" ? previous : null;
+    const previousEmail = [...steps.slice(0, index)].reverse().find((s) => s.kind === "EMAIL");
+    dialog = (
+      <EmailStepDialog
+        // Remount per step so each open starts from that step's saved state.
+        key={openStep.id}
+        open
+        workspaceId={activeWorkspaceId}
+        campaignId={campaignId}
+        step={openStep}
+        stepNumber={emailSteps.findIndex((s) => s.id === openStep.id) + 1}
+        day={timings.get(openStep.id)?.day ?? 1}
+        previousEmailDay={previousEmail ? (timings.get(previousEmail.id)?.day ?? 1) : null}
+        precedingWait={precedingWait}
+        readOnly={readOnly}
+        canTestSend={canExecuteCampaign(activeWorkspace?.role_code)}
+        mailboxes={(mailboxesQuery.data ?? []).filter((mb) => mb.active)}
+        onClose={() => setOpenStepId(null)}
+        onSaved={() => afterChange()}
+        onRefetch={refetchOpenStep}
+        onLocked={() => {
+          void queryClient.invalidateQueries({ queryKey: campaignKey });
+          void queryClient.invalidateQueries({ queryKey: sequenceKey });
+        }}
+      />
+    );
+  }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-slate-900">Sequence</h2>
         <p className="text-sm text-slate-500">
-          Alternate Email and Wait steps, starting and ending with an Email.
+          Each email is sent to every prospect in the audience. Waits set how long after the
+          previous email a follow-up goes out.
         </p>
       </div>
 
-      {actionError && <Alert variant="error">{actionError}</Alert>}
+      {readOnly && campaignStatus && campaignStatus !== "DRAFT" ? (
+        <Alert variant="info">
+          This campaign is {campaignStatus.toLowerCase()}, so its sequence is read-only. Duplicate
+          the campaign to make changes.
+        </Alert>
+      ) : null}
+      {actionError ? <Alert variant="error">{actionError}</Alert> : null}
+      {sequenceQuery.isError ? (
+        <Alert variant="error">{errorMessage(sequenceQuery.error)}</Alert>
+      ) : null}
 
       {sequenceQuery.isLoading ? (
         <div className="flex min-h-[150px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+          <Loader2 className="h-6 w-6 animate-spin text-slate-400" aria-label="Loading" />
         </div>
       ) : steps.length === 0 ? (
-        <div className="flex min-h-[120px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
-          No steps yet. Start with an Email step.
+        <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
+          <p>No steps yet. Start with an email.</p>
+          {!readOnly ? (
+            <button
+              type="button"
+              onClick={() => addMutation.mutate({ position: 1, withWait: false })}
+              disabled={addMutation.isPending}
+              className="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Add email step
+            </button>
+          ) : null}
         </div>
       ) : (
-        <ol className="space-y-3">
-          {steps.map((step, i) => (
-            <li
-              key={step.id}
-              className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  {step.kind === "EMAIL" ? (
-                    <Mail className="h-4 w-4 text-indigo-500" />
-                  ) : (
-                    <Timer className="h-4 w-4 text-amber-500" />
-                  )}
-                  Step {i + 1}: {step.kind === "EMAIL" ? "Email" : "Wait"}
-                </div>
-                {mayDraft && (
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={i === 0 || reorderMutation.isPending}
-                      onClick={() => move(step, -1)}
-                    >
-                      <ArrowUp className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={i === steps.length - 1 || reorderMutation.isPending}
-                      onClick={() => move(step, 1)}
-                    >
-                      <ArrowDown className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-red-600 hover:text-red-700"
-                      onClick={() => deleteStepMutation.mutate(step.id)}
-                      disabled={deleteStepMutation.isPending}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-              {mayDraft &&
-                (step.kind === "EMAIL" ? (
-                  <EmailStepEditor
-                    step={step}
-                    isSaving={updateStepMutation.isPending}
-                    onSave={(subject, bodyHtml) =>
-                      updateStepMutation.mutate({
-                        step,
-                        patch: { email_subject: subject, email_body_html: bodyHtml },
-                      })
-                    }
-                  />
-                ) : (
-                  <WaitStepEditor
-                    step={step}
-                    isSaving={updateStepMutation.isPending}
-                    onSave={(minutes) =>
-                      updateStepMutation.mutate({
-                        step,
-                        patch: { wait_duration_minutes: minutes },
-                      })
-                    }
-                  />
-                ))}
-              {!mayDraft && step.kind === "EMAIL" && (
-                <p className="text-sm text-slate-600">{step.email_subject}</p>
-              )}
-            </li>
-          ))}
-        </ol>
+        <SequenceTimeline
+          steps={steps}
+          readOnly={readOnly}
+          busy={busy}
+          scheduleNote={describeSchedule(latestSettings)}
+          savingWaitId={savingWaitId}
+          onOpenEmail={(step) => setOpenStepId(step.id)}
+          onDuplicate={(step) => duplicateMutation.mutate(step)}
+          onDelete={onDelete}
+          onMoveEmail={onMoveEmail}
+          onSaveWait={(step, minutes) => waitMutation.mutate({ step, minutes })}
+          onInsertAfter={(step) =>
+            addMutation.mutate({ position: step.position + 1, withWait: true })
+          }
+          onAddEmail={() =>
+            addMutation.mutate({ position: steps.length + 1, withWait: steps.length > 0 })
+          }
+        />
       )}
 
-      {mayDraft && (
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={addStepMutation.isPending}
-            onClick={() => addStepMutation.mutate("EMAIL")}
-          >
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Add Email step
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={addStepMutation.isPending}
-            onClick={() => addStepMutation.mutate("WAIT")}
-          >
-            <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Add Wait step
-          </Button>
-        </div>
-      )}
+      {dialog}
     </div>
   );
 }

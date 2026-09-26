@@ -272,6 +272,7 @@ export type TemplateDetail = {
   current_revision: number | null;
   subject: string;
   body_html: string;
+  preheader?: string | null;
   variable_schema: Record<string, unknown>;
   content_digest: string;
   renderer_version: number;
@@ -289,6 +290,7 @@ export type TemplateVersion = {
   revision: number;
   subject: string;
   body_html: string;
+  preheader?: string | null;
   variable_schema: Record<string, unknown>;
   content_digest: string;
   renderer_version: number;
@@ -298,6 +300,8 @@ export type TemplateVersion = {
 export type TemplatePreviewResult = {
   subject: string;
   body_html: string;
+  // Rendered pre-header text; "" (or absent from older servers) when none.
+  preheader?: string;
   detected_variables: string[];
   missing_variables: string[];
 };
@@ -476,6 +480,18 @@ export type CampaignDetail = {
 
 export type SequenceStepKind = "EMAIL" | "WAIT";
 
+export type StepAttachment = {
+  id: string;
+  step_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  disposition: "ATTACHMENT" | "INLINE";
+  // Token used in the body as <img src="cid:CONTENT_ID">.
+  content_id: string;
+  created_at: string;
+};
+
 export type SequenceStep = {
   id: string;
   sequence_id: string;
@@ -484,12 +500,32 @@ export type SequenceStep = {
   kind: SequenceStepKind;
   email_subject: string | null;
   email_body_html: string | null;
+  email_preheader?: string | null;
+  attachments?: StepAttachment[];
   email_variable_schema: Record<string, unknown> | null;
   wait_duration_minutes: number | null;
   source_template_version_id: string | null;
   version: number;
   created_at: string;
   updated_at: string;
+};
+
+export type SequencePreviewRecipient = {
+  audience_member_id: string;
+  lead_id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  company: string | null;
+  // The captured snapshot the real message renders with.
+  variables: Record<string, unknown>;
+};
+
+export type SequencePreviewRecipients = {
+  source: "AUDIENCE" | "NONE";
+  items: SequencePreviewRecipient[];
+  total: number | null;
+  next_cursor: number | null;
 };
 
 export type CampaignSequence = {

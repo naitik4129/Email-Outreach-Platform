@@ -695,7 +695,7 @@ class CampaignWorkerRepository:
                 text(
                     """
                     SELECT m.id, m.mailbox_id, e.frozen_variables, e.frozen_destination,
-                           ss.email_subject, ss.email_body_html,
+                           ss.email_subject, ss.email_body_html, ss.email_preheader,
                            mb.original_address AS sender_address,
                            mb.sender_display_name AS sender_name
                     FROM messages m
@@ -770,6 +770,271 @@ class CampaignWorkerRepository:
                 "anchor_at": anchor_at,
             },
         )
+
+    # -------------------------------------------------------------------
+    # Follow-up progression (see progression.py / docs/adr/0009). Every
+    # statement is workspace-scoped and runs as app_worker_general, which
+    # already holds the messages INSERT/UPDATE and campaign_enrollments UPDATE
+    # column grants used below (0003/0004) -- no new privileges.
+    # -------------------------------------------------------------------
+
+    def get_progression_context(
+        self, *, workspace_id: UUID, campaign_id: UUID
+    ) -> RowMapping | None:
+        """Only a RUNNING campaign with READY planning is progressed; anything
+        else (paused, completed, still planning) yields None."""
+        _safe_set_role(self.session, "app_worker_general")
+        return (
+            self.session.execute(
+                text(
+                    """
+                    SELECT c.activated_sequence_id, c.schedule_generation,
+                           sv.timezone, sv.weekday_set,
+                           sv.window_start_local, sv.window_end_local
+                    FROM campaigns c
+                    JOIN campaign_settings_versions sv
+                      ON sv.workspace_id = c.workspace_id
+                     AND sv.id = c.current_settings_id
+                    WHERE c.workspace_id = :workspace_id AND c.id = :campaign_id
+                      AND c.status = 'RUNNING' AND c.planning_status = 'READY'
+                      AND c.activated_sequence_id IS NOT NULL
+                    """
+                ),
+                {"workspace_id": str(workspace_id), "campaign_id": str(campaign_id)},
+            )
+            .mappings()
+            .first()
+        )
+
+    def list_sequence_steps(
+        self, *, workspace_id: UUID, sequence_id: UUID
+    ) -> list[RowMapping]:
+        _safe_set_role(self.session, "app_worker_general")
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT id, position, kind, wait_duration_minutes,
+                           email_subject, email_body_html, email_preheader
+                    FROM sequence_steps
+                    WHERE workspace_id = :workspace_id AND sequence_id = :sequence_id
+                    ORDER BY position ASC
+                    """
+                ),
+                {"workspace_id": str(workspace_id), "sequence_id": str(sequence_id)},
+            )
+            .mappings()
+            .all()
+        )
+        return list(rows)
+
+    def fetch_progressable_enrollments(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        limit: int,
+        after_id: UUID | None = None,
+    ) -> list[RowMapping]:
+        """ACTIVE enrollments whose current email (the one they still point at)
+        has a final outcome: SENT (provider accepted it) or FAILED.
+
+        FOR UPDATE OF e SKIP LOCKED: concurrent sweeps split the work, and the
+        row lock is held for the rest of the transaction so nothing else moves
+        the enrollment while its follow-up is built."""
+        _safe_set_role(self.session, "app_worker_general")
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT e.id AS enrollment_id, e.address_id,
+                           e.assigned_mailbox_id, e.frozen_variables,
+                           e.frozen_destination, e.next_step_id,
+                           m.status AS message_status, m.accepted_at,
+                           mb.original_address AS sender_address,
+                           mb.sender_display_name AS sender_name
+                    FROM campaign_enrollments e
+                    JOIN messages m
+                      ON m.workspace_id = e.workspace_id
+                     AND m.enrollment_id = e.id
+                     AND m.step_id = e.next_step_id
+                    LEFT JOIN mailboxes mb
+                      ON mb.workspace_id = e.workspace_id
+                     AND mb.id = e.assigned_mailbox_id
+                    WHERE e.workspace_id = :workspace_id
+                      AND e.campaign_id = :campaign_id
+                      AND e.state = 'ACTIVE'
+                      AND e.next_step_id IS NOT NULL
+                      AND m.purpose = 'CAMPAIGN'
+                      AND m.status IN ('SENT', 'FAILED')
+                      AND (CAST(:after_id AS uuid) IS NULL
+                           OR e.id > CAST(:after_id AS uuid))
+                    ORDER BY e.id
+                    LIMIT :limit
+                    FOR UPDATE OF e SKIP LOCKED
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                    "limit": limit,
+                    "after_id": str(after_id) if after_id else None,
+                },
+            )
+            .mappings()
+            .all()
+        )
+        return list(rows)
+
+    def insert_followup_message(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        sequence_id: UUID,
+        step_id: UUID,
+        enrollment_id: UUID,
+        mailbox_id: UUID,
+        address_id: UUID,
+        schedule_generation: int,
+    ) -> UUID | None:
+        """PLANNED message for a later step. None when a message for this
+        (enrollment, step) already exists -- the unique key makes a retried or
+        raced insert converge instead of duplicating. The campaign's current
+        schedule_generation is stamped so the scheduler (which only claims
+        messages matching it) will pick this one up."""
+        _safe_set_role(self.session, "app_worker_general")
+        new_id = uuid.uuid4()
+        inserted = self.session.execute(
+            text(
+                """
+                INSERT INTO messages
+                    (id, workspace_id, purpose, campaign_id, enrollment_id,
+                     sequence_id, step_id, mailbox_id, address_id,
+                     schedule_generation, status)
+                VALUES
+                    (:id, :workspace_id, 'CAMPAIGN', :campaign_id, :enrollment_id,
+                     :sequence_id, :step_id, :mailbox_id, :address_id,
+                     :schedule_generation, 'PLANNED')
+                ON CONFLICT DO NOTHING
+                RETURNING id
+                """
+            ),
+            {
+                "id": str(new_id),
+                "workspace_id": str(workspace_id),
+                "campaign_id": str(campaign_id),
+                "enrollment_id": str(enrollment_id),
+                "sequence_id": str(sequence_id),
+                "step_id": str(step_id),
+                "mailbox_id": str(mailbox_id),
+                "address_id": str(address_id),
+                "schedule_generation": schedule_generation,
+            },
+        ).first()
+        return new_id if inserted is not None else None
+
+    def advance_enrollment(
+        self,
+        *,
+        workspace_id: UUID,
+        enrollment_id: UUID,
+        expected_step_id: UUID,
+        next_step_id: UUID,
+        next_position: int,
+        accepted_at: Any,
+    ) -> bool:
+        """Move the pointer to the next email and record the acceptance.
+        Guarded on the step it is expected to still point at, so a replay after
+        the pointer already moved changes nothing (returns False)."""
+        _safe_set_role(self.session, "app_worker_general")
+        row = self.session.execute(
+            text(
+                """
+                UPDATE campaign_enrollments
+                SET next_step_id = :next_step_id,
+                    next_sequence_position = :next_position,
+                    first_acceptance_at =
+                        COALESCE(first_acceptance_at, :accepted_at),
+                    last_acceptance_at = :accepted_at
+                WHERE workspace_id = :workspace_id AND id = :enrollment_id
+                  AND state = 'ACTIVE' AND next_step_id = :expected_step_id
+                RETURNING id
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "enrollment_id": str(enrollment_id),
+                "expected_step_id": str(expected_step_id),
+                "next_step_id": str(next_step_id),
+                "next_position": next_position,
+                "accepted_at": accepted_at,
+            },
+        ).first()
+        return row is not None
+
+    def complete_enrollment(
+        self,
+        *,
+        workspace_id: UUID,
+        enrollment_id: UUID,
+        expected_step_id: UUID,
+        accepted_at: Any,
+    ) -> bool:
+        """Last email accepted: the enrollment is COMPLETED (terminal states
+        must have no next step per campaign_enrollments_terminal_step_check)."""
+        _safe_set_role(self.session, "app_worker_general")
+        row = self.session.execute(
+            text(
+                """
+                UPDATE campaign_enrollments
+                SET state = 'COMPLETED',
+                    next_step_id = NULL,
+                    next_sequence_position = NULL,
+                    first_acceptance_at =
+                        COALESCE(first_acceptance_at, :accepted_at),
+                    last_acceptance_at = :accepted_at
+                WHERE workspace_id = :workspace_id AND id = :enrollment_id
+                  AND state = 'ACTIVE' AND next_step_id = :expected_step_id
+                RETURNING id
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "enrollment_id": str(enrollment_id),
+                "expected_step_id": str(expected_step_id),
+                "accepted_at": accepted_at,
+            },
+        ).first()
+        return row is not None
+
+    def fail_enrollment(
+        self,
+        *,
+        workspace_id: UUID,
+        enrollment_id: UUID,
+        expected_step_id: UUID,
+    ) -> bool:
+        """The current email permanently failed: no next step will ever run."""
+        _safe_set_role(self.session, "app_worker_general")
+        row = self.session.execute(
+            text(
+                """
+                UPDATE campaign_enrollments
+                SET state = 'FAILED', next_step_id = NULL,
+                    next_sequence_position = NULL
+                WHERE workspace_id = :workspace_id AND id = :enrollment_id
+                  AND state = 'ACTIVE' AND next_step_id = :expected_step_id
+                RETURNING id
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "enrollment_id": str(enrollment_id),
+                "expected_step_id": str(expected_step_id),
+            },
+        ).first()
+        return row is not None
 
     def complete_render_job(
         self, *, workspace_id: UUID, job_id: UUID, processed_count: int
