@@ -5,7 +5,7 @@ import hashlib
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from app.core.config import Settings
@@ -22,6 +22,11 @@ from app.modules.mailboxes.providers.base import (
     ProviderCapability,
 )
 from app.modules.mailboxes.providers.registry import ProviderRegistry
+from app.modules.mailboxes.providers.smtp import SmtpProvider
+from app.modules.mailboxes.reply_capability import (
+    ReplySyncStatus,
+    reply_sync_status,
+)
 from app.modules.mailboxes.repository import MailboxRepository
 from app.modules.mailboxes.schemas import (
     DisconnectResponse,
@@ -72,18 +77,27 @@ class MailboxService:
             raise AppError("not_found", "Mailbox not found", status_code=404)
 
         smtp_config = None
-        if r["provider"] == "SMTP" and r["connected_generation"]:
+        reply_status = ReplySyncStatus.UNSUPPORTED
+        if r["connected_generation"]:
             conn = self.repo.get_mailbox_connection(
                 workspace_id, mailbox_id, r["connected_generation"]
             )
-            if conn and conn.get("protected_config"):
-                cfg = conn["protected_config"]
-                smtp_config = SmtpConfigView(
-                    host=cfg["host"],
-                    port=cfg["port"],
-                    security_mode=cfg["security_mode"],
-                    username=cfg["username"],
+            if conn:
+                cfg = conn.get("protected_config") or {}
+                reply_status = reply_sync_status(
+                    r["provider"], conn.get("granted_scopes"), cfg
                 )
+                if r["provider"] == "SMTP" and cfg:
+                    smtp_config = SmtpConfigView(
+                        host=cfg["host"],
+                        port=cfg["port"],
+                        security_mode=cfg["security_mode"],
+                        username=cfg["username"],
+                        imap_host=cfg.get("imap_host"),
+                        imap_port=cfg.get("imap_port"),
+                        imap_security_mode=cfg.get("imap_security_mode"),
+                        imap_username=cfg.get("imap_username"),
+                    )
 
         return MailboxDetail(
             id=UUID(str(r["id"])),
@@ -105,6 +119,7 @@ class MailboxService:
             created_at=r["created_at"],
             updated_at=r["updated_at"],
             smtp_config=smtp_config,
+            reply_sync_status=reply_status.value,
         )
 
     def update_mailbox(
@@ -767,6 +782,49 @@ class MailboxService:
     # Custom SMTP
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_imap_settings(
+        payload: SmtpConnectRequest | SmtpUpdateRequest,
+        existing_config: dict[str, Any],
+        existing_secret: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """Merge submitted IMAP settings over the stored ones.
+
+        Returns (non-secret config, secret payload). Both are empty when IMAP
+        is not configured, in which case the mailbox is send-only.
+        """
+        host = (
+            payload.imap_host
+            if payload.imap_host is not None
+            else existing_config.get("imap_host")
+        )
+        if not host:
+            return {}, {}
+        port = payload.imap_port or existing_config.get("imap_port") or 993
+        expected_mode = "IMPLICIT_TLS" if port == 993 else "STARTTLS"
+        mode = (
+            payload.imap_security_mode.value
+            if payload.imap_security_mode is not None
+            else existing_config.get("imap_security_mode") or expected_mode
+        )
+        if mode != expected_mode:
+            raise AppError(
+                "bad_request",
+                f"IMAP port {port} requires security mode {expected_mode}",
+                status_code=422,
+            )
+        config: dict[str, Any] = {
+            "imap_host": host,
+            "imap_port": port,
+            "imap_security_mode": mode,
+        }
+        username = payload.imap_username or existing_config.get("imap_username")
+        if username:
+            config["imap_username"] = username
+        password = payload.imap_password or existing_secret.get("imap_password")
+        secret = {"imap_password": password} if password else {}
+        return config, secret
+
     def connect_smtp_mailbox(
         self,
         workspace_id: UUID,
@@ -808,16 +866,21 @@ class MailboxService:
             "username": payload.username,
             "password": payload.password,
         }
+        imap_config, imap_secret = self._resolve_imap_settings(payload, {}, {})
+        credential.update(imap_config)
+        credential.update(imap_secret)
 
         # SSRF-safe connect + authenticate. Any failure here propagates as
         # an AppError and no mailbox row is ever created -- invalid
         # configuration must never produce a "healthy" mailbox.
         provider.validate_connection(credential)
+        if imap_config:
+            cast(SmtpProvider, provider).validate_imap(credential)
 
         mailbox_id = uuid4()
         generation = 1
 
-        secret_payload = {"password": payload.password}
+        secret_payload = {"password": payload.password, **imap_secret}
         ciphertext, key_id, nonce = encrypt_credentials(
             secret_payload, workspace_id, mailbox_id, "SMTP"
         )
@@ -826,6 +889,7 @@ class MailboxService:
             "port": payload.port,
             "security_mode": payload.security_mode.value,
             "username": payload.username,
+            **imap_config,
         }
 
         self.repo.insert_mailbox(
@@ -934,14 +998,21 @@ class MailboxService:
             "username": new_username,
             "password": new_password,
         }
+        imap_config, imap_secret = self._resolve_imap_settings(
+            payload, existing_config, existing_creds
+        )
+        candidate_credential.update(imap_config)
+        candidate_credential.update(imap_secret)
 
         # Re-validate the merged configuration BEFORE activating anything.
         # On failure, the existing working generation is left untouched
         # (fail closed, no partial update).
         provider.validate_connection(candidate_credential)
+        if imap_config:
+            cast(SmtpProvider, provider).validate_imap(candidate_credential)
 
         new_gen = current_gen + 1
-        secret_payload = {"password": new_password}
+        secret_payload = {"password": new_password, **imap_secret}
         ciphertext, key_id, nonce = encrypt_credentials(
             secret_payload, workspace_id, mailbox_id, "SMTP"
         )
@@ -950,6 +1021,7 @@ class MailboxService:
             "port": new_port,
             "security_mode": new_security_mode,
             "username": new_username,
+            **imap_config,
         }
 
         self.repo.insert_mailbox_connection(

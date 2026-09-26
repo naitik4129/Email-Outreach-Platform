@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.modules.mailboxes.providers.message_builder import sql_normalized_message_id
 from app.modules.replies.matcher import OutboundMessageCandidate
 from app.modules.replies.schemas import NormalizedInboundMessage
 
@@ -129,6 +130,115 @@ class ReplyRepository:
         if not state:
             raise RuntimeError(f"Failed to ensure sync state for mailbox {mailbox_id}")
         return state
+
+    def discover_mailboxes_needing_sync_state(
+        self, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """CONNECTED mailboxes with no sync state, or whose UNAVAILABLE state
+        predates their current connection (a reconnect or a changed IMAP
+        configuration may have made reply sync possible).
+
+        Cross-workspace discovery, so it runs as app_scheduler (read-only
+        discovery policies, migrations 0011/0019); writes happen afterwards as
+        app_worker_sync inside each row's workspace.
+        """
+        _safe_set_role(self.session, "app_scheduler")
+        _safe_set_workspace(self.session, None)
+        rows = self.session.execute(
+            text(
+                """
+                SELECT m.workspace_id, m.id AS mailbox_id, m.provider,
+                       m.current_connection_generation, s.id AS sync_state_id
+                FROM public.mailboxes m
+                LEFT JOIN public.mailbox_sync_states s
+                  ON s.workspace_id = m.workspace_id AND s.mailbox_id = m.id
+                 AND s.sync_scope = 'INBOX'
+                WHERE m.connection_state = 'CONNECTED'
+                  AND (
+                        s.id IS NULL
+                        OR (s.status = 'UNAVAILABLE'
+                            AND s.connection_generation < m.current_connection_generation)
+                      )
+                ORDER BY m.created_at ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        ).mappings().all()
+        return [dict(r) for r in rows]
+
+    def rearm_sync_state(
+        self,
+        *,
+        workspace_id: UUID,
+        mailbox_id: UUID,
+        connection_generation: int,
+        sync_scope: str = "INBOX",
+    ) -> None:
+        """Make an UNAVAILABLE sync state eligible again after a reconnect."""
+        _safe_set_role(self.session, "app_worker_sync")
+        _safe_set_workspace(self.session, workspace_id)
+        self.session.execute(
+            text(
+                """
+                UPDATE public.mailbox_sync_states
+                SET status = 'INITIALIZING',
+                    connection_generation = :gen,
+                    next_due_at = :now,
+                    failure_count = 0
+                WHERE workspace_id = :ws AND mailbox_id = :mbid AND sync_scope = :scope
+                  AND status = 'UNAVAILABLE'
+                """
+            ),
+            {
+                "gen": connection_generation,
+                "now": datetime.now(UTC),
+                "ws": str(workspace_id),
+                "mbid": str(mailbox_id),
+                "scope": sync_scope,
+            },
+        )
+
+    def mark_sync_unavailable(
+        self,
+        *,
+        workspace_id: UUID,
+        mailbox_id: UUID,
+        lease_owner: str | None = None,
+        sync_scope: str = "INBOX",
+    ) -> None:
+        """Park reply sync for a mailbox that cannot sync (missing scope, no
+        IMAP settings, not connected). Not retried until its connection
+        generation changes (see discover_mailboxes_needing_sync_state)."""
+        _safe_set_role(self.session, "app_worker_sync")
+        _safe_set_workspace(self.session, workspace_id)
+        self.session.execute(
+            text(
+                """
+                UPDATE public.mailbox_sync_states
+                SET status = 'UNAVAILABLE',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL
+                WHERE workspace_id = :ws AND mailbox_id = :mbid AND sync_scope = :scope
+                """
+            ),
+            {"ws": str(workspace_id), "mbid": str(mailbox_id), "scope": sync_scope},
+        )
+        self._set_mailbox_sync_state(workspace_id, mailbox_id, "UNAVAILABLE")
+
+    def _set_mailbox_sync_state(
+        self, workspace_id: UUID, mailbox_id: UUID, state: str
+    ) -> None:
+        """Mirror the sync state onto the mailbox row shown in the UI."""
+        self.session.execute(
+            text(
+                """
+                UPDATE public.mailboxes SET sync_state = :state
+                WHERE workspace_id = :ws AND id = :mbid AND sync_state <> :state
+                """
+            ),
+            {"state": state, "ws": str(workspace_id), "mbid": str(mailbox_id)},
+        )
 
     def acquire_sync_lease(
         self,
@@ -263,6 +373,7 @@ class ReplyRepository:
                 "scope": sync_scope,
             },
         )
+        self._set_mailbox_sync_state(workspace_id, mailbox_id, status)
 
     def release_sync_lease(
         self,
@@ -328,6 +439,7 @@ class ReplyRepository:
                 "scope": sync_scope,
             },
         )
+        self._set_mailbox_sync_state(workspace_id, mailbox_id, "RESYNC_REQUIRED")
 
     def recover_stale_sync_leases(self, *, now: datetime, batch_size: int = 50) -> int:
         """Recover sync leases whose lease_expires_at has elapsed.
@@ -469,15 +581,35 @@ class ReplyRepository:
         rfc_message_ids: list[str],
         sender_address: str,
         provider_thread_id: str | None = None,
+        limit: int = 500,
     ) -> list[OutboundMessageCandidate]:
         """Load candidate outbound messages that could match an inbound reply.
-        Matches by rfc_message_id, provider_thread_id, or frozen_destination.
+
+        A candidate shares the sender as its recipient, or quotes one of the
+        Message-IDs, or sits in the same provider thread. The matcher then
+        applies the strict rules; this only bounds what it looks at. Message-ID
+        comparison ignores angle brackets and case, and the provider thread is
+        read from the send attempt (where the provider reported it).
         """
         _safe_set_role(self.session, "app_worker_sync")
         _safe_set_workspace(self.session, workspace_id)
 
         clean_sender = sender_address.strip().lower() if sender_address else ""
-        clean_rfcs = [r.strip() for r in rfc_message_ids if r and r.strip()]
+        wanted_ids = [
+            i.strip().strip("<>").strip().lower()
+            for i in rfc_message_ids
+            if i and i.strip().strip("<>").strip()
+        ]
+        rfc_expr = sql_normalized_message_id(
+            "m.rfc_message_id", sqlite=self._is_sqlite()
+        )
+        # Latest attempt that recorded a provider thread for this message.
+        attempt_thread = (
+            "(SELECT a.provider_thread_ref FROM public.message_attempts a "
+            "WHERE a.workspace_id = m.workspace_id AND a.message_id = m.id "
+            "AND a.provider_thread_ref IS NOT NULL "
+            "ORDER BY a.ordinal DESC LIMIT 1)"
+        )
 
         conditions = ["m.workspace_id = :ws", "m.mailbox_id = :mbid", "m.purpose = 'CAMPAIGN'"]
         or_clauses = []
@@ -487,14 +619,16 @@ class ReplyRepository:
             or_clauses.append("LOWER(m.frozen_destination) = :sender")
             params["sender"] = clean_sender
 
-        if clean_rfcs:
-            rfc_placeholders = [f":rfc_{i}" for i in range(len(clean_rfcs))]
-            or_clauses.append(f"m.rfc_message_id IN ({','.join(rfc_placeholders)})")
-            for i, rfc in enumerate(clean_rfcs):
+        if wanted_ids:
+            placeholders = [f":rfc_{i}" for i in range(len(wanted_ids))]
+            or_clauses.append(f"{rfc_expr} IN ({','.join(placeholders)})")
+            for i, rfc in enumerate(wanted_ids):
                 params[f"rfc_{i}"] = rfc
 
         if provider_thread_id:
-            or_clauses.append("c.provider_thread_id = :thread_id")
+            or_clauses.append(
+                f"(c.provider_thread_id = :thread_id OR {attempt_thread} = :thread_id)"
+            )
             params["thread_id"] = provider_thread_id
 
         if not or_clauses:
@@ -502,16 +636,19 @@ class ReplyRepository:
 
         conditions.append(f"({' OR '.join(or_clauses)})")
         where_sql = " AND ".join(conditions)
+        params["limit"] = limit
 
         query = text(
             f"""
             SELECT m.id AS message_id, m.campaign_id, m.enrollment_id, m.mailbox_id,
                    m.rfc_message_id, m.provider_message_id, m.frozen_destination,
-                   c.provider_thread_id, m.created_at
+                   COALESCE(c.provider_thread_id, {attempt_thread}) AS provider_thread_id,
+                   m.created_at
             FROM public.messages m
             LEFT JOIN public.conversations c ON c.workspace_id = m.workspace_id AND c.id = m.conversation_id
             WHERE {where_sql}
             ORDER BY m.created_at DESC
+            LIMIT :limit
             """
         )
         rows = self.session.execute(query, params).mappings().all()
@@ -1001,6 +1138,29 @@ class ReplyRepository:
             {"ws": str(workspace_id), "source_id": source_identity, "now": now},
         )
 
+    def resolve_resync_holds(self, *, workspace_id: UUID, mailbox_id: UUID) -> int:
+        """Release every active resync hold on a mailbox once a full resync has
+        completed; until then follow-up sending stays held."""
+        _safe_set_role(self.session, "app_worker_sync")
+        _safe_set_workspace(self.session, workspace_id)
+        res = self.session.execute(
+            text(
+                """
+                UPDATE public.safety_holds
+                SET status = 'RESOLVED', resolved_at = :now
+                WHERE workspace_id = :ws AND target_mailbox_id = :mbid
+                  AND status = 'ACTIVE' AND source_work_identity LIKE :prefix
+                """
+            ),
+            {
+                "now": datetime.now(UTC),
+                "ws": str(workspace_id),
+                "mbid": str(mailbox_id),
+                "prefix": f"resync:{mailbox_id}:%",
+            },
+        )
+        return int(res.rowcount)
+
     # -------------------------------------------------------------------------
     # Reconciliation Queries
     # -------------------------------------------------------------------------
@@ -1018,13 +1178,18 @@ class ReplyRepository:
 
         query = text(
             """
-            SELECT id, mailbox_id, conversation_id, connection_generation,
-                   provider_message_id, rfc_message_id, in_reply_to, references_header,
-                   participants, subject, content_text, received_at, classification
-            FROM public.inbound_messages
-            WHERE workspace_id = :ws AND mailbox_id = :mbid
-              AND association_status = 'UNRESOLVED'
-            ORDER BY observed_at ASC
+            SELECT im.id, im.mailbox_id, im.conversation_id, im.connection_generation,
+                   im.provider_message_id, im.rfc_message_id, im.in_reply_to,
+                   im.references_header, im.participants, im.subject, im.content_text,
+                   im.received_at, im.classification,
+                   c.provider_thread_id AS provider_thread_id
+            FROM public.inbound_messages im
+            LEFT JOIN public.conversations c
+              ON c.workspace_id = im.workspace_id AND c.id = im.conversation_id
+            WHERE im.workspace_id = :ws AND im.mailbox_id = :mbid
+              AND im.association_status = 'UNRESOLVED'
+              AND im.classification <> 'BOUNCE'
+            ORDER BY im.observed_at ASC
             LIMIT :limit
             """
         )

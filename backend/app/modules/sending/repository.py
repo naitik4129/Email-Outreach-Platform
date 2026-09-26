@@ -615,6 +615,7 @@ class SendingRepository:
         retry_count: int | None = None,
         next_retry_at: datetime | None = None,
         due_at: datetime | None = None,
+        rfc_message_id: str | None = None,
     ) -> None:
         _safe_set_role(self.session, "app_worker_send")
         _safe_set_workspace(self.session, workspace_id)
@@ -660,6 +661,7 @@ class SendingRepository:
                     accepted_at = {accepted_at_expr},
                     provider_message_id =
                         COALESCE(:provider_message_id, provider_message_id),
+                    rfc_message_id = COALESCE(rfc_message_id, :rfc_message_id),
                     terminal_reason = :terminal_reason,
                     hold_reason = :hold_reason,
                     retry_count = COALESCE(:retry_count, retry_count),
@@ -674,6 +676,7 @@ class SendingRepository:
                 "mid": str(message_id),
                 "status": message_status,
                 "provider_message_id": provider_message_id,
+                "rfc_message_id": rfc_message_id,
                 "terminal_reason": terminal_reason,
                 "hold_reason": hold_reason,
                 "retry_count": retry_count,

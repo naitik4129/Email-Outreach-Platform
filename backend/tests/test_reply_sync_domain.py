@@ -607,6 +607,7 @@ class TestReplyRepository:
                 current_connection_generation INTEGER NOT NULL DEFAULT 1,
                 connected_generation INTEGER NOT NULL DEFAULT 1,
                 original_address TEXT NOT NULL,
+                sync_state TEXT NOT NULL DEFAULT 'INITIALIZING',
                 version INTEGER NOT NULL DEFAULT 1,
                 updated_at TIMESTAMP
             );
@@ -1002,6 +1003,7 @@ class TestReplySyncService:
             "nonce": b"dummy12345678",
             "encryption_key_id": "v1",
             "protected_config": None,
+            "granted_scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
             "expires_at": datetime.now(UTC) + timedelta(hours=1),
         }
 
@@ -1080,6 +1082,7 @@ class TestReplySyncService:
             "credential_ciphertext": b"dummy",
             "nonce": b"dummy12345678",
             "encryption_key_id": "v1",
+            "granted_scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
             "expires_at": datetime.now(UTC) + timedelta(hours=1),
         }
 
@@ -1196,3 +1199,27 @@ class TestSendGateReplySafety:
         ctx_hold = self._create_context(mailbox_pending_safety_count=1)
         with pytest.raises(gates.SafetyHoldRejected):
             gates.check_safety_holds(ctx_hold)
+
+
+class TestSafeErrorSummary:
+    def test_database_errors_never_expose_statement_parameters(self) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        from app.modules.replies.service import _safe_error_summary
+
+        error = IntegrityError(
+            "INSERT INTO inbound_messages (subject, content_text) VALUES (%s, %s)",
+            ("Re: our secret pricing", "the confidential body text"),
+            Exception("duplicate key value violates unique constraint\nDETAIL: Key (x)"),
+        )
+        summary = _safe_error_summary(error)
+        assert "secret pricing" not in summary and "confidential" not in summary
+        assert "INSERT" not in summary
+        assert summary.startswith("IntegrityError/Exception: duplicate key value")
+
+    def test_ordinary_errors_keep_their_message(self) -> None:
+        from app.core.errors import AppError
+        from app.modules.replies.service import _safe_error_summary
+
+        assert "auth expired" in _safe_error_summary(AppError("auth_failure", "auth expired", status_code=401))
+        assert _safe_error_summary(RuntimeError("boom")) == "RuntimeError: boom"

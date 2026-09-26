@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -10,6 +11,35 @@ from typing import Any
 
 from app.modules.events.adapters.base import VerifiedEventEvidence
 from app.modules.events.schemas import BounceClassification, InboundEventType
+
+_STATUS_CODE_RE = re.compile(r"(?<![\d.])([245])\.(\d{1,3})\.(\d{1,3})(?![\d.])")
+
+
+def _classify_bounce(explicit: str, reason: str) -> BounceClassification:
+    """Hard/soft from what the provider said; UNKNOWN when it said nothing.
+
+    An explicit provider verdict wins. Otherwise the RFC 3463 status class in
+    the diagnostic decides (5.x.x permanent, 4.x.x transient); a substring such
+    as "4." must not, because it also appears inside 5.4.x codes. 5.2.2
+    (mailbox full) is reported as permanent but is recoverable.
+    """
+    if explicit in ("HARD", "PERMANENT"):
+        return BounceClassification.HARD
+    if explicit in ("SOFT", "TEMPORARY", "TRANSIENT"):
+        return BounceClassification.SOFT
+    match = _STATUS_CODE_RE.search(reason)
+    if match:
+        status_class, subject = match.group(1), match.group(2)
+        if status_class == "5":
+            return BounceClassification.SOFT if subject == "2" else BounceClassification.HARD
+        if status_class == "4":
+            return BounceClassification.SOFT
+    lowered = reason.lower()
+    if any(k in lowered for k in ("does not exist", "user unknown", "no such user")):
+        return BounceClassification.HARD
+    if any(k in lowered for k in ("mailbox full", "over quota", "try again later")):
+        return BounceClassification.SOFT
+    return BounceClassification.UNKNOWN
 
 
 class GenericWebhookAdapter:
@@ -134,13 +164,9 @@ class GenericWebhookAdapter:
         bounce_classification = None
         if event_type == InboundEventType.BOUNCE:
             raw_bounce = str(payload.get("bounce_type", "")).strip().upper()
-            diagnostic_code = str(payload.get("reason", "")).lower()
-            if raw_bounce in ("HARD", "PERMANENT") or "5.1.1" in diagnostic_code or "does not exist" in diagnostic_code:
-                bounce_classification = BounceClassification.HARD
-            elif raw_bounce in ("SOFT", "TEMPORARY") or "4." in diagnostic_code or "full" in diagnostic_code:
-                bounce_classification = BounceClassification.SOFT
-            else:
-                bounce_classification = BounceClassification.UNKNOWN
+            bounce_classification = _classify_bounce(
+                raw_bounce, str(payload.get("reason", ""))
+            )
 
         # Stable event identity for durable receipt deduplication
         if provider_event_id:

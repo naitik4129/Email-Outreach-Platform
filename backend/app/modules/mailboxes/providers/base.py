@@ -115,6 +115,10 @@ class ProviderSendResult:
     status: Literal["ACCEPTED", "DEFINITIVELY_REJECTED", "UNKNOWN"]
     provider_message_id: str | None = None
     provider_thread_id: str | None = None
+    # The Message-ID header the recipient will see and quote in In-Reply-To.
+    # Reply/bounce correlation depends on it, so each adapter reports the
+    # value the provider actually used rather than assuming ours was kept.
+    rfc_message_id: str | None = None
     accepted_at: datetime | None = None
     error_category: str | None = None
     error_code: str | None = None
@@ -150,6 +154,9 @@ class ProviderInboundMessage:
     headers: dict[str, str] = field(default_factory=dict)
     is_automated: bool = False
     classification: str | None = None
+    # Machine-readable parts of a delivery-status report (message/delivery-status
+    # and the returned original headers), when the provider exposes them.
+    report_text: str | None = None
 
 
 @dataclass(frozen=True)

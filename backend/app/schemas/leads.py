@@ -106,6 +106,38 @@ class LeadDetailOut(LeadOut):
     lists: list[LeadListSummary]
 
 
+LeadActivityKind = Literal[
+    "EMAIL_SENT",
+    "EMAIL_OPENED",
+    "EMAIL_BOUNCED",
+    "REPLY_RECEIVED",
+    "AUTO_REPLY_RECEIVED",
+]
+
+
+class LeadActivityItem(BaseModel):
+    """One event in a lead's email history. Reply content is a short preview;
+    the full thread stays in the inbox (conversation_id)."""
+
+    kind: LeadActivityKind
+    occurred_at: datetime
+    message_id: UUID
+    subject: str | None = None
+    campaign_id: UUID | None = None
+    campaign_name: str | None = None
+    sequence_step_position: int | None = None
+    conversation_id: UUID | None = None
+    sender_email: str | None = None
+    body_preview: str | None = None
+    occurrence_count: int | None = None
+    bounce_type: str | None = None
+
+
+class LeadActivityOut(BaseModel):
+    lead_id: UUID
+    items: list[LeadActivityItem]
+
+
 class LeadListItem(LeadOut):
     list_count: int
 

@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.modules.mailboxes.providers.message_builder import normalize_message_id
 from app.modules.replies.schemas import (
     NormalizedInboundMessage,
     ReplyConfidence,
@@ -93,11 +94,11 @@ class ReplyMatcher:
             )
 
         # 1. Check exact In-Reply-To
-        if inbound.in_reply_to:
-            target_in_reply_to = inbound.in_reply_to.strip()
+        target_in_reply_to = normalize_message_id(inbound.in_reply_to)
+        if target_in_reply_to:
             in_reply_matches = [
                 c for c in corroborated_candidates
-                if c.rfc_message_id and c.rfc_message_id.strip() == target_in_reply_to
+                if normalize_message_id(c.rfc_message_id) == target_in_reply_to
             ]
             if len(in_reply_matches) == 1:
                 c = in_reply_matches[0]
@@ -141,10 +142,12 @@ class ReplyMatcher:
 
         # 2. Check References list
         if inbound.references:
-            cleaned_refs = {ref.strip() for ref in inbound.references if ref.strip()}
+            cleaned_refs = {
+                normalize_message_id(ref) for ref in inbound.references
+            } - {None}
             ref_matches = [
                 c for c in corroborated_candidates
-                if c.rfc_message_id and c.rfc_message_id.strip() in cleaned_refs
+                if normalize_message_id(c.rfc_message_id) in cleaned_refs
             ]
             if ref_matches:
                 unique_enrollments = {c.enrollment_id for c in ref_matches}

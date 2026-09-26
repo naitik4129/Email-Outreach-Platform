@@ -46,6 +46,7 @@ class TestInboundEventProcessor:
             "recipient_email": "bounced@target.com",
             "reason": "5.1.1 User unknown",
         }
+        processor.repo.find_message_for_bounce.return_value = (None, None)
         processor.repo.claim_receipt_for_processing.return_value = _receipt_row(
             receipt_id, workspace_id, "BOUNCE", payload
         )
@@ -66,6 +67,7 @@ class TestInboundEventProcessor:
             address_id=address_id,
             reason="HARD_BOUNCE",
             provider_receipt_id=receipt_id,
+            domain_event_id=None,
             source_key="test:event:123",
             evidence=payload,
         )
@@ -103,6 +105,7 @@ class TestInboundEventProcessor:
             "recipient_email": "full@target.com",
             "reason": "4.2.2 Mailbox quota exceeded",
         }
+        processor.repo.find_message_for_bounce.return_value = (None, None)
         processor.repo.claim_receipt_for_processing.return_value = _receipt_row(
             receipt_id, workspace_id, "BOUNCE", payload
         )
@@ -250,6 +253,7 @@ class TestInboundEventProcessor:
         workspace_id = uuid4()
 
         payload = {"event_type": "BOUNCE", "bounce_classification": "HARD"}
+        processor.repo.find_message_for_bounce.return_value = (None, None)
         processor.repo.claim_receipt_for_processing.return_value = _receipt_row(
             receipt_id, workspace_id, "BOUNCE", payload
         )
@@ -275,6 +279,7 @@ class TestInboundEventProcessor:
             "bounce_classification": "HARD",
             "recipient_email": "error@target.com",
         }
+        processor.repo.find_message_for_bounce.return_value = (None, None)
         processor.repo.claim_receipt_for_processing.return_value = _receipt_row(
             receipt_id, workspace_id, "BOUNCE", payload
         )

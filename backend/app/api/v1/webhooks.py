@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 _MAX_PAYLOAD_BYTES = 1024 * 1024  # 1MB limit for inbound webhooks
+
+
+def _require_secret(secret: str | None) -> str:
+    """Webhooks are unauthenticated public endpoints; without a configured
+    shared secret they must not accept events at all."""
+    if not secret:
+        raise HTTPException(status_code=503, detail="Webhook endpoint is not configured")
+    return secret
 
 
 def _dispatch_event_task(receipt_id: UUID, workspace_id: UUID) -> None:
@@ -61,8 +69,7 @@ async def gmail_pubsub_webhook(
         record_event_rejected("GMAIL", "payload_too_large")
         raise HTTPException(status_code=413, detail="Payload exceeds maximum permitted size")
 
-    settings = Settings.current()
-    secret = getattr(settings, "gmail_webhook_secret", None) or token
+    secret = _require_secret(Settings.current().gmail_webhook_secret)
 
     headers = {k.lower(): v for k, v in request.headers.items()}
     query_params = dict(request.query_params)
@@ -131,8 +138,9 @@ async def microsoft_graph_webhook(
     validationToken: str | None = Query(default=None),
 ) -> Response:
     """Microsoft Graph change notification endpoint (supports validation challenge)."""
-    # 1. Validation challenge handshake
+    # 1. Validation challenge handshake (only answered once the endpoint is configured)
     if validationToken:
+        _require_secret(Settings.current().microsoft_webhook_client_state)
         return Response(content=validationToken, media_type="text/plain", status_code=200)
 
     record_event_received("MICROSOFT")
@@ -142,8 +150,7 @@ async def microsoft_graph_webhook(
         record_event_rejected("MICROSOFT", "payload_too_large")
         raise HTTPException(status_code=413, detail="Payload exceeds maximum permitted size")
 
-    settings = Settings.current()
-    secret = getattr(settings, "microsoft_webhook_client_state", None)
+    secret = _require_secret(Settings.current().microsoft_webhook_client_state)
 
     headers = {k.lower(): v for k, v in request.headers.items()}
     query_params = dict(request.query_params)
@@ -216,8 +223,7 @@ async def generic_event_webhook(
         record_event_rejected("GENERIC", "payload_too_large")
         raise HTTPException(status_code=413, detail="Payload exceeds maximum permitted size")
 
-    settings = Settings.current()
-    secret = getattr(settings, "event_webhook_secret", None) or getattr(settings, "webhook_secret", None)
+    secret = _require_secret(Settings.current().event_webhook_secret)
 
     headers = {k.lower(): v for k, v in request.headers.items()}
     query_params = dict(request.query_params)

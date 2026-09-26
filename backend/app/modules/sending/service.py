@@ -34,6 +34,7 @@ from app.modules.mailboxes.providers.base import (
     ProviderCapability,
     ProviderSendResult,
 )
+from app.modules.mailboxes.providers.message_builder import generate_message_id
 from app.modules.mailboxes.providers.registry import ProviderRegistry
 from app.modules.rate_limit.limiter import RedisRateLimiter
 from app.modules.rate_limit.repository import RatePolicyRepository
@@ -52,6 +53,11 @@ from app.modules.sending.repository import (
 )
 from app.modules.sending.retry_policy import classify_and_decide
 from app.modules.sending.schemas import LoadedSendContext, SendOutcome
+from app.modules.tracking.pixel import (
+    inject_open_pixel,
+    open_pixel_url,
+    open_tracking_ready,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -381,13 +387,18 @@ class SendingService:
                 attempt_id=attempt_id,
             )
 
+        from_address = ctx.frozen_sender_address or ctx.mailbox_original_address
+        # Replies and bounces quote the Message-ID, so every campaign message
+        # must carry one we know. Generated once and persisted with the result;
+        # a retry after a lost commit reuses the stored value.
+        rfc_message_id = ctx.rfc_message_id or generate_message_id(from_address)
         envelope = OutboundMessageEnvelope(
             to_address=ctx.frozen_destination or "",
-            from_address=ctx.frozen_sender_address or ctx.mailbox_original_address,
+            from_address=from_address,
             from_name=ctx.frozen_sender_name or ctx.mailbox_sender_display_name,
             subject=ctx.content_subject or "",
-            body_html=ctx.content_body_html or "",
-            rfc_message_id=ctx.rfc_message_id,
+            body_html=self._with_open_pixel(ctx),
+            rfc_message_id=rfc_message_id,
             attachments=attachments,
         )
 
@@ -415,7 +426,9 @@ class SendingService:
                 error_code=type(exc).__name__,
             )
 
-        outcome = self._finalize_send_result(ctx, attempt_id, send_result)
+        outcome = self._finalize_send_result(
+            ctx, attempt_id, send_result, rfc_message_id
+        )
         # Commit with retry on transient DB error: if provider accepted but
         # DB finalization commit experiences a transient glitch, retry commit.
         # If DB fails permanently, rollback and raise without re-calling provider;
@@ -436,7 +449,9 @@ class SendingService:
                         },
                     )
                     raise
-                self._finalize_send_result(ctx, attempt_id, send_result)
+                self._finalize_send_result(
+                    ctx, attempt_id, send_result, rfc_message_id
+                )
         return outcome
 
     def _load_attachments(
@@ -624,9 +639,30 @@ class SendingService:
 
         return credential, credential_generation
 
+    def _with_open_pixel(self, ctx: LoadedSendContext) -> str:
+        """The rendered body plus the open-tracking pixel, when configured.
+
+        Added here, at send time, and not at render time: the rendered body is
+        a frozen, digest-verified snapshot that must not change.
+        """
+        body = ctx.content_body_html or ""
+        settings = Settings.current()
+        if not body or ctx.purpose != "CAMPAIGN" or not open_tracking_ready(settings):
+            return body
+        return inject_open_pixel(
+            body, open_pixel_url(settings, ctx.workspace_id, ctx.message_id)
+        )
+
     def _finalize_send_result(
-        self, ctx: LoadedSendContext, attempt_id: UUID, send_result: ProviderSendResult
+        self,
+        ctx: LoadedSendContext,
+        attempt_id: UUID,
+        send_result: ProviderSendResult,
+        envelope_rfc_message_id: str | None = None,
     ) -> SendOutcome:
+        # What the recipient will quote in In-Reply-To: the value the provider
+        # reports, else the one we put in the envelope.
+        rfc_message_id = send_result.rfc_message_id or envelope_rfc_message_id
         if send_result.status == "ACCEPTED":
             self.repository.finalize_attempt_result(
                 workspace_id=ctx.workspace_id,
@@ -640,7 +676,12 @@ class SendingService:
                 # acceptance evidence regardless of whether the provider
                 # itself returned a message id (Graph/SMTP often don't) --
                 # required by message_attempts_acceptance_evidence_check.
-                provider_request_id=ctx.rfc_message_id,
+                provider_request_id=(
+                    ctx.rfc_message_id
+                    or rfc_message_id
+                    or send_result.provider_message_id
+                ),
+                rfc_message_id=rfc_message_id,
             )
             self._audit(ctx, action="message.sent", reason=None)
             return SendOutcome(
@@ -670,6 +711,7 @@ class SendingService:
                 evidence_state="UNKNOWN",
                 error_category=db_error_category,
                 error_code=send_result.error_code,
+                rfc_message_id=rfc_message_id,
             )
             self._audit(
                 ctx,

@@ -20,6 +20,7 @@ from app.api.v1.personalization import router as personalization_router
 from app.api.v1.suppressions import router as suppressions_router
 from app.api.v1.team import router as team_router
 from app.api.v1.templates import router as templates_router
+from app.api.v1.tracking import router as tracking_router
 from app.api.v1.unsubscribe import router as unsubscribe_router
 from app.api.v1.usage import router as usage_router
 from app.api.v1.webhooks import router as webhooks_router
@@ -32,6 +33,7 @@ api_router.include_router(invitations_router)
 api_router.include_router(admin_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(unsubscribe_router)
+api_router.include_router(tracking_router)
 api_router.include_router(mailboxes_callback_router, tags=["mailboxes"])
 api_router.include_router(workspaces_router, prefix="/workspaces", tags=["workspaces"])
 api_router.include_router(

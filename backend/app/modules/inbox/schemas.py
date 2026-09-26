@@ -70,6 +70,9 @@ class MessageThreadItem(BaseModel):
     timestamp: datetime
     status: str | None = None
     sequence_step_id: UUID | None = None
+    # 1-based position of the sequence step this message belongs to (for a
+    # reply: the step of the email that was replied to).
+    sequence_step_position: int | None = None
     association_status: str | None = None
     classification: str | None = None
 

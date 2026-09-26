@@ -60,6 +60,17 @@ def test_header_injection_protection() -> None:
 def test_send_message_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer fake-token"
+        if request.method == "GET":
+            # Read back the Message-ID Gmail actually stored for the sent copy.
+            assert request.url.path.endswith("/messages/msg-12345")
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "headers": [{"name": "Message-ID", "value": "<gmail-actual@mail.gmail.com>"}]
+                    }
+                },
+            )
         assert b"raw" in request.content
         return httpx.Response(
             200,
@@ -82,6 +93,7 @@ def test_send_message_success() -> None:
 
     result = provider.send_message({"access_token": "fake-token"}, envelope)
     assert result.status == "ACCEPTED"
+    assert result.rfc_message_id == "<gmail-actual@mail.gmail.com>"
     assert result.provider_message_id == "msg-12345"
     assert result.provider_thread_id == "thread-67890"
     assert result.accepted_at is not None
@@ -240,3 +252,32 @@ def test_provider_registry() -> None:
     with pytest.raises(AppError) as exc_info:
         ProviderRegistry.get("YAHOO")
     assert exc_info.value.code == "unsupported_provider"
+
+
+def test_send_message_falls_back_to_our_message_id_when_readback_is_forbidden() -> None:
+    """A mailbox connected before the read scope existed cannot read the sent
+    copy back; the send still succeeded, so our Message-ID is recorded."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(403, json={"error": {"code": 403}})
+        return httpx.Response(200, json={"id": "m-1", "threadId": "t-1"})
+
+    provider = GmailProvider(
+        client_id="id",
+        client_secret="secret",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = provider.send_message(
+        {"access_token": "fake-token"},
+        OutboundMessageEnvelope(
+            to_address="lead@example.com",
+            from_address="sender@example.com",
+            subject="Hi",
+            body_html="<p>x</p>",
+            rfc_message_id="<ours@example.com>",
+        ),
+    )
+    assert result.status == "ACCEPTED"
+    assert result.rfc_message_id == "<ours@example.com>"
+    assert result.provider_thread_id == "t-1"

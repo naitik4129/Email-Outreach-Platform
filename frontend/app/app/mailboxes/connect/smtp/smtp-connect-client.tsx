@@ -11,6 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  IMAP_DEFAULTS,
+  ImapSettingsFields,
+  imapPayload,
+  type ImapSettings,
+} from "@/components/mailboxes/imap-settings-fields";
 import { ApiError } from "@/lib/api-client";
 import { connectSmtpMailbox } from "@/lib/mailboxes-api";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -52,6 +58,7 @@ export function SmtpConnectClient() {
   const [password, setPassword] = useState("");
   const [emailAddress, setEmailAddress] = useState("");
   const [senderDisplayName, setSenderDisplayName] = useState("");
+  const [imap, setImap] = useState<ImapSettings>(IMAP_DEFAULTS);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const connectMutation = useMutation({
@@ -65,11 +72,13 @@ export function SmtpConnectClient() {
         password,
         email_address: emailAddress.trim(),
         sender_display_name: senderDisplayName.trim() || null,
+        ...imapPayload(imap),
       });
     },
     onSuccess: async (res) => {
-      // Never keep the password in memory after a successful save.
+      // Never keep passwords in memory after a successful save.
       setPassword("");
+      setImap((current) => ({ ...current, password: "" }));
       await queryClient.invalidateQueries({
         queryKey: ["workspace", activeWorkspaceId, "mailboxes"],
       });
@@ -198,6 +207,13 @@ export function SmtpConnectClient() {
             disabled={isSubmitting}
           />
         </Field>
+
+        <ImapSettingsFields
+          idPrefix="smtp"
+          value={imap}
+          onChange={setImap}
+          disabled={isSubmitting}
+        />
 
         <div className="flex justify-end pt-2">
           <Button type="submit" disabled={isSubmitting}>

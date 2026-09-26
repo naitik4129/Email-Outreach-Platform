@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from app.core.errors import AppError
 
 ALLOWED_PORTS: frozenset[int] = frozenset({587, 465})
+# IMAP (reply sync): 993 implicit TLS, 143 with mandatory STARTTLS.
+IMAP_ALLOWED_PORTS: frozenset[int] = frozenset({993, 143})
 
 # Defense-in-depth documentation of well-known cloud metadata endpoints.
 # These are already covered by is_link_local for IPv4 in the common case
@@ -167,6 +169,7 @@ def resolve_and_validate(
     port: int,
     *,
     dns_timeout: float = 5.0,
+    allowed_ports: frozenset[int] = ALLOWED_PORTS,
 ) -> ResolvedTarget:
     """Resolve ``host``, validate every resolved address, and pin one.
 
@@ -178,10 +181,9 @@ def resolve_and_validate(
     """
     validate_hostname_syntax(host)
 
-    if port not in ALLOWED_PORTS:
+    if port not in allowed_ports:
         raise UnsafeDestinationError(
-            f"SMTP port {port} is not permitted; "
-            f"only {sorted(ALLOWED_PORTS)} are allowed"
+            f"Port {port} is not permitted; only {sorted(allowed_ports)} are allowed"
         )
 
     future = _DNS_EXECUTOR.submit(_resolve_addrinfo, host, port)

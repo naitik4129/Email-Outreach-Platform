@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -28,18 +29,37 @@ from app.modules.mailboxes.providers.base import (
 from app.modules.mailboxes.providers.message_builder import validate_header_value
 
 GRAPH_ME_URL = "https://graph.microsoft.com/v1.0/me"
-GRAPH_SEND_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
+GRAPH_MESSAGES_URL = "https://graph.microsoft.com/v1.0/me/messages"
+GRAPH_INBOX_DELTA_URL = (
+    "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages/delta"
+)
+GRAPH_MESSAGE_SELECT = (
+    "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,"
+    "bccRecipients,receivedDateTime,sentDateTime,body,hasAttachments"
+)
 
-# Least-privilege scopes only: identity + offline refresh + send. No
-# Mail.Read/Mail.ReadWrite/Contacts.Read/Calendars.Read -- reply sync and
-# inbox are explicitly out of scope for this phase.
+logger = logging.getLogger(__name__)
+
+MAIL_SEND_SCOPE = "https://graph.microsoft.com/Mail.Send"
+# Mail.ReadWrite (not Mail.Read): sending creates a draft first so Graph
+# reveals the Message-ID and conversation id that replies and bounces refer to,
+# and the same scope covers reading the Inbox for reply synchronization.
+MAIL_READWRITE_SCOPE = "https://graph.microsoft.com/Mail.ReadWrite"
+
 MICROSOFT_DEFAULT_SCOPES = [
     "openid",
     "profile",
     "email",
     "offline_access",
-    "https://graph.microsoft.com/Mail.Send",
+    MAIL_SEND_SCOPE,
+    MAIL_READWRITE_SCOPE,
 ]
+
+
+class _GraphRateLimited(Exception):
+    def __init__(self, retry_after: float) -> None:
+        super().__init__("graph rate limited")
+        self.retry_after = retry_after
 
 
 class MicrosoftGraphProvider(EmailProvider):
@@ -340,25 +360,55 @@ class MicrosoftGraphProvider(EmailProvider):
                 }
                 for attachment in envelope.attachments
             ]
-        body = {"message": message, "saveToSentItems": "true"}
-
         client = self._get_client()
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
 
+        # Two-step send (create draft, then send it). sendMail answers 202 with
+        # no body, so it never reveals the Message-ID or conversation id that
+        # replies and bounces refer to; a draft does. Creating the draft sends
+        # nothing, so a failure or timeout at this step is a definitive
+        # non-send and safe to retry.
         try:
-            resp = client.post(GRAPH_SEND_URL, headers=headers, json=body)
+            create = client.post(GRAPH_MESSAGES_URL, headers=headers, json=message)
+        except httpx.TransportError as exc:
+            return ProviderSendResult(
+                status="DEFINITIVELY_REJECTED",
+                error_category=ErrorCategory.NETWORK_ERROR,
+                error_code="network_error",
+                raw_response={"detail": str(exc)},
+            )
+        if create.status_code != 201:
+            return self._rejected_result(create)
+
+        draft = create.json()
+        draft_id = draft.get("id")
+        if not draft_id:
+            return ProviderSendResult(
+                status="DEFINITIVELY_REJECTED",
+                error_category=ErrorCategory.TEMPORARY_PROVIDER_ERROR,
+                error_code="draft_without_id",
+            )
+        rfc_message_id = draft.get("internetMessageId") or envelope.rfc_message_id
+        thread_id = draft.get("conversationId")
+
+        try:
+            resp = client.post(f"{GRAPH_MESSAGES_URL}/{draft_id}/send", headers=headers)
         except httpx.TimeoutException:
-            # Ambiguous: the request may have been accepted remotely
-            # before the connection dropped.
+            # Ambiguous: the send may have been accepted remotely before the
+            # connection dropped. The draft is deliberately left in place.
             return ProviderSendResult(
                 status="UNKNOWN",
                 error_category=ErrorCategory.UNKNOWN_OUTCOME,
                 error_code="request_timeout",
+                provider_message_id=str(draft_id),
+                provider_thread_id=thread_id,
+                rfc_message_id=rfc_message_id,
             )
         except httpx.TransportError as exc:
+            self._discard_draft(client, headers, str(draft_id))
             return ProviderSendResult(
                 status="DEFINITIVELY_REJECTED",
                 error_category=ErrorCategory.NETWORK_ERROR,
@@ -367,19 +417,29 @@ class MicrosoftGraphProvider(EmailProvider):
             )
 
         if resp.status_code == 202:
-            # Graph's sendMail returns 202 Accepted with an EMPTY body: this
-            # means "accepted for processing", not "delivered", and no
-            # message ID is available synchronously. Per the provider
-            # architecture's reconciliation rules, the absence of a
-            # provider_message_id must never be treated as a rejection.
+            # "Accepted for processing", not "delivered".
             return ProviderSendResult(
                 status="ACCEPTED",
-                provider_message_id=None,
-                provider_thread_id=None,
+                provider_message_id=str(draft_id),
+                provider_thread_id=thread_id,
+                rfc_message_id=rfc_message_id,
                 accepted_at=datetime.now(UTC),
                 raw_response=None,
             )
 
+        self._discard_draft(client, headers, str(draft_id))
+        return self._rejected_result(resp)
+
+    def _discard_draft(
+        self, client: httpx.Client, headers: dict[str, str], draft_id: str
+    ) -> None:
+        """Best-effort cleanup of a draft that was definitively not sent."""
+        try:
+            client.delete(f"{GRAPH_MESSAGES_URL}/{draft_id}", headers=headers)
+        except httpx.HTTPError:
+            logger.warning("graph_draft_cleanup_failed", extra={"provider": "MICROSOFT"})
+
+    def _rejected_result(self, resp: httpx.Response) -> ProviderSendResult:
         error_payload = resp.json() if resp.content else {}
         classified = self.classify_error(resp.status_code, error_payload)
 
@@ -522,8 +582,10 @@ class MicrosoftGraphProvider(EmailProvider):
         clean_id = rfc_message_id.strip("<>")
         query = f"internetMessageId eq '<{clean_id}>'"
         try:
+            # Sent Items only: /me/messages also searches Drafts, and a draft that
+            # was created but never sent must not be mistaken for an accepted send.
             resp = client.get(
-                "https://graph.microsoft.com/v1.0/me/messages",
+                "https://graph.microsoft.com/v1.0/me/mailFolders/sentitems/messages",
                 headers=headers,
                 params={"$filter": query, "$top": 1, "$select": "id,conversationId"},
             )
@@ -570,47 +632,61 @@ class MicrosoftGraphProvider(EmailProvider):
             "Prefer": f"odata.maxpagesize={min(max(page_size, 1), 100)}",
         }
 
-        # Determine URL
+        try:
+            return self._sync_page(client, headers, cursor)
+        except httpx.TimeoutException:
+            return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
+        except _GraphRateLimited as limited:
+            return SyncPageResult(
+                messages=[], has_more=True, retry_after_seconds=limited.retry_after
+            )
+
+    def _initial_delta_request(self) -> tuple[str, dict[str, str]]:
+        horizon_days = Settings.current().reply_sync_initial_horizon_days
+        since = (datetime.now(UTC) - timedelta(days=horizon_days)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        return GRAPH_INBOX_DELTA_URL, {
+            "$select": GRAPH_MESSAGE_SELECT,
+            "$filter": f"receivedDateTime ge {since}",
+            "$orderby": "receivedDateTime desc",
+        }
+
+    def _sync_page(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        cursor: str | None,
+    ) -> SyncPageResult:
+        params: dict[str, str] | None
         if cursor:
             self._validate_graph_url(cursor)
-            target_url = cursor
-            params = None
+            target_url, params = cursor, None
         else:
-            target_url = "https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages/delta"
-            params = {
-                "$select": (
-                    "id,conversationId,internetMessageId,subject,from,"
-                    "toRecipients,ccRecipients,bccRecipients,receivedDateTime,"
-                    "sentDateTime,body,hasAttachments,internetMessageHeaders"
-                )
-            }
+            target_url, params = self._initial_delta_request()
 
-        try:
-            resp = client.get(target_url, headers=headers, params=params)
-        except Exception as exc:
-            classified = self.classify_error(exc)
-            if classified.category == ErrorCategory.RATE_LIMIT:
-                return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
-            raise
+        resp = client.get(target_url, headers=headers, params=params)
+        if resp.status_code == 400 and not cursor:
+            # The bounded-horizon filter is an optimisation; if Graph rejects
+            # the filter/orderby combination fall back to the plain delta
+            # (bounded per run by max_pages) rather than failing the mailbox.
+            logger.warning("graph_delta_filter_rejected", extra={"provider": "MICROSOFT"})
+            resp = client.get(
+                GRAPH_INBOX_DELTA_URL,
+                headers=headers,
+                params={"$select": GRAPH_MESSAGE_SELECT},
+            )
 
         if resp.status_code == 410:
             return SyncPageResult(messages=[], resync_required=True)
-        elif resp.status_code in (401, 403):
-            classified = self.classify_error(resp.status_code)
-            raise AppError(
-                classified.category.value.lower(),
-                classified.safe_message,
-                status_code=resp.status_code,
-            )
-        elif resp.status_code == 429:
-            retry_after = float(resp.headers.get("Retry-After", 30))
-            return SyncPageResult(messages=[], has_more=True, retry_after_seconds=retry_after)
-        elif resp.status_code != 200:
+        if resp.status_code == 429:
+            raise _GraphRateLimited(float(resp.headers.get("Retry-After", 30)))
+        if resp.status_code != 200:
             try:
                 err_data = resp.json().get("error", {})
                 if err_data.get("code") in ("resyncRequired", "ResyncRequired"):
                     return SyncPageResult(messages=[], resync_required=True)
-            except Exception:
+            except ValueError:
                 pass
             classified = self.classify_error(resp.status_code)
             raise AppError(
@@ -620,29 +696,58 @@ class MicrosoftGraphProvider(EmailProvider):
             )
 
         data = resp.json()
-        raw_messages = data.get("value", [])
         next_link = data.get("@odata.nextLink")
         delta_link = data.get("@odata.deltaLink")
 
+        # Header lookups use their own headers: the paging Prefer must not
+        # apply to single-message reads.
+        read_headers = {"Authorization": headers["Authorization"]}
         parsed_messages: list[ProviderInboundMessage] = []
-        for msg in raw_messages:
+        for msg in data.get("value", []):
             if "@removed" in msg:
                 continue
+            self._hydrate_internet_headers(client, read_headers, msg)
             parsed = self._parse_graph_message(msg)
             if parsed:
                 parsed_messages.append(parsed)
 
-        next_cursor = next_link or delta_link
-        has_more = bool(next_link)
-        synced_checkpoint = delta_link if delta_link else None
-
         return SyncPageResult(
             messages=parsed_messages,
-            next_cursor=next_cursor,
-            has_more=has_more,
+            next_cursor=next_link or delta_link,
+            has_more=bool(next_link),
             resync_required=False,
-            synced_checkpoint=synced_checkpoint,
+            synced_checkpoint=delta_link if delta_link else None,
         )
+
+    def _hydrate_internet_headers(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        msg: dict[str, Any],
+    ) -> None:
+        """Attach In-Reply-To/References headers to a delta message.
+
+        Graph's message resource has no In-Reply-To property and delta
+        responses do not reliably include internetMessageHeaders, so they are
+        read per message. A failure is not fatal: matching then falls back to
+        the conversation id, which Graph always returns.
+        """
+        if msg.get("internetMessageHeaders") or not msg.get("id"):
+            return
+        resp = client.get(
+            f"{GRAPH_MESSAGES_URL}/{msg['id']}",
+            headers=headers,
+            params={"$select": "internetMessageHeaders"},
+        )
+        if resp.status_code == 429:
+            raise _GraphRateLimited(float(resp.headers.get("Retry-After", 30)))
+        if resp.status_code == 200:
+            msg["internetMessageHeaders"] = resp.json().get("internetMessageHeaders", [])
+        elif resp.status_code != 404:
+            logger.warning(
+                "graph_header_lookup_failed",
+                extra={"provider": "MICROSOFT", "status_code": resp.status_code},
+            )
 
     def _parse_graph_message(self, msg: dict[str, Any]) -> ProviderInboundMessage | None:
         mid = msg.get("id")

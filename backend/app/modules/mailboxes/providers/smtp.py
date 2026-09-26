@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import imaplib
 import smtplib
 import socket
 import ssl
@@ -22,6 +23,13 @@ from app.modules.mailboxes.providers.base import (
     TokenExchangeResult,
     TokenRefreshResult,
     UnsupportedCapabilityError,
+)
+from app.modules.mailboxes.providers.imap_sync import (
+    ImapConnector,
+    ImapLibSession,
+    imap_configured,
+    imap_credential,
+    sync_imap_page,
 )
 from app.modules.mailboxes.providers.message_builder import (
     build_rfc5322_message,
@@ -96,10 +104,13 @@ class SmtpProvider(EmailProvider):
     never opens a socket directly.
     """
 
+    # REPLY_SYNC is available only for mailboxes that also carry IMAP settings
+    # (see imap_configured); SMTP alone can never receive mail.
     capabilities = frozenset(
         {
             ProviderCapability.CONNECTION_VALIDATION,
             ProviderCapability.SEND,
+            ProviderCapability.REPLY_SYNC,
         }
     )
 
@@ -108,6 +119,7 @@ class SmtpProvider(EmailProvider):
         resolver: ResolverFn = resolve_and_validate,
         dns_timeout: float | None = None,
         connect_timeout: float | None = None,
+        imap_connector: ImapConnector | None = None,
     ) -> None:
         # `resolver` is a test-only dependency-injection seam (see
         # tests/test_smtp_provider.py and the integration SMTP fixture).
@@ -116,6 +128,11 @@ class SmtpProvider(EmailProvider):
         # resolve_and_validate is the only resolver ever used outside tests.
         settings = Settings.current()
         self._resolver = resolver
+        # Test-only seam, like ``resolver``: production uses the real,
+        # SSRF-pinned imaplib session.
+        self._imap_connector: ImapConnector = imap_connector or (
+            lambda cred: ImapLibSession(cred, resolver=resolver)
+        )
         self._dns_timeout = dns_timeout or settings.smtp_dns_timeout_seconds
         self._connect_timeout = connect_timeout or settings.smtp_connect_timeout_seconds
 
@@ -285,9 +302,14 @@ class SmtpProvider(EmailProvider):
             )
 
         _safe_quit(conn)
+        # SMTP returns no provider id, so the Message-ID we set is the only
+        # handle for correlating replies/bounces (and the acceptance evidence).
         return ProviderSendResult(
             status="ACCEPTED",
-            provider_message_id=None,
+            provider_message_id=(
+                envelope.rfc_message_id.strip("<>") if envelope.rfc_message_id else None
+            ),
+            rfc_message_id=envelope.rfc_message_id,
             accepted_at=datetime.now(UTC),
         )
 
@@ -433,11 +455,51 @@ class SmtpProvider(EmailProvider):
         """SMTP protocol does not provide a remote message search capability."""
         return None
 
+    def validate_imap(self, credential: Mapping[str, Any]) -> None:
+        """Log in to the IMAP server and open INBOX. Raises AppError on failure
+        so a mailbox is never saved with reply sync that cannot work."""
+        imap_cred = imap_credential(credential)
+        try:
+            session = self._imap_connector(imap_cred)
+        except UnsafeDestinationError:
+            raise
+        except imaplib.IMAP4.error as exc:
+            raise AppError(
+                "auth_failure",
+                "IMAP login failed. Check the IMAP username and password.",
+                status_code=401,
+            ) from exc
+        except (OSError, ssl.SSLError) as exc:
+            raise AppError(
+                "provider_error",
+                "Could not connect to the IMAP server.",
+                status_code=502,
+            ) from exc
+        try:
+            session.select_inbox()
+        except imaplib.IMAP4.error as exc:
+            raise AppError(
+                "provider_error", "The IMAP INBOX could not be opened.", status_code=502
+            ) from exc
+        finally:
+            session.close()
+
     def sync_inbound_messages(
         self,
         credential: Mapping[str, Any],
         cursor: str | None = None,
         page_size: int = 50,
     ) -> SyncPageResult:
-        """SMTP is strictly an outbound transmission protocol; it does not provide inbound sync."""
-        raise UnsupportedCapabilityError("SMTP", ProviderCapability.REPLY_SYNC)
+        """Read new INBOX messages over IMAP (requires IMAP settings)."""
+        if not imap_configured(credential):
+            raise UnsupportedCapabilityError("SMTP", ProviderCapability.REPLY_SYNC)
+        session = self._imap_connector(imap_credential(credential))
+        try:
+            return sync_imap_page(
+                session,
+                cursor,
+                page_size=min(max(page_size, 1), 100),
+                horizon_days=Settings.current().reply_sync_initial_horizon_days,
+            )
+        finally:
+            session.close()

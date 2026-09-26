@@ -191,3 +191,35 @@ export async function removeLeadListMember(
     { method: "DELETE" },
   );
 }
+
+export type LeadActivityKind =
+  | "EMAIL_SENT"
+  | "EMAIL_OPENED"
+  | "EMAIL_BOUNCED"
+  | "REPLY_RECEIVED"
+  | "AUTO_REPLY_RECEIVED";
+
+export type LeadActivityItem = {
+  kind: LeadActivityKind;
+  occurred_at: string;
+  message_id: string;
+  subject: string | null;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  sequence_step_position: number | null;
+  conversation_id: string | null;
+  sender_email: string | null;
+  body_preview: string | null;
+  occurrence_count: number | null;
+  bounce_type: string | null;
+};
+
+export type LeadActivity = { lead_id: string; items: LeadActivityItem[] };
+
+export async function getLeadActivity(workspaceId: string, leadId: string) {
+  return (
+    await apiRequest<LeadActivity>(
+      workspacePath(workspaceId, `/leads/${leadId}/activity`),
+    )
+  ).data;
+}

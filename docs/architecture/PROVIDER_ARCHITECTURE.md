@@ -23,11 +23,13 @@ Capabilities are resolved per connection from adapter support, granted scopes an
 | Send | Immutable content, envelope (including verified attachments and `cid:` inline images), attempt ID, optional correlation/thread context, bounded deadline | Gmail API | Graph | Authenticated submission |
 | Account status | Safe health/capability facts and observation timestamp | Available facts only | Available facts only | Successful connection does not prove future delivery |
 | Message lookup | Scoped IDs/correlation plus evidence strength | Account/scopes dependent | Account/scopes dependent | Not supplied by SMTP itself |
-| Reply sync | Cursor → bounded normalized page + checkpoint | Gmail history/full sync | Graph folder delta | Separate explicitly supported IMAP/API connection required |
+| Reply sync | Cursor → bounded normalized page + checkpoint | Gmail history/full sync (`gmail.readonly`) | Graph Inbox delta (`Mail.ReadWrite`) | IMAP, only for mailboxes saved with IMAP settings |
 | Provider events | Verified receipt → normalized evidence | Do not assume full delivery/complaint feed | Do not assume full delivery/complaint feed | Provider-specific feed/DSN where supported |
 | Native idempotency | Verified key scope, expiry and replay contract | Default unsupported until proven | Default unsupported until proven | No deduplication guarantee from Message-ID |
 
 `send` returns ACCEPTED, DEFINITIVELY_REJECTED, or UNKNOWN with safe category, provider IDs if supplied, provider timestamp if reliable, Retry-After if present, and minimal reconciliation evidence. Never represent “no message ID returned” as rejection.
+
+Every send must report the Message-ID the recipient will see (`ProviderSendResult.rfc_message_id`) because replies and bounces quote it: Gmail sends our generated Message-ID and reads the stored value back (falling back to ours if the read scope is missing); SMTP sets it; Graph creates a draft (`POST /me/messages`, which returns `internetMessageId` and `conversationId`) and then sends it (`POST /me/messages/{id}/send`) — a failure creating the draft is a definitive non-send, a timeout while sending is UNKNOWN, and a rejected send discards the draft. Reading and draft creation are why the OAuth scopes now include `gmail.readonly` and `Mail.ReadWrite`; connections made earlier must be reconnected (reply sync is parked as `RECONNECT_REQUIRED` until then).
 
 Gmail sends MIME content via its API; Graph `sendMail` returns `202 Accepted` without a response body and this does not prove processing/delivery completed. Adapter acceptance therefore maps to local SENT as submission acceptance, not DELIVERED. See [Gmail sending](https://developers.google.com/workspace/gmail/api/guides/sending) and [Graph sendMail](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0), checked 2026-09-09. Exact SDK versions, scopes and quotas must be reverified during implementation.
 

@@ -118,6 +118,23 @@ class Settings(BaseSettings):
     reply_sync_lease_seconds: int = Field(default=120, ge=30, le=1800)
     reply_sync_max_pages_per_run: int = Field(default=10, ge=1, le=100)
     reply_sync_poll_seconds: float = Field(default=10.0, gt=0, le=300)
+    # How far back the first full sync of a mailbox looks for replies.
+    reply_sync_initial_horizon_days: int = Field(default=30, ge=1, le=365)
+    # Upper bound of the exponential backoff applied after consecutive failures.
+    reply_sync_max_backoff_seconds: int = Field(default=3600, ge=60, le=86_400)
+
+    # Open tracking. The pixel is only injected when all three are set, so an
+    # unconfigured environment can never send a broken or unsigned tracking URL.
+    open_tracking_enabled: bool = False
+    # Public origin that serves /api/v1/t/o/... (same origin as the app).
+    tracking_base_url: str = ""
+    tracking_signing_key: str = ""
+
+    # Shared secrets for the provider webhooks. When unset the endpoint is
+    # disabled (503) instead of accepting unauthenticated events.
+    event_webhook_secret: str = ""
+    gmail_webhook_secret: str = ""
+    microsoft_webhook_client_state: str = ""
 
     supabase_url: str = Field(default="", min_length=1)
     supabase_jwt_secret: str = ""

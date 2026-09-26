@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Any
@@ -30,21 +31,46 @@ from app.modules.mailboxes.providers.message_builder import (
     build_rfc5322_message,
     validate_header_value,
 )
+from app.modules.mailboxes.providers.mime_report import (
+    extract_report_text,
+    is_delivery_report,
+    parse_mime_bytes,
+)
 
 GMAIL_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
-# Google's OIDC userinfo endpoint, not the Gmail API's own profile endpoint:
-# it only requires the "openid"/"userinfo.email" scopes we already request,
-# whereas Gmail's users.getProfile requires a mailbox-read scope we don't ask for.
+# Google's OIDC userinfo endpoint, used for identity so connecting does not
+# depend on a Gmail API round trip; the Gmail read scope below is needed only
+# for reply/bounce synchronization.
 GMAIL_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 GMAIL_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
 GMAIL_DEFAULT_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/gmail.send",
+    GMAIL_SEND_SCOPE,
+    GMAIL_READ_SCOPE,
 ]
+
+GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+class _GmailRateLimited(Exception):
+    def __init__(self, retry_after: float) -> None:
+        super().__init__("gmail rate limited")
+        self.retry_after = retry_after
+
+
+def _looks_like_delivery_report(message: ProviderInboundMessage) -> bool:
+    sender = (message.from_address or "").lower()
+    content_type = message.headers.get("content-type", "").lower()
+    return "multipart/report" in content_type or sender.startswith(
+        ("mailer-daemon@", "postmaster@")
+    )
 
 
 class GmailProvider(EmailProvider):
@@ -332,6 +358,10 @@ class GmailProvider(EmailProvider):
                 status="ACCEPTED",
                 provider_message_id=data.get("id"),
                 provider_thread_id=data.get("threadId"),
+                rfc_message_id=self._read_sent_message_id(
+                    client, headers, data.get("id")
+                )
+                or envelope.rfc_message_id,
                 accepted_at=datetime.now(UTC),
                 raw_response=data,
             )
@@ -503,6 +533,71 @@ class GmailProvider(EmailProvider):
         except Exception:
             return None
 
+    def _read_sent_message_id(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        gmail_message_id: str | None,
+    ) -> str | None:
+        """Read the Message-ID Gmail stored for a message we just sent.
+
+        Best effort: the send already succeeded, so a failure here (for
+        example a mailbox connected before the read scope existed) falls back
+        to the Message-ID we generated instead of failing the send.
+        """
+        if not gmail_message_id:
+            return None
+        try:
+            resp = client.get(
+                f"{GMAIL_API_BASE}/messages/{gmail_message_id}",
+                headers=headers,
+                params={"format": "metadata", "metadataHeaders": "Message-ID"},
+            )
+            if resp.status_code != 200:
+                return None
+            for header in resp.json().get("payload", {}).get("headers", []):
+                if str(header.get("name", "")).lower() == "message-id":
+                    value = str(header.get("value", "")).strip()
+                    return value or None
+        except (httpx.HTTPError, ValueError):
+            return None
+        return None
+
+    @staticmethod
+    def _parse_cursor(cursor: str | None) -> tuple[str, str | None, str | None]:
+        """Return (mode, history_id, page_token).
+
+        mode "init": no cursor yet -> start a bounded full scan.
+        mode "full": mid full scan; history_id is the mailbox position taken
+                     when the scan began, page_token continues messages.list.
+        mode "hist": history_id is the last processed position, page_token
+                     (if set) continues the same history.list traversal.
+        """
+        if not cursor:
+            return "init", None, None
+        if cursor.startswith("{"):
+            try:
+                data = json.loads(cursor)
+            except ValueError:
+                return "init", None, None
+            mode = data.get("m")
+            history_id = data.get("h") or data.get("history_id")
+            page_token = data.get("t") or data.get("page_token")
+            if mode == "full" and history_id:
+                return "full", str(history_id), page_token
+            if history_id:
+                return "hist", str(history_id), page_token
+            return "init", None, None
+        return "hist", cursor, None
+
+    def _raise_for_sync_status(self, resp: httpx.Response) -> None:
+        classified = self.classify_error(resp.status_code)
+        raise AppError(
+            classified.category.value.lower(),
+            classified.safe_message,
+            status_code=resp.status_code,
+        )
+
     def sync_inbound_messages(
         self,
         credential: Mapping[str, Any],
@@ -515,157 +610,134 @@ class GmailProvider(EmailProvider):
 
         client = self._get_client()
         headers = {"Authorization": f"Bearer {access_token}"}
+        limit = min(max(page_size, 1), 100)
+        mode, history_id, page_token = self._parse_cursor(cursor)
 
-        # Parse cursor (can be raw historyId string or JSON {"history_id": ..., "page_token": ...})
-        history_id: str | None = None
-        page_token: str | None = None
-        if cursor:
-            if cursor.startswith("{"):
-                try:
-                    c_data = json.loads(cursor)
-                    history_id = c_data.get("history_id")
-                    page_token = c_data.get("page_token")
-                except Exception:
-                    history_id = cursor
-            else:
-                history_id = cursor
-
-        # 1. Incremental sync using history if history_id is available
-        if history_id:
-            params: dict[str, Any] = {
-                "startHistoryId": history_id,
-                "maxResults": min(max(page_size, 1), 100),
-                "historyTypes": "messageAdded",
-            }
-            if page_token:
-                params["pageToken"] = page_token
-
-            try:
-                resp = client.get(
-                    "https://gmail.googleapis.com/gmail/v1/users/me/history",
-                    headers=headers,
-                    params=params,
+        try:
+            if mode == "hist":
+                return self._sync_history_page(
+                    client, headers, str(history_id), page_token, limit
                 )
-            except Exception as exc:
-                classified = self.classify_error(exc)
-                if classified.category == ErrorCategory.RATE_LIMIT:
-                    return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
-                raise
-
-            if resp.status_code == 404:
-                # History ID is out of date / expired -> trigger resync
-                return SyncPageResult(messages=[], resync_required=True)
-            elif resp.status_code in (401, 403):
-                classified = self.classify_error(resp.status_code)
-                raise AppError(
-                    classified.category.value.lower(),
-                    classified.safe_message,
-                    status_code=resp.status_code,
-                )
-            elif resp.status_code == 429:
-                retry_after = float(resp.headers.get("Retry-After", 30))
-                return SyncPageResult(messages=[], has_more=True, retry_after_seconds=retry_after)
-            elif resp.status_code != 200:
-                classified = self.classify_error(resp.status_code)
-                raise AppError(
-                    classified.category.value.lower(),
-                    classified.safe_message,
-                    status_code=resp.status_code,
-                )
-
-            data = resp.json()
-            history_records = data.get("history", [])
-            new_history_id = str(data.get("historyId", history_id))
-            next_page_token = data.get("nextPageToken")
-
-            msg_ids: list[tuple[str, str | None]] = []
-            for h in history_records:
-                for added in h.get("messagesAdded", []):
-                    m = added.get("message", {})
-                    mid = m.get("id")
-                    if mid:
-                        msg_ids.append((mid, m.get("threadId")))
-
-            inbound_msgs = self._fetch_gmail_messages(client, headers, msg_ids)
-
-            next_cursor = None
-            if next_page_token:
-                next_cursor = json.dumps({"history_id": new_history_id, "page_token": next_page_token})
-            else:
-                next_cursor = new_history_id
-
+            return self._sync_full_page(
+                client, headers, history_id if mode == "full" else None, page_token, limit
+            )
+        except httpx.TimeoutException:
+            return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
+        except _GmailRateLimited as limited:
             return SyncPageResult(
-                messages=inbound_msgs,
-                next_cursor=next_cursor,
-                next_page_token=next_page_token,
-                has_more=bool(next_page_token),
-                resync_required=False,
-                synced_checkpoint=new_history_id,
+                messages=[], has_more=True, retry_after_seconds=limited.retry_after
             )
 
-        # 2. Initial sync or full resync
-        start_history_id = None
-        try:
-            prof_resp = client.get("https://gmail.googleapis.com/gmail/v1/users/me/profile", headers=headers)
-            if prof_resp.status_code == 200:
-                start_history_id = str(prof_resp.json().get("historyId", ""))
-        except Exception:
-            pass
-
-        list_params: dict[str, Any] = {"maxResults": min(max(page_size, 1), 100)}
+    def _sync_history_page(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        start_history_id: str,
+        page_token: str | None,
+        limit: int,
+    ) -> SyncPageResult:
+        params: dict[str, Any] = {
+            "startHistoryId": start_history_id,
+            "maxResults": limit,
+            "historyTypes": "messageAdded",
+            "labelId": "INBOX",
+        }
         if page_token:
-            list_params["pageToken"] = page_token
+            params["pageToken"] = page_token
+        resp = client.get(f"{GMAIL_API_BASE}/history", headers=headers, params=params)
 
-        try:
-            resp = client.get(
-                "https://gmail.googleapis.com/gmail/v1/users/me/messages",
-                headers=headers,
-                params=list_params,
-            )
-        except Exception as exc:
-            classified = self.classify_error(exc)
-            if classified.category == ErrorCategory.RATE_LIMIT:
-                return SyncPageResult(messages=[], has_more=True, retry_after_seconds=30.0)
-            raise
-
-        if resp.status_code in (401, 403):
-            classified = self.classify_error(resp.status_code)
-            raise AppError(
-                classified.category.value.lower(),
-                classified.safe_message,
-                status_code=resp.status_code,
-            )
-        elif resp.status_code == 429:
-            retry_after = float(resp.headers.get("Retry-After", 30))
-            return SyncPageResult(messages=[], has_more=True, retry_after_seconds=retry_after)
-        elif resp.status_code != 200:
-            classified = self.classify_error(resp.status_code)
-            raise AppError(
-                classified.category.value.lower(),
-                classified.safe_message,
-                status_code=resp.status_code,
-            )
+        if resp.status_code == 404:
+            # startHistoryId is older than Gmail retains -> full resync
+            return SyncPageResult(messages=[], resync_required=True)
+        if resp.status_code == 429:
+            raise _GmailRateLimited(float(resp.headers.get("Retry-After", 30)))
+        if resp.status_code != 200:
+            self._raise_for_sync_status(resp)
 
         data = resp.json()
-        messages_meta = data.get("messages", [])
+        current_history_id = str(data.get("historyId", start_history_id))
         next_page_token = data.get("nextPageToken")
-        msg_ids = [(m["id"], m.get("threadId")) for m in messages_meta if "id" in m]
 
-        inbound_msgs = self._fetch_gmail_messages(client, headers, msg_ids)
+        msg_ids: list[tuple[str, str | None]] = []
+        for record in data.get("history", []):
+            for added in record.get("messagesAdded", []):
+                message = added.get("message", {})
+                if message.get("id"):
+                    msg_ids.append((message["id"], message.get("threadId")))
 
-        next_cursor = None
+        inbound = self._fetch_gmail_messages(client, headers, msg_ids)
+
         if next_page_token:
-            next_cursor = json.dumps({"history_id": start_history_id, "page_token": next_page_token})
+            # Keep the ORIGINAL startHistoryId while a traversal is in flight;
+            # only the last page advances the position.
+            next_cursor = json.dumps(
+                {"m": "hist", "h": start_history_id, "t": next_page_token}
+            )
         else:
-            next_cursor = start_history_id
-
+            next_cursor = current_history_id
         return SyncPageResult(
-            messages=inbound_msgs,
+            messages=inbound,
             next_cursor=next_cursor,
             next_page_token=next_page_token,
             has_more=bool(next_page_token),
-            resync_required=False,
-            synced_checkpoint=start_history_id,
+            synced_checkpoint=current_history_id,
+        )
+
+    def _sync_full_page(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        scan_history_id: str | None,
+        page_token: str | None,
+        limit: int,
+    ) -> SyncPageResult:
+        if scan_history_id is None:
+            # Capture the mailbox position BEFORE listing so anything arriving
+            # while the scan runs is picked up by the history pass afterwards.
+            profile = client.get(f"{GMAIL_API_BASE}/profile", headers=headers)
+            if profile.status_code == 429:
+                raise _GmailRateLimited(float(profile.headers.get("Retry-After", 30)))
+            if profile.status_code != 200:
+                self._raise_for_sync_status(profile)
+            scan_history_id = str(profile.json().get("historyId", ""))
+            if not scan_history_id:
+                raise AppError(
+                    "provider_error",
+                    "Gmail did not return a history position",
+                    status_code=502,
+                )
+
+        horizon_days = Settings.current().reply_sync_initial_horizon_days
+        list_params: dict[str, Any] = {
+            "maxResults": limit,
+            "labelIds": "INBOX",
+            "q": f"newer_than:{horizon_days}d",
+        }
+        if page_token:
+            list_params["pageToken"] = page_token
+        resp = client.get(f"{GMAIL_API_BASE}/messages", headers=headers, params=list_params)
+        if resp.status_code == 429:
+            raise _GmailRateLimited(float(resp.headers.get("Retry-After", 30)))
+        if resp.status_code != 200:
+            self._raise_for_sync_status(resp)
+
+        data = resp.json()
+        next_page_token = data.get("nextPageToken")
+        msg_ids = [(m["id"], m.get("threadId")) for m in data.get("messages", []) if "id" in m]
+        inbound = self._fetch_gmail_messages(client, headers, msg_ids)
+
+        if next_page_token:
+            next_cursor = json.dumps(
+                {"m": "full", "h": scan_history_id, "t": next_page_token}
+            )
+        else:
+            next_cursor = scan_history_id
+        return SyncPageResult(
+            messages=inbound,
+            next_cursor=next_cursor,
+            next_page_token=next_page_token,
+            has_more=bool(next_page_token),
+            synced_checkpoint=scan_history_id,
         )
 
     def _fetch_gmail_messages(
@@ -674,21 +746,59 @@ class GmailProvider(EmailProvider):
         headers: dict[str, str],
         msg_ids: list[tuple[str, str | None]],
     ) -> list[ProviderInboundMessage]:
+        """Fetch full messages. A failure other than "message no longer exists"
+        aborts the page so the checkpoint does not advance past a reply that
+        was never read (it is retried on the next run)."""
         inbound_msgs: list[ProviderInboundMessage] = []
         for mid, thread_id in msg_ids:
-            try:
-                resp = client.get(
-                    f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{mid}",
-                    headers=headers,
-                    params={"format": "full"},
-                )
-                if resp.status_code != 200:
-                    continue
-                m_data = resp.json()
-                inbound_msgs.append(self._parse_gmail_message(m_data, thread_id))
-            except Exception:
-                continue
+            resp = client.get(
+                f"{GMAIL_API_BASE}/messages/{mid}",
+                headers=headers,
+                params={"format": "full"},
+            )
+            if resp.status_code == 404:
+                continue  # deleted between history and fetch
+            if resp.status_code == 429:
+                raise _GmailRateLimited(float(resp.headers.get("Retry-After", 30)))
+            if resp.status_code != 200:
+                self._raise_for_sync_status(resp)
+            m_data = resp.json()
+            labels = set(m_data.get("labelIds") or [])
+            if labels & {"SENT", "DRAFT"}:
+                continue  # our own copy, never an inbound reply
+            parsed = self._parse_gmail_message(m_data, thread_id)
+            if _looks_like_delivery_report(parsed):
+                parsed = self._attach_report_text(client, headers, mid, parsed)
+            inbound_msgs.append(parsed)
         return inbound_msgs
+
+    def _attach_report_text(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        gmail_message_id: str,
+        parsed: ProviderInboundMessage,
+    ) -> ProviderInboundMessage:
+        """Delivery reports carry the bounced recipient and original Message-ID
+        in MIME parts the "full" representation does not reliably expose, so the
+        raw message is parsed for those."""
+        resp = client.get(
+            f"{GMAIL_API_BASE}/messages/{gmail_message_id}",
+            headers=headers,
+            params={"format": "raw"},
+        )
+        if resp.status_code != 200:
+            return parsed
+        raw = resp.json().get("raw")
+        if not raw:
+            return parsed
+        try:
+            msg = parse_mime_bytes(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        except (ValueError, TypeError):
+            return parsed
+        if not is_delivery_report(msg):
+            return parsed
+        return replace(parsed, report_text=extract_report_text(msg))
 
     def _parse_gmail_message(
         self,

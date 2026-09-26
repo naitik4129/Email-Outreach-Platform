@@ -9,6 +9,9 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings
+from app.modules.tracking.pixel import open_tracking_ready
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,11 +33,86 @@ def _safe_set_workspace(session: Session, workspace_id: UUID | None) -> None:
             session.execute(text("SELECT set_config('app.workspace_id', '', true)"))
 
 
+def _pct(numerator: int, denominator: int) -> float:
+    return round((numerator / denominator) * 100, 2) if denominator > 0 else 0.0
+
+
 class AnalyticsRepository:
-    """Authoritative repository for analytical queries and deliverability metrics."""
+    """Authoritative repository for analytical queries and deliverability metrics.
+
+    Open and bounce metrics are message-level and come only from
+    ``message_events`` through ``_message_event_counts``; every view (campaign,
+    step, workspace, deliverability) uses that one definition:
+
+    - sent            SENT messages
+    - bounced         distinct sent messages with a BOUNCED event
+    - delivered (est.) sent - bounced. No provider reports delivery, so this is
+                      "accepted and not reported undeliverable"
+    - opened          distinct delivered messages with an OPENED event
+    - bounce rate     bounced / sent
+    - open rate       opened / delivered (est.)
+    """
 
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def _message_event_counts(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID | None = None,
+        mailbox_id: UUID | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        by_step: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Bounce/open counts over SENT messages (one row, or one per step)."""
+        filters = ["m.workspace_id = :ws", "m.status = 'SENT'"]
+        params: dict[str, Any] = {"ws": str(workspace_id)}
+        if campaign_id:
+            filters.append("m.campaign_id = :cid")
+            params["cid"] = str(campaign_id)
+        if mailbox_id:
+            filters.append("m.mailbox_id = :mid")
+            params["mid"] = str(mailbox_id)
+        if start is not None and end is not None:
+            filters.append("m.accepted_at >= :start AND m.accepted_at <= :end")
+            params["start"] = start
+            params["end"] = end
+        group_col = "m.step_id AS step_id," if by_step else ""
+        group_by = "GROUP BY m.step_id" if by_step else ""
+        rows = (
+            self.session.execute(
+                text(
+                    f"""
+                    SELECT {group_col}
+                        COUNT(CASE WHEN b.id IS NOT NULL THEN 1 END) AS bounced,
+                        COUNT(CASE WHEN b.bounce_type = 'HARD' THEN 1 END) AS hard_bounced,
+                        COUNT(CASE WHEN b.bounce_type = 'SOFT' THEN 1 END) AS soft_bounced,
+                        COUNT(CASE WHEN b.id IS NULL AND o.id IS NOT NULL THEN 1 END) AS opened,
+                        COALESCE(SUM(CASE WHEN b.id IS NULL THEN o.occurrence_count END), 0)
+                            AS total_opens
+                    FROM public.messages m
+                    LEFT JOIN public.message_events b
+                      ON b.workspace_id = m.workspace_id AND b.message_id = m.id
+                     AND b.kind = 'BOUNCED'
+                    LEFT JOIN public.message_events o
+                      ON o.workspace_id = m.workspace_id AND o.message_id = m.id
+                     AND o.kind = 'OPENED'
+                    WHERE {" AND ".join(filters)}
+                    {group_by}
+                    """
+                ),
+                params,
+            )
+            .mappings()
+            .all()
+        )
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    def _tracking_supported() -> bool:
+        return open_tracking_ready(Settings.current())
 
     def get_campaign_analytics(
         self, workspace_id: UUID, campaign_id: UUID
@@ -122,7 +200,6 @@ class AnalyticsRepository:
                 text(
                     """
                 SELECT
-                    COUNT(DISTINCT CASE WHEN ro.kind = 'HARD_BOUNCE' THEN ro.enrollment_id END) AS bounced,
                     COUNT(DISTINCT CASE WHEN ro.kind = 'COMPLAINT' THEN ro.enrollment_id END) AS complained,
                     COUNT(DISTINCT CASE WHEN ro.kind = 'UNSUBSCRIBED' THEN ro.enrollment_id END) AS unsubscribed,
                     COUNT(DISTINCT CASE WHEN ro.kind = 'REPLIED' THEN ro.enrollment_id END) AS replied,
@@ -139,7 +216,12 @@ class AnalyticsRepository:
             .first()
         )
 
-        bounced = outcomes_row["bounced"] if outcomes_row else 0
+        events = self._message_event_counts(
+            workspace_id=workspace_id, campaign_id=campaign_id
+        )[0]
+        bounced = events["bounced"]
+        delivered_estimated = max(sent - bounced, 0)
+        opened = events["opened"]
         complained = outcomes_row["complained"] if outcomes_row else 0
         unsubscribed = outcomes_row["unsubscribed"] if outcomes_row else 0
         replied = outcomes_row["replied"] if outcomes_row else 0
@@ -148,7 +230,8 @@ class AnalyticsRepository:
         )
 
         # Rates (with division-by-zero protection)
-        bounce_rate = round((bounced / sent) * 100, 2) if sent > 0 else 0.0
+        bounce_rate = _pct(bounced, sent)
+        open_rate = _pct(opened, delivered_estimated)
         complaint_rate = round((complained / sent) * 100, 2) if sent > 0 else 0.0
         unsubscribe_rate = round((unsubscribed / sent) * 100, 2) if sent > 0 else 0.0
         reply_rate = round((replied / sent) * 100, 2) if sent > 0 else 0.0
@@ -169,6 +252,12 @@ class AnalyticsRepository:
             "skipped": skipped,
             "remaining": remaining,
             "bounced": bounced,
+            "hard_bounced": events["hard_bounced"],
+            "soft_bounced": events["soft_bounced"],
+            "delivered_estimated": delivered_estimated,
+            "opened": opened,
+            "total_opens": int(events["total_opens"] or 0),
+            "open_rate": open_rate,
             "complained": complained,
             "unsubscribed": unsubscribed,
             "replied": replied,
@@ -179,7 +268,7 @@ class AnalyticsRepository:
             "unsubscribe_rate": unsubscribe_rate,
             "reply_rate": reply_rate,
             "failure_rate": failure_rate,
-            "open_tracking_supported": False,
+            "open_tracking_supported": self._tracking_supported(),
             "click_tracking_supported": False,
             "delivery_confirmation_supported": False,
         }
@@ -257,7 +346,11 @@ class AnalyticsRepository:
                 FROM public.inbound_outreach_links l
                 JOIN public.messages m
                   ON m.workspace_id = l.workspace_id AND m.id = l.outbound_message_id
+                JOIN public.inbound_messages im
+                  ON im.workspace_id = l.workspace_id AND im.id = l.inbound_message_id
                 WHERE l.workspace_id = :ws AND l.campaign_id = :cid AND l.status = 'CONFIRMED'
+                  AND COALESCE(im.classification, 'HUMAN_REPLY') NOT IN
+                      ('OUT_OF_OFFICE', 'AUTOMATED', 'BOUNCE')
                   AND m.step_id IS NOT NULL
                 GROUP BY m.step_id
                 """
@@ -276,7 +369,6 @@ class AnalyticsRepository:
                     """
                 SELECT
                     m.step_id,
-                    COUNT(DISTINCT CASE WHEN ro.kind = 'HARD_BOUNCE' THEN ro.enrollment_id END) AS bounced,
                     COUNT(DISTINCT CASE WHEN ro.kind = 'UNSUBSCRIBED' THEN ro.enrollment_id END) AS unsubscribed
                 FROM public.recipient_outcomes ro
                 JOIN public.messages m
@@ -292,6 +384,13 @@ class AnalyticsRepository:
             .all()
         )
         outcomes_by_step = {str(r["step_id"]): r for r in outcomes_counts}
+        events_by_step = {
+            str(r["step_id"]): r
+            for r in self._message_event_counts(
+                workspace_id=workspace_id, campaign_id=campaign_id, by_step=True
+            )
+            if r["step_id"] is not None
+        }
 
         results: list[dict[str, Any]] = []
         for s in step_rows:
@@ -304,7 +403,9 @@ class AnalyticsRepository:
             failed = m_stat.get("failed", 0)
             cancelled = m_stat.get("cancelled", 0)
             replied = reply_by_step.get(s_id, 0)
-            bounced = o_stat.get("bounced", 0) if o_stat else 0
+            e_stat = events_by_step.get(s_id, {})
+            bounced = e_stat.get("bounced", 0)
+            opened = e_stat.get("opened", 0)
             unsubscribed = o_stat.get("unsubscribed", 0) if o_stat else 0
 
             reply_rate = round((replied / sent) * 100, 2) if sent > 0 else 0.0
@@ -320,8 +421,11 @@ class AnalyticsRepository:
                     "failed": failed,
                     "cancelled": cancelled,
                     "bounced": bounced,
+                    "opened": opened,
                     "replied": replied,
                     "unsubscribed": unsubscribed,
+                    "bounce_rate": _pct(bounced, sent),
+                    "open_rate": _pct(opened, max(sent - bounced, 0)),
                     "reply_rate": reply_rate,
                 }
             )
@@ -398,15 +502,22 @@ class AnalyticsRepository:
             outcome_joins += " JOIN public.campaign_enrollments e ON e.workspace_id = ro.workspace_id AND e.id = ro.enrollment_id"
             outcome_filters.append("e.campaign_id = :cid")
         if mailbox_id:
-            outcome_joins += " JOIN public.inbound_messages im ON im.workspace_id = ro.workspace_id AND im.id = ro.inbound_message_id"
-            outcome_filters.append("im.mailbox_id = :mid")
+            # Outcomes belong to an enrollment; a mailbox filter means "the
+            # enrollment was sent from that mailbox" (not "the outcome arrived
+            # through it", which excludes bounces that have no inbound message).
+            outcome_joins += (
+                " JOIN public.campaign_enrollments em ON em.workspace_id = ro.workspace_id"
+                " AND em.id = ro.enrollment_id"
+                " AND EXISTS (SELECT 1 FROM public.messages mm"
+                " WHERE mm.workspace_id = ro.workspace_id AND mm.enrollment_id = em.id"
+                " AND mm.mailbox_id = :mid)"
+            )
 
         outcome_where = " AND ".join(outcome_filters)
         outcome_query = text(
             f"""
             SELECT
                 COUNT(DISTINCT CASE WHEN ro.kind = 'REPLIED' THEN ro.enrollment_id END) AS replies,
-                COUNT(DISTINCT CASE WHEN ro.kind = 'HARD_BOUNCE' THEN ro.enrollment_id END) AS bounces,
                 COUNT(DISTINCT CASE WHEN ro.kind = 'UNSUBSCRIBED' THEN ro.enrollment_id END) AS unsubscribes,
                 COUNT(DISTINCT CASE WHEN ro.kind = 'COMPLAINT' THEN ro.enrollment_id END) AS complaints
             FROM public.recipient_outcomes ro
@@ -416,15 +527,23 @@ class AnalyticsRepository:
         )
         outcome_row = self.session.execute(outcome_query, params).mappings().first()
         replies = outcome_row["replies"] if outcome_row else 0
-        bounces = outcome_row["bounces"] if outcome_row else 0
+        window_events = self._message_event_counts(
+            workspace_id=workspace_id,
+            campaign_id=campaign_id,
+            mailbox_id=mailbox_id,
+            start=start_date,
+            end=end_date,
+        )[0]
+        bounces = window_events["bounced"]
+        opens = window_events["opened"]
+        delivered_estimated = max(emails_sent - bounces, 0)
         unsubscribes = outcome_row["unsubscribes"] if outcome_row else 0
         complaints = outcome_row["complaints"] if outcome_row else 0
 
         # Rates
         reply_rate = round((replies / emails_sent) * 100, 2) if emails_sent > 0 else 0.0
-        bounce_rate = (
-            round((bounces / emails_sent) * 100, 2) if emails_sent > 0 else 0.0
-        )
+        bounce_rate = _pct(bounces, emails_sent)
+        open_rate = _pct(opens, delivered_estimated)
         complaint_rate = (
             round((complaints / emails_sent) * 100, 2) if emails_sent > 0 else 0.0
         )
@@ -455,12 +574,23 @@ class AnalyticsRepository:
         )
         reply_dates = self.session.execute(reply_daily_query, params).scalars().all()
 
+        bounce_filters = [
+            "me.workspace_id = :ws",
+            "me.kind = 'BOUNCED'",
+            "me.first_occurred_at >= :start",
+            "me.first_occurred_at <= :end",
+        ]
+        if campaign_id:
+            bounce_filters.append("bm.campaign_id = :cid")
+        if mailbox_id:
+            bounce_filters.append("bm.mailbox_id = :mid")
         bounce_daily_query = text(
             f"""
-            SELECT ro.occurred_at
-            FROM public.recipient_outcomes ro
-            {outcome_joins}
-            WHERE {outcome_where} AND ro.kind = 'HARD_BOUNCE'
+            SELECT me.first_occurred_at
+            FROM public.message_events me
+            JOIN public.messages bm
+              ON bm.workspace_id = me.workspace_id AND bm.id = me.message_id
+            WHERE {" AND ".join(bounce_filters)}
             """
         )
         bounce_dates = self.session.execute(bounce_daily_query, params).scalars().all()
@@ -544,8 +674,7 @@ class AnalyticsRepository:
                     text(
                         """
                     SELECT
-                        COUNT(DISTINCT CASE WHEN ro.kind = 'REPLIED' THEN ro.enrollment_id END) AS replies,
-                        COUNT(DISTINCT CASE WHEN ro.kind = 'HARD_BOUNCE' THEN ro.enrollment_id END) AS bounces
+                        COUNT(DISTINCT CASE WHEN ro.kind = 'REPLIED' THEN ro.enrollment_id END) AS replies
                     FROM public.recipient_outcomes ro
                     JOIN public.campaign_enrollments e
                       ON e.workspace_id = ro.workspace_id AND e.id = ro.enrollment_id
@@ -564,7 +693,13 @@ class AnalyticsRepository:
                 .first()
             )
             c_rep = c_out["replies"] if c_out else 0
-            c_bnc = c_out["bounces"] if c_out else 0
+            c_ev = self._message_event_counts(
+                workspace_id=workspace_id,
+                campaign_id=UUID(cid),
+                start=start_date,
+                end=end_date,
+            )[0]
+            c_bnc = c_ev["bounced"]
             top_campaigns.append(
                 {
                     "campaign_id": UUID(cid),
@@ -576,9 +711,9 @@ class AnalyticsRepository:
                     if c_sent > 0
                     else 0.0,
                     "bounces": c_bnc,
-                    "bounce_rate": round((c_bnc / c_sent) * 100, 2)
-                    if c_sent > 0
-                    else 0.0,
+                    "bounce_rate": _pct(c_bnc, c_sent),
+                    "opens": c_ev["opened"],
+                    "open_rate": _pct(c_ev["opened"], max(c_sent - c_bnc, 0)),
                 }
             )
 
@@ -617,8 +752,7 @@ class AnalyticsRepository:
                     text(
                         """
                     SELECT
-                        COUNT(DISTINCT CASE WHEN ro.kind = 'REPLIED' THEN ro.enrollment_id END) AS replies,
-                        COUNT(DISTINCT CASE WHEN ro.kind = 'HARD_BOUNCE' THEN ro.enrollment_id END) AS bounces
+                        COUNT(DISTINCT CASE WHEN ro.kind = 'REPLIED' THEN ro.enrollment_id END) AS replies
                     FROM public.recipient_outcomes ro
                     JOIN public.messages m
                       ON m.workspace_id = ro.workspace_id AND m.enrollment_id = ro.enrollment_id
@@ -637,7 +771,13 @@ class AnalyticsRepository:
                 .first()
             )
             mb_rep = mb_out["replies"] if mb_out else 0
-            mb_bnc = mb_out["bounces"] if mb_out else 0
+            mb_ev = self._message_event_counts(
+                workspace_id=workspace_id,
+                mailbox_id=UUID(mbid),
+                start=start_date,
+                end=end_date,
+            )[0]
+            mb_bnc = mb_ev["bounced"]
             top_mailboxes.append(
                 {
                     "mailbox_id": UUID(mbid),
@@ -649,9 +789,9 @@ class AnalyticsRepository:
                     if mb_sent > 0
                     else 0.0,
                     "bounces": mb_bnc,
-                    "bounce_rate": round((mb_bnc / mb_sent) * 100, 2)
-                    if mb_sent > 0
-                    else 0.0,
+                    "bounce_rate": _pct(mb_bnc, mb_sent),
+                    "opens": mb_ev["opened"],
+                    "open_rate": _pct(mb_ev["opened"], max(mb_sent - mb_bnc, 0)),
                 }
             )
 
@@ -664,14 +804,17 @@ class AnalyticsRepository:
             "emails_sent": emails_sent,
             "replies": replies,
             "bounces": bounces,
+            "opens": opens,
+            "delivered_estimated": delivered_estimated,
             "unsubscribes": unsubscribes,
             "complaints": complaints,
             "failed_sends": failed_sends,
             "reply_rate": reply_rate,
             "bounce_rate": bounce_rate,
+            "open_rate": open_rate,
             "complaint_rate": complaint_rate,
             "unsubscribe_rate": unsubscribe_rate,
-            "open_tracking_supported": False,
+            "open_tracking_supported": self._tracking_supported(),
             "click_tracking_supported": False,
             "delivery_confirmation_supported": False,
             "trend": trend,
@@ -781,13 +924,12 @@ class AnalyticsRepository:
                 or 0
             )
 
-            # Bounces & complaints
+            # Bounces & complaints (bounces are message-level, see class docs)
             outcomes = (
                 self.session.execute(
                     text(
                         """
                     SELECT
-                        COUNT(DISTINCT CASE WHEN ro.kind = 'HARD_BOUNCE' THEN ro.enrollment_id END) AS bounces,
                         COUNT(DISTINCT CASE WHEN ro.kind = 'COMPLAINT' THEN ro.enrollment_id END) AS complaints
                     FROM public.recipient_outcomes ro
                     JOIN public.messages m
@@ -807,7 +949,12 @@ class AnalyticsRepository:
                 .first()
             )
 
-            bounce_count = outcomes["bounces"] if outcomes else 0
+            bounce_count = self._message_event_counts(
+                workspace_id=workspace_id,
+                mailbox_id=UUID(mid),
+                start=start_date,
+                end=end_date,
+            )[0]["bounced"]
             complaint_count = outcomes["complaints"] if outcomes else 0
 
             bounce_rate = (

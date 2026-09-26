@@ -227,9 +227,10 @@ class TestMicrosoftGraphReplySyncProvider:
 
 
 class TestSmtpProviderRejection:
-    def test_smtp_raises_unsupported_capability_for_reply_sync(self) -> None:
+    def test_smtp_without_imap_settings_cannot_sync_replies(self) -> None:
+        """SMTP alone can never receive mail: without IMAP settings the sync
+        refuses instead of pretending to work."""
         provider = SmtpProvider()
-        assert ProviderCapability.REPLY_SYNC not in provider.capabilities
 
         with pytest.raises(UnsupportedCapabilityError):
             provider.sync_inbound_messages(credential={}, cursor=None)

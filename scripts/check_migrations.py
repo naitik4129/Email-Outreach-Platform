@@ -173,7 +173,7 @@ def check():
                 if name==other_name and roles==other_roles and other_privileges[0]=='INSERT':
                     missing -= set(other_privileges)
             if missing: error(f'INSERT cannot supply required {name} columns {sorted(missing)} for {roles}')
-    if len(paths) < 6 or len(tables) != 63: error(f'expected at least 6 files / 63 tables, found {len(paths)} / {len(tables)}')
+    if len(paths) < 6 or len(tables) != 64: error(f'expected at least 6 files / 64 tables, found {len(paths)} / {len(tables)}')
     for warning in warnings: print('WARNING:',warning)
     for message in errors: print('ERROR:',message)
     print(f'{len(paths)} migrations; {len(tables)} tables; {len(fks)} FKs; {len(policies)} policies; {len(functions)} functions; {len(grants)} table grants')

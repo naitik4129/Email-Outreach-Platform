@@ -68,9 +68,26 @@ def test_gmail_send_success_normalizes_to_accepted() -> None:
     assert result.status == "ACCEPTED"
 
 
-def test_microsoft_send_success_normalizes_to_accepted() -> None:
+def _graph_handler(send_error: Exception | None = None):
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/me/messages"):
+            return httpx.Response(
+                201,
+                json={
+                    "id": "d-1",
+                    "conversationId": "c-1",
+                    "internetMessageId": "<g@o>",
+                },
+            )
+        if send_error is not None:
+            raise send_error
         return httpx.Response(202)
+
+    return handler
+
+
+def test_microsoft_send_success_normalizes_to_accepted() -> None:
+    handler = _graph_handler()
 
     provider, credential = _microsoft(handler)
     result = provider.send_message(credential, ENVELOPE)
@@ -202,8 +219,8 @@ def test_gmail_timeout_is_unknown_not_guessed() -> None:
 
 
 def test_microsoft_timeout_is_unknown_not_guessed() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("timeout")
+    # Only a timeout while SUBMITTING the draft is ambiguous.
+    handler = _graph_handler(send_error=httpx.ReadTimeout("timeout"))
 
     provider, credential = _microsoft(handler)
     result = provider.send_message(credential, ENVELOPE)

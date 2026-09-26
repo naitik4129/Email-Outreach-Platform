@@ -14,6 +14,8 @@ export type TopCampaignItem = {
   reply_rate: number;
   bounces: number;
   bounce_rate: number;
+  opens?: number;
+  open_rate?: number;
 };
 
 export type TopMailboxItem = {
@@ -25,6 +27,8 @@ export type TopMailboxItem = {
   reply_rate: number;
   bounces: number;
   bounce_rate: number;
+  opens?: number;
+  open_rate?: number;
 };
 
 export type WorkspaceOverviewAnalytics = {
@@ -36,11 +40,17 @@ export type WorkspaceOverviewAnalytics = {
   emails_sent: number;
   replies: number;
   bounces: number;
+  /** Distinct delivered emails opened at least once. */
+  opens?: number;
+  /** emails_sent - bounces (no provider delivery receipt exists). */
+  delivered_estimated?: number;
   unsubscribes: number;
   complaints: number;
   failed_sends: number;
   reply_rate: number;
   bounce_rate: number;
+  /** opens / delivered_estimated, in percent. */
+  open_rate?: number;
   complaint_rate: number;
   unsubscribe_rate: number;
   open_tracking_supported: boolean;
@@ -63,13 +73,24 @@ export type CampaignAnalytics = {
   cancelled: number;
   skipped: number;
   remaining: number;
+  /** Sent emails reported undeliverable (each email counted once). */
   bounced: number;
+  hard_bounced?: number;
+  soft_bounced?: number;
+  /** sent - bounced. No provider reports delivery, so this is an estimate. */
+  delivered_estimated?: number;
+  /** Distinct delivered emails opened at least once. */
+  opened?: number;
+  /** Every open event, including repeat opens of the same email. */
+  total_opens?: number;
   complained: number;
   unsubscribed: number;
   replied: number;
   unique_recipients_contacted: number;
   unique_recipients_replied: number;
   bounce_rate: number;
+  /** opened / delivered_estimated, in percent. */
+  open_rate?: number;
   complaint_rate: number;
   unsubscribe_rate: number;
   reply_rate: number;
@@ -89,8 +110,11 @@ export type SequenceStepAnalytics = {
   failed: number;
   cancelled: number;
   bounced: number;
+  opened?: number;
   replied: number;
   unsubscribed: number;
+  bounce_rate?: number;
+  open_rate?: number;
   reply_rate: number;
 };
 

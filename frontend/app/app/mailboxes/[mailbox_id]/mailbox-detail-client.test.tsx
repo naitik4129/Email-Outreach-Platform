@@ -217,4 +217,66 @@ describe("MailboxDetailClient", () => {
     expect(reconnectGmail).toHaveBeenCalledWith("ws-1", "mb-1");
     expect(reconnectMicrosoft).not.toHaveBeenCalled();
   });
+
+  describe("reply detection status", () => {
+    function open(overrides: Record<string, unknown>) {
+      useWorkspace.mockReturnValue({
+        activeWorkspaceId: "ws-1",
+        activeWorkspace: { role_code: "MANAGER" },
+      });
+      getMailbox.mockResolvedValue(baseMailbox(overrides));
+      renderWithClient(<MailboxDetailClient mailboxId="mb-1" />);
+    }
+
+    it("confirms when replies are being detected", async () => {
+      open({ reply_sync_status: "ENABLED" });
+      const card = await screen.findByTestId("reply-sync-status");
+      expect(card).toHaveTextContent(/replies to emails sent from this mailbox are detected/i);
+    });
+
+    it("tells the user to reconnect when the mailbox lacks read access", async () => {
+      open({ reply_sync_status: "RECONNECT_REQUIRED" });
+      const card = await screen.findByTestId("reply-sync-status");
+      expect(card).toHaveTextContent(/reconnect it to grant read access/i);
+      expect(card).toHaveTextContent(/follow-ups will not stop on a reply/i);
+    });
+
+    it("tells an SMTP user to add IMAP settings, and shows the IMAP host when saved", async () => {
+      open({
+        provider: "SMTP",
+        reply_sync_status: "IMAP_NOT_CONFIGURED",
+        smtp_config: {
+          host: "smtp.example.com",
+          port: 587,
+          security_mode: "STARTTLS",
+          username: "u",
+        },
+      });
+      const card = await screen.findByTestId("reply-sync-status");
+      expect(card).toHaveTextContent(/no IMAP settings are saved/i);
+      expect(await screen.findByText("Not configured")).toBeInTheDocument();
+    });
+
+    it("shows the saved IMAP server for an SMTP mailbox that can detect replies", async () => {
+      open({
+        provider: "SMTP",
+        reply_sync_status: "ENABLED",
+        smtp_config: {
+          host: "smtp.example.com",
+          port: 587,
+          security_mode: "STARTTLS",
+          username: "u",
+          imap_host: "imap.example.com",
+          imap_port: 993,
+        },
+      });
+      expect(await screen.findByText("imap.example.com:993")).toBeInTheDocument();
+    });
+
+    it("shows nothing for providers without reply detection", async () => {
+      open({ reply_sync_status: "UNSUPPORTED" });
+      await screen.findByText("sender@example.com");
+      expect(screen.queryByTestId("reply-sync-status")).not.toBeInTheDocument();
+    });
+  });
 });

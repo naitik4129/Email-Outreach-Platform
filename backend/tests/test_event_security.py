@@ -126,16 +126,47 @@ class TestEventSecurityAndValidation:
         }
         raw_body = json.dumps(body_dict).encode("utf-8")
 
-        with patch.object(
-            EventRepository,
-            "resolve_mailbox_by_email_or_account",
-            return_value=None,
+        secret = "unmapped-test-secret"
+        signature = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        with (
+            patch("app.api.v1.webhooks.Settings.current") as mock_settings,
+            patch.object(
+                EventRepository,
+                "resolve_mailbox_by_email_or_account",
+                return_value=None,
+            ),
         ):
-            # No secret configured, so signature check passes, but mailbox resolution fails
+            mock_settings.return_value = MagicMock(event_webhook_secret=secret)
+            # Correctly signed, so authentication passes, but mailbox resolution fails
             response = client.post(
                 "/api/v1/webhooks/events",
                 content=raw_body,
-                headers={"content-type": "application/json"},
+                headers={
+                    "content-type": "application/json",
+                    "x-webhook-signature": f"sha256={signature}",
+                },
             )
             assert response.status_code == 404
             assert "Mailbox could not be resolved" in response.text
+
+    @pytest.mark.parametrize(
+        ("path", "secret_attr"),
+        [
+            ("/api/v1/webhooks/events", "event_webhook_secret"),
+            ("/api/v1/webhooks/gmail", "gmail_webhook_secret"),
+            ("/api/v1/webhooks/microsoft", "microsoft_webhook_client_state"),
+        ],
+    )
+    def test_webhook_is_disabled_until_a_secret_is_configured(
+        self, client: TestClient, path: str, secret_attr: str
+    ) -> None:
+        """An unconfigured shared secret must close the endpoint (503), never
+        leave it accepting unauthenticated events."""
+        with patch("app.api.v1.webhooks.Settings.current") as mock_settings:
+            mock_settings.return_value = MagicMock(**{secret_attr: ""})
+            response = client.post(
+                path,
+                content=b"{}",
+                headers={"content-type": "application/json"},
+            )
+        assert response.status_code == 503

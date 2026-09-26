@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.modules.replies.dsn import DeliveryReport
+
 
 class ReplyEvidenceType(StrEnum):
     RFC_HEADER_MATCH = "RFC_HEADER_MATCH"
@@ -25,6 +27,8 @@ class InboundClassification(StrEnum):
     HUMAN_REPLY = "HUMAN_REPLY"
     OUT_OF_OFFICE = "OUT_OF_OFFICE"
     AUTOMATED = "AUTOMATED"
+    # A delivery-status notification: bounce evidence, never a reply.
+    BOUNCE = "BOUNCE"
     UNRESOLVED = "UNRESOLVED"
 
 
@@ -50,6 +54,7 @@ class NormalizedInboundMessage:
     headers: dict[str, str] = field(default_factory=dict)
     is_automated: bool = False
     classification: str = InboundClassification.HUMAN_REPLY.value
+    delivery_report: DeliveryReport | None = None
 
 
 class SyncCheckpoint(BaseModel):

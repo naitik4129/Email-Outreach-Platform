@@ -77,6 +77,28 @@ def _safe_parse_json(val: Any) -> dict[str, Any]:
     return {}
 
 
+def _address(entry: Any) -> str:
+    """Address of a stored participant. The reply pipeline stores
+    {"address": ..., "name": ...}; older fixtures used "email"."""
+    if isinstance(entry, dict):
+        return str(entry.get("address") or entry.get("email") or "")
+    if isinstance(entry, str):
+        return entry
+    return ""
+
+
+# The campaign of a conversation is never written to conversations, so it is
+# derived from the confirmed outreach links of its inbound messages.
+_CONVERSATION_CAMPAIGN = (
+    "COALESCE(c.campaign_summary_id, ("
+    "SELECT l.campaign_id FROM public.inbound_outreach_links l "
+    "JOIN public.inbound_messages lim "
+    "ON lim.workspace_id = l.workspace_id AND lim.id = l.inbound_message_id "
+    "WHERE l.workspace_id = c.workspace_id AND lim.conversation_id = c.id "
+    "AND l.status = 'CONFIRMED' ORDER BY l.matched_at DESC LIMIT 1))"
+)
+
+
 class InboxRepository:
     """Repository for workspace-isolated unified inbox queries and conversation operations."""
 
@@ -151,7 +173,7 @@ class InboxRepository:
 
         # Campaign filter
         if campaign_id is not None:
-            where_clauses.append("c.campaign_summary_id = :campid")
+            where_clauses.append(f"{_CONVERSATION_CAMPAIGN} = :campid")
             params["campid"] = str(campaign_id)
 
         # Search query
@@ -159,14 +181,14 @@ class InboxRepository:
             sq = f"%{search_query.strip()}%"
             params["sq"] = sq
             where_clauses.append(
-                """
+                f"""
                 (
                     EXISTS (
                         SELECT 1 FROM public.inbound_messages im_s
                         WHERE im_s.workspace_id = c.workspace_id AND im_s.conversation_id = c.id
                           AND (
                               im_s.subject LIKE :sq
-                              OR im_s.participants LIKE :sq
+                              OR CAST(im_s.participants AS TEXT) LIKE :sq
                               OR im_s.content_text LIKE :sq
                           )
                     )
@@ -180,7 +202,7 @@ class InboxRepository:
                     )
                     OR EXISTS (
                         SELECT 1 FROM public.campaigns camp_s
-                        WHERE camp_s.workspace_id = c.workspace_id AND camp_s.id = c.campaign_summary_id
+                        WHERE camp_s.workspace_id = c.workspace_id AND camp_s.id = {_CONVERSATION_CAMPAIGN}
                           AND camp_s.name LIKE :sq
                     )
                 )
@@ -200,13 +222,14 @@ class InboxRepository:
         params["fetch_limit"] = limit + 1
 
         sql = f"""
-            SELECT c.id, c.workspace_id, c.mailbox_id, c.campaign_summary_id,
+            SELECT c.id, c.workspace_id, c.mailbox_id,
+                   {_CONVERSATION_CAMPAIGN} AS campaign_summary_id,
                    c.created_at, c.latest_activity_at, c.archived_at, c.read_at,
                    mb.original_address AS mailbox_address, mb.provider AS mailbox_provider,
                    camp.name AS campaign_name
             FROM public.conversations c
             LEFT JOIN public.mailboxes mb ON mb.workspace_id = c.workspace_id AND mb.id = c.mailbox_id
-            LEFT JOIN public.campaigns camp ON camp.workspace_id = c.workspace_id AND camp.id = c.campaign_summary_id
+            LEFT JOIN public.campaigns camp ON camp.workspace_id = c.workspace_id AND camp.id = {_CONVERSATION_CAMPAIGN}
             WHERE {where_sql}
             ORDER BY c.latest_activity_at DESC, c.id DESC
             LIMIT :fetch_limit
@@ -359,11 +382,9 @@ class InboxRepository:
         if inbound_row:
             parts = _safe_parse_json(inbound_row["participants"])
             from_info = parts.get("from", {})
+            participant_email = _address(from_info)
             if isinstance(from_info, dict):
-                participant_email = from_info.get("email", "")
                 participant_name = from_info.get("name")
-            elif isinstance(from_info, str):
-                participant_email = from_info
 
             subject = inbound_row["subject"] or "No Subject"
             text_val = inbound_row["content_text"] or ""
@@ -390,14 +411,15 @@ class InboxRepository:
         _safe_set_workspace(self.session, workspace_id)
 
         conv_sql = text(
-            """
-            SELECT c.id, c.workspace_id, c.mailbox_id, c.campaign_summary_id,
+            f"""
+            SELECT c.id, c.workspace_id, c.mailbox_id,
+                   {_CONVERSATION_CAMPAIGN} AS campaign_summary_id,
                    c.created_at, c.latest_activity_at, c.archived_at, c.read_at,
                    mb.original_address AS mailbox_address, mb.provider AS mailbox_provider,
                    camp.name AS campaign_name
             FROM public.conversations c
             LEFT JOIN public.mailboxes mb ON mb.workspace_id = c.workspace_id AND mb.id = c.mailbox_id
-            LEFT JOIN public.campaigns camp ON camp.workspace_id = c.workspace_id AND camp.id = c.campaign_summary_id
+            LEFT JOIN public.campaigns camp ON camp.workspace_id = c.workspace_id AND camp.id = {_CONVERSATION_CAMPAIGN}
             WHERE c.workspace_id = :ws AND c.id = :cid
             """
         )
@@ -442,12 +464,21 @@ class InboxRepository:
         # Inbound messages
         inbound_sql = text(
             """
-            SELECT id, mailbox_id, conversation_id, rfc_message_id, participants,
-                   subject, content_text, received_at, direction, association_status,
-                   classification
-            FROM public.inbound_messages
-            WHERE workspace_id = :ws AND conversation_id = :cid
-            ORDER BY received_at ASC, id ASC
+            SELECT im.id, im.mailbox_id, im.conversation_id, im.rfc_message_id,
+                   im.participants, im.subject, im.content_text, im.received_at,
+                   im.direction, im.association_status, im.classification,
+                   (SELECT st.position
+                      FROM public.inbound_outreach_links l
+                      JOIN public.messages om
+                        ON om.workspace_id = l.workspace_id AND om.id = l.outbound_message_id
+                      JOIN public.sequence_steps st
+                        ON st.workspace_id = om.workspace_id AND st.id = om.step_id
+                     WHERE l.workspace_id = im.workspace_id AND l.inbound_message_id = im.id
+                       AND l.status = 'CONFIRMED'
+                     LIMIT 1) AS step_position
+            FROM public.inbound_messages im
+            WHERE im.workspace_id = :ws AND im.conversation_id = :cid
+            ORDER BY im.received_at ASC, im.id ASC
             """
         )
         inbound_rows = self.session.execute(
@@ -459,7 +490,10 @@ class InboxRepository:
             """
             SELECT id, mailbox_id, campaign_id, enrollment_id, sequence_id, step_id,
                    rfc_message_id, content_subject, content_body_html, frozen_destination,
-                   frozen_sender_address, frozen_sender_name, status, accepted_at, created_at
+                   frozen_sender_address, frozen_sender_name, status, accepted_at, created_at,
+                   (SELECT st.position FROM public.sequence_steps st
+                     WHERE st.workspace_id = messages.workspace_id
+                       AND st.id = messages.step_id) AS step_position
             FROM public.messages
             WHERE workspace_id = :ws
               AND (
@@ -488,13 +522,10 @@ class InboxRepository:
         for im in inbound_rows:
             parts = _safe_parse_json(im["participants"])
             from_info = parts.get("from", {})
-            sender_email = ""
             sender_name = None
+            sender_email = _address(from_info)
             if isinstance(from_info, dict):
-                sender_email = str(from_info.get("email", ""))
                 sender_name = from_info.get("name")
-            elif isinstance(from_info, str):
-                sender_email = from_info
 
             if not participant_email:
                 participant_email = sender_email
@@ -505,11 +536,9 @@ class InboxRepository:
             recipient_name = None
             if isinstance(to_list, list) and to_list:
                 first_to = to_list[0]
+                recipient_email = _address(first_to)
                 if isinstance(first_to, dict):
-                    recipient_email = str(first_to.get("email", ""))
                     recipient_name = first_to.get("name")
-                elif isinstance(first_to, str):
-                    recipient_email = first_to
 
             ts = im["received_at"]
             if isinstance(ts, str):
@@ -531,6 +560,7 @@ class InboxRepository:
                     content_text=im["content_text"],
                     content_html=None,
                     timestamp=ts,
+                    sequence_step_position=im["step_position"],
                     association_status=im["association_status"],
                     classification=im["classification"],
                 )
@@ -565,6 +595,7 @@ class InboxRepository:
                     timestamp=ts,
                     status=om["status"],
                     sequence_step_id=UUID(str(om["step_id"])) if om["step_id"] else None,
+                    sequence_step_position=om["step_position"],
                 )
             )
 
@@ -575,6 +606,24 @@ class InboxRepository:
         subject = "No Subject"
         if messages:
             subject = messages[-1].subject or "No Subject"
+
+        lead_row = self.session.execute(
+            text(
+                """
+                SELECT e.lead_id
+                FROM public.inbound_outreach_links l
+                JOIN public.inbound_messages lim
+                  ON lim.workspace_id = l.workspace_id AND lim.id = l.inbound_message_id
+                JOIN public.campaign_enrollments e
+                  ON e.workspace_id = l.workspace_id AND e.id = l.enrollment_id
+                WHERE l.workspace_id = :ws AND lim.conversation_id = :cid
+                  AND l.status = 'CONFIRMED' AND e.lead_id IS NOT NULL
+                ORDER BY l.matched_at DESC
+                LIMIT 1
+                """
+            ),
+            {"ws": str(workspace_id), "cid": str(conversation_id)},
+        ).first()
 
         return ConversationDetail(
             id=UUID(str(row["id"])),
@@ -593,6 +642,7 @@ class InboxRepository:
             reply_status=reply_status,
             participant_email=participant_email,
             participant_name=participant_name,
+            lead_id=UUID(str(lead_row[0])) if lead_row and lead_row[0] else None,
             messages=messages,
         )
 

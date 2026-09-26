@@ -337,7 +337,18 @@ export type SmtpConfigView = {
   port: number;
   security_mode: SmtpSecurityMode;
   username: string;
+  // Reply detection reads the mailbox over IMAP; all null when not configured.
+  imap_host?: string | null;
+  imap_port?: number | null;
+  imap_security_mode?: SmtpSecurityMode | null;
+  imap_username?: string | null;
 };
+
+export type ReplySyncStatus =
+  | "ENABLED"
+  | "RECONNECT_REQUIRED"
+  | "IMAP_NOT_CONFIGURED"
+  | "UNSUPPORTED";
 
 export type MailboxDetail = {
   id: string;
@@ -359,6 +370,7 @@ export type MailboxDetail = {
   created_at: string;
   updated_at: string;
   smtp_config?: SmtpConfigView | null;
+  reply_sync_status?: ReplySyncStatus;
 };
 
 export type GmailConnectStartResult = {
@@ -395,6 +407,11 @@ export type SmtpConnectInput = {
   password: string;
   email_address: string;
   sender_display_name?: string | null;
+  imap_host?: string;
+  imap_port?: number;
+  imap_security_mode?: SmtpSecurityMode;
+  imap_username?: string;
+  imap_password?: string;
 };
 
 export type SmtpConnectResult = {
@@ -413,6 +430,11 @@ export type SmtpUpdateInput = {
   // Omit entirely to keep the existing password.
   password?: string;
   sender_display_name?: string | null;
+  imap_host?: string;
+  imap_port?: number;
+  imap_security_mode?: SmtpSecurityMode;
+  imap_username?: string;
+  imap_password?: string;
 };
 
 export type MailboxTestSendResult = {
@@ -749,6 +771,8 @@ export type MessageThreadItem = {
   timestamp: string;
   status: string | null;
   sequence_step_id: string | null;
+  /** 1-based step of the email (for a reply: the email that was replied to). */
+  sequence_step_position?: number | null;
   association_status: string | null;
   classification: string | null;
 };

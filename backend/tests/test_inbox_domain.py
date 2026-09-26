@@ -29,6 +29,28 @@ def db_session() -> Session:
     session.execute(
         text(
             """
+        CREATE TABLE public.sequence_steps (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            position INTEGER NOT NULL
+        );
+        """
+        )
+    )
+    session.execute(
+        text(
+            """
+        CREATE TABLE public.campaign_enrollments (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            lead_id TEXT
+        );
+        """
+        )
+    )
+    session.execute(
+        text(
+            """
         CREATE TABLE public.conversations (
             id TEXT PRIMARY KEY,
             workspace_id TEXT NOT NULL,

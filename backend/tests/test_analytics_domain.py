@@ -175,7 +175,28 @@ def analytics_db() -> Session:
         CREATE TABLE public.inbound_messages (
             id TEXT PRIMARY KEY,
             workspace_id TEXT NOT NULL,
-            mailbox_id TEXT NOT NULL
+            mailbox_id TEXT NOT NULL,
+            classification TEXT
+        );
+        """
+        )
+    )
+    session.execute(
+        text(
+            """
+        CREATE TABLE public.message_events (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            bounce_type TEXT,
+            bounce_code TEXT,
+            source TEXT NOT NULL DEFAULT 'TEST',
+            detail TEXT,
+            first_occurred_at TIMESTAMP NOT NULL,
+            last_occurred_at TIMESTAMP NOT NULL,
+            occurrence_count INTEGER NOT NULL DEFAULT 1,
+            UNIQUE (workspace_id, message_id, kind)
         );
         """
         )
@@ -276,22 +297,33 @@ def test_campaign_analytics_metric_calculations(analytics_db: Session) -> None:
         },
     )
 
-    # Seed outcomes: 1 reply on enr_1, 1 bounce on enr_2
+    # Seed outcomes: 1 reply on enr_1
     analytics_db.execute(
         text(
             """
             INSERT INTO public.recipient_outcomes (id, workspace_id, enrollment_id, kind, source_key, occurred_at)
+            VALUES (:o1, :ws, :e1, 'REPLIED', 'rep-1', :now)
+            """
+        ),
+        {"o1": str(uuid.uuid4()), "ws": str(ws_id), "e1": str(enr_1), "now": now},
+    )
+    # Message-level events: msg_2 bounced (hard), msg_1 was opened 5 times
+    analytics_db.execute(
+        text(
+            """
+            INSERT INTO public.message_events
+                (id, workspace_id, message_id, kind, bounce_type, first_occurred_at, last_occurred_at, occurrence_count)
             VALUES
-                (:o1, :ws, :e1, 'REPLIED', 'rep-1', :now),
-                (:o2, :ws, :e2, 'HARD_BOUNCE', 'bnc-1', :now)
+                (:x1, :ws, :m2, 'BOUNCED', 'HARD', :now, :now, 1),
+                (:x2, :ws, :m1, 'OPENED', NULL, :now, :now, 5)
             """
         ),
         {
-            "o1": str(uuid.uuid4()),
-            "o2": str(uuid.uuid4()),
+            "x1": str(uuid.uuid4()),
+            "x2": str(uuid.uuid4()),
             "ws": str(ws_id),
-            "e1": str(enr_1),
-            "e2": str(enr_2),
+            "m1": str(msg_1),
+            "m2": str(msg_2),
             "now": now,
         },
     )
@@ -306,9 +338,15 @@ def test_campaign_analytics_metric_calculations(analytics_db: Session) -> None:
     assert stats["failed"] == 1
     assert stats["bounced"] == 1
     assert stats["replied"] == 1
-    assert stats["bounce_rate"] == 50.0  # 1 / 2 = 50%
+    assert stats["bounce_rate"] == 50.0  # 1 bounced / 2 sent
+    assert stats["hard_bounced"] == 1 and stats["soft_bounced"] == 0
+    assert stats["delivered_estimated"] == 1  # sent - bounced
+    # Five opens of one email are ONE opened email: 1 opened / 1 delivered.
+    assert stats["opened"] == 1
+    assert stats["total_opens"] == 5
+    assert stats["open_rate"] == 100.0
     assert stats["reply_rate"] == 50.0  # 1 / 2 = 50%
-    assert stats["open_tracking_supported"] is False
+    assert stats["open_tracking_supported"] is False  # not configured in tests
 
 
 def test_retry_isolation_does_not_inflate_sent_count(analytics_db: Session) -> None:
@@ -438,12 +476,13 @@ def test_duplicate_events_do_not_inflate_outcome_counts(
     )
 
     now = datetime.now(UTC)
+    msg_id = uuid.uuid4()
     analytics_db.execute(
         text(
             "INSERT INTO public.messages (id, workspace_id, campaign_id, enrollment_id, mailbox_id, address_id, status, accepted_at) VALUES (:m, :ws, :cid, :e, :mb, :a, 'SENT', :now)"
         ),
         {
-            "m": str(uuid.uuid4()),
+            "m": str(msg_id),
             "ws": str(ws_id),
             "cid": str(camp_id),
             "e": str(enr_id),
@@ -453,32 +492,27 @@ def test_duplicate_events_do_not_inflate_outcome_counts(
         },
     )
 
-    # 3 duplicate bounce rows for same enrollment
+    # The same bounce notified 3 times: the database keeps ONE row per message
+    # (unique key) and only counts the repeats.
     analytics_db.execute(
         text(
             """
-            INSERT INTO public.recipient_outcomes (id, workspace_id, enrollment_id, kind, source_key, occurred_at)
-            VALUES
-                (:o1, :ws, :e, 'HARD_BOUNCE', 'b1', :now),
-                (:o2, :ws, :e, 'HARD_BOUNCE', 'b2', :now),
-                (:o3, :ws, :e, 'HARD_BOUNCE', 'b3', :now)
+            INSERT INTO public.message_events
+                (id, workspace_id, message_id, kind, bounce_type, first_occurred_at, last_occurred_at, occurrence_count)
+            VALUES (:x, :ws, :m, 'BOUNCED', 'HARD', :now, :now, 3)
             """
         ),
-        {
-            "o1": str(uuid.uuid4()),
-            "o2": str(uuid.uuid4()),
-            "o3": str(uuid.uuid4()),
-            "ws": str(ws_id),
-            "e": str(enr_id),
-            "now": now,
-        },
+        {"x": str(uuid.uuid4()), "ws": str(ws_id), "m": str(msg_id), "now": now},
     )
     analytics_db.commit()
 
     stats = repo.get_campaign_analytics(ws_id, camp_id)
     assert stats is not None
-    # Deduplicated by recipient enrollment: exactly 1 bounced recipient
+    # Bounced counts emails, not notifications: exactly 1
     assert stats["bounced"] == 1
+    assert stats["bounce_rate"] == 100.0
+    assert stats["delivered_estimated"] == 0
+    assert stats["open_rate"] == 0.0
 
 
 def test_unique_recipients_contacted(analytics_db: Session) -> None:
@@ -725,13 +759,12 @@ def test_deliverability_overview_and_warnings(analytics_db: Session) -> None:
         if i < 3:
             analytics_db.execute(
                 text(
-                    "INSERT INTO public.recipient_outcomes (id, workspace_id, enrollment_id, kind, source_key, occurred_at) VALUES (:o, :ws, :e, 'HARD_BOUNCE', :sk, :now)"
+                    "INSERT INTO public.message_events (id, workspace_id, message_id, kind, bounce_type, first_occurred_at, last_occurred_at) VALUES (:o, :ws, :m, 'BOUNCED', 'HARD', :now, :now)"
                 ),
                 {
                     "o": str(uuid.uuid4()),
                     "ws": str(ws_id),
-                    "e": str(e_id),
-                    "sk": f"b-{i}",
+                    "m": str(m_id),
                     "now": now,
                 },
             )

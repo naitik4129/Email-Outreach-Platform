@@ -167,6 +167,19 @@ def record_event_received(provider: str, event_type: str | None = None) -> None:
     )
 
 
+def record_open_tracking(result: str) -> None:
+    """result: recorded | rejected | not_found | error."""
+    metrics.increment("open_tracking_requests_total", result=result)
+
+
+def record_bounce_recorded(source: str, bounce_type: str) -> None:
+    metrics.increment(
+        "message_bounces_recorded_total",
+        source=source.upper(),
+        bounce_type=bounce_type.upper(),
+    )
+
+
 def record_event_verified(provider: str) -> None:
     metrics.increment(
         "inbound_events_verified_total",

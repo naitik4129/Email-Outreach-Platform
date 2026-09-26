@@ -37,6 +37,8 @@ class TopCampaignItem(BaseModel):
     reply_rate: float = Field(ge=0.0, le=100.0)
     bounces: int = Field(ge=0)
     bounce_rate: float = Field(ge=0.0, le=100.0)
+    opens: int = Field(default=0, ge=0)
+    open_rate: float = Field(default=0.0, ge=0.0, le=100.0)
 
 
 class TopMailboxItem(BaseModel):
@@ -50,6 +52,8 @@ class TopMailboxItem(BaseModel):
     reply_rate: float = Field(ge=0.0, le=100.0)
     bounces: int = Field(ge=0)
     bounce_rate: float = Field(ge=0.0, le=100.0)
+    opens: int = Field(default=0, ge=0)
+    open_rate: float = Field(default=0.0, ge=0.0, le=100.0)
 
 
 class WorkspaceOverviewAnalytics(BaseModel):
@@ -64,12 +68,25 @@ class WorkspaceOverviewAnalytics(BaseModel):
     )
     emails_sent: int = Field(ge=0, description="Total outbound messages accepted")
     replies: int = Field(ge=0, description="Total authoritative replies received")
-    bounces: int = Field(ge=0, description="Total authoritative hard bounces")
+    bounces: int = Field(
+        ge=0, description="Sent emails (in the window) reported undeliverable"
+    )
+    opens: int = Field(
+        default=0, ge=0, description="Distinct delivered emails opened at least once"
+    )
+    delivered_estimated: int = Field(
+        default=0,
+        ge=0,
+        description="emails_sent - bounces (no provider delivery receipt)",
+    )
     unsubscribes: int = Field(ge=0, description="Total unsubscribes recorded")
     complaints: int = Field(ge=0, description="Total complaints recorded")
     failed_sends: int = Field(ge=0, description="Total outbound messages marked FAILED")
     reply_rate: float = Field(ge=0.0, le=100.0, description="replies / emails_sent %")
     bounce_rate: float = Field(ge=0.0, le=100.0, description="bounces / emails_sent %")
+    open_rate: float = Field(
+        default=0.0, ge=0.0, le=100.0, description="opens / delivered_estimated %"
+    )
     complaint_rate: float = Field(
         ge=0.0, le=100.0, description="complaints / emails_sent %"
     )
@@ -106,7 +123,16 @@ class CampaignAnalytics(BaseModel):
     cancelled: int = Field(ge=0, description="Messages cancelled")
     skipped: int = Field(ge=0, description="Messages skipped")
     remaining: int = Field(ge=0, description="Messages pending future execution")
-    bounced: int = Field(ge=0, description="Recipients with hard bounce recorded")
+    bounced: int = Field(ge=0, description="Sent emails reported undeliverable")
+    hard_bounced: int = Field(default=0, ge=0, description="Permanent failures")
+    soft_bounced: int = Field(default=0, ge=0, description="Temporary failures")
+    delivered_estimated: int = Field(
+        default=0, ge=0, description="sent - bounced (no provider delivery receipt)"
+    )
+    opened: int = Field(
+        default=0, ge=0, description="Distinct delivered emails opened at least once"
+    )
+    total_opens: int = Field(default=0, ge=0, description="All open events")
     complained: int = Field(ge=0, description="Recipients with complaint recorded")
     unsubscribed: int = Field(ge=0, description="Recipients with unsubscribe recorded")
     replied: int = Field(ge=0, description="Recipients with reply recorded")
@@ -117,6 +143,9 @@ class CampaignAnalytics(BaseModel):
         ge=0, description="Distinct recipients who replied"
     )
     bounce_rate: float = Field(ge=0.0, le=100.0, description="bounced / sent %")
+    open_rate: float = Field(
+        default=0.0, ge=0.0, le=100.0, description="opened / delivered_estimated %"
+    )
     complaint_rate: float = Field(ge=0.0, le=100.0, description="complained / sent %")
     unsubscribe_rate: float = Field(
         ge=0.0, le=100.0, description="unsubscribed / sent %"
@@ -142,10 +171,13 @@ class SequenceStepAnalytics(BaseModel):
     failed: int = Field(ge=0)
     cancelled: int = Field(ge=0)
     bounced: int = Field(ge=0)
+    opened: int = Field(default=0, ge=0)
     replied: int = Field(
-        ge=0, description="Replies attributed specifically to this step"
+        ge=0, description="Genuine replies attributed specifically to this step"
     )
     unsubscribed: int = Field(ge=0)
+    bounce_rate: float = Field(default=0.0, ge=0.0, le=100.0)
+    open_rate: float = Field(default=0.0, ge=0.0, le=100.0)
     reply_rate: float = Field(ge=0.0, le=100.0)
 
 

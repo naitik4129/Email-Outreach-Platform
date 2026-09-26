@@ -67,10 +67,16 @@ def _credential(**overrides: object) -> dict:
 # -- Capability guards ------------------------------------------------------
 
 
-def test_capabilities_only_connection_validation_and_send() -> None:
+def test_capabilities_are_validation_send_and_imap_backed_reply_sync() -> None:
     provider = SmtpProvider()
+    # REPLY_SYNC is only usable for mailboxes with IMAP settings; without them
+    # sync_inbound_messages refuses (see test_reply_provider_sync).
     assert provider.capabilities == frozenset(
-        {ProviderCapability.CONNECTION_VALIDATION, ProviderCapability.SEND}
+        {
+            ProviderCapability.CONNECTION_VALIDATION,
+            ProviderCapability.SEND,
+            ProviderCapability.REPLY_SYNC,
+        }
     )
 
 

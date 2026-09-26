@@ -574,8 +574,11 @@ class TestGraphPayload:
         def handler(request: httpx.Request) -> httpx.Response:
             import json
 
-            captured["body"] = json.loads(request.content)
-            return httpx.Response(202)
+            if request.url.path.endswith("/send"):
+                return httpx.Response(202)
+            # The draft creation call carries the message itself.
+            captured["body"] = {"message": json.loads(request.content)}
+            return httpx.Response(201, json={"id": "d-1"})
 
         provider = MicrosoftGraphProvider()
         provider._get_client = lambda: httpx.Client(  # type: ignore[method-assign]
@@ -608,8 +611,10 @@ class TestGraphPayload:
         def handler(request: httpx.Request) -> httpx.Response:
             import json
 
-            captured["body"] = json.loads(request.content)
-            return httpx.Response(202)
+            if request.url.path.endswith("/send"):
+                return httpx.Response(202)
+            captured["body"] = {"message": json.loads(request.content)}
+            return httpx.Response(201, json={"id": "d-1"})
 
         provider = MicrosoftGraphProvider()
         provider._get_client = lambda: httpx.Client(  # type: ignore[method-assign]

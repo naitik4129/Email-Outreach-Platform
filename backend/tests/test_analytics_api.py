@@ -174,7 +174,28 @@ def api_setup():
         CREATE TABLE public.inbound_messages (
             id TEXT PRIMARY KEY,
             workspace_id TEXT NOT NULL,
-            mailbox_id TEXT NOT NULL
+            mailbox_id TEXT NOT NULL,
+            classification TEXT
+        );
+        """
+        )
+    )
+    session.execute(
+        text(
+            """
+        CREATE TABLE public.message_events (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            bounce_type TEXT,
+            bounce_code TEXT,
+            source TEXT NOT NULL DEFAULT 'TEST',
+            detail TEXT,
+            first_occurred_at TIMESTAMP NOT NULL,
+            last_occurred_at TIMESTAMP NOT NULL,
+            occurrence_count INTEGER NOT NULL DEFAULT 1,
+            UNIQUE (workspace_id, message_id, kind)
         );
         """
         )

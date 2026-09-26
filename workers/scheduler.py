@@ -127,6 +127,18 @@ class SchedulerRuntime:
 
         # 8. Discover and enqueue due mailbox reply syncs (Phase 13)
         if self.settings.reply_sync_enabled:
+            # Nothing is ever dispatched for a mailbox without a sync state, so
+            # make sure every connected mailbox has one (idempotent).
+            try:
+                with session_scope(self.settings) as session:
+                    from app.modules.replies.service import ReplySyncService
+
+                    created = ReplySyncService(session).ensure_sync_states()
+                    if created > 0:
+                        logger.info("Scheduler ensured %d mailbox sync states", created)
+            except Exception:
+                logger.exception("Error ensuring mailbox sync states")
+
             try:
                 with session_scope(self.settings) as session:
                     from datetime import UTC, datetime

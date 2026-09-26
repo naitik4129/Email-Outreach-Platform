@@ -38,8 +38,11 @@ def test_get_authorization_url_uses_common_authority_and_scopes() -> None:
     assert "code_challenge_method=S256" in url
     assert "offline_access" in url
     assert "Mail.Send" in url
-    # Least privilege: never request broad mail/contacts/calendar scopes.
-    assert "Mail.Read" not in url
+    # Reading the Inbox (reply sync) and creating the draft used to learn the
+    # Message-ID both need Mail.ReadWrite; nothing broader is requested.
+    assert "Mail.ReadWrite" in url
+    assert "Mail.ReadWrite.All" not in url
+    assert "Mail.Read.All" not in url
     assert "Contacts" not in url
     assert "Calendars" not in url
 
@@ -129,14 +132,34 @@ def test_get_identity_falls_back_to_user_principal_name_when_mail_is_null() -> N
     assert identity.email_address == "personal@outlook.com"
 
 
-def test_send_message_202_empty_body_is_accepted_with_no_message_id() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["Authorization"] == "Bearer fake-token"
-        body = request.content
-        assert b"sendMail" not in body  # sanity: body is JSON, not a URL echo
-        return httpx.Response(202)
+def _graph_send_handler(send_status: int = 202, send_error: Exception | None = None):
+    """Graph two-step send: POST /me/messages creates a draft, POST
+    /me/messages/{id}/send submits it."""
 
-    mock_client = httpx.Client(transport=httpx.MockTransport(handler))
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "POST" and path.endswith("/me/messages"):
+            return httpx.Response(
+                201,
+                json={
+                    "id": "draft-1",
+                    "conversationId": "conv-1",
+                    "internetMessageId": "<graph-1@outlook.com>",
+                },
+            )
+        if request.method == "POST" and path.endswith("/send"):
+            if send_error is not None:
+                raise send_error
+            return httpx.Response(send_status)
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(500)
+
+    return handler
+
+
+def test_send_message_creates_draft_then_sends_and_reports_ids() -> None:
+    mock_client = httpx.Client(transport=httpx.MockTransport(_graph_send_handler()))
     provider = MicrosoftGraphProvider(
         client_id="id", client_secret="secret", http_client=mock_client
     )
@@ -151,9 +174,11 @@ def test_send_message_202_empty_body_is_accepted_with_no_message_id() -> None:
 
     result = provider.send_message({"access_token": "fake-token"}, envelope)
     assert result.status == "ACCEPTED"
-    # Graph's sendMail returns no message id synchronously -- absence must
-    # never be treated as rejection.
-    assert result.provider_message_id is None
+    # sendMail answers with an empty body, so a draft is created first to learn
+    # the Message-ID and conversation id replies and bounces refer to.
+    assert result.provider_message_id == "draft-1"
+    assert result.provider_thread_id == "conv-1"
+    assert result.rfc_message_id == "<graph-1@outlook.com>"
 
 
 def test_send_message_header_injection_rejected() -> None:
@@ -170,9 +195,9 @@ def test_send_message_header_injection_rejected() -> None:
 
 
 def test_send_message_timeout_becomes_unknown() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("Connection timed out")
-
+    # The draft was created, then the send call timed out: the message may or
+    # may not have gone out.
+    handler = _graph_send_handler(send_error=httpx.ReadTimeout("Connection timed out"))
     mock_client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = MicrosoftGraphProvider(
         client_id="id", client_secret="secret", http_client=mock_client
@@ -187,6 +212,58 @@ def test_send_message_timeout_becomes_unknown() -> None:
     result = provider.send_message({"access_token": "fake-token"}, envelope)
     assert result.status == "UNKNOWN"
     assert result.error_category == ErrorCategory.UNKNOWN_OUTCOME
+    # Ids are kept so the outcome can be reconciled later.
+    assert result.provider_message_id == "draft-1"
+    assert result.rfc_message_id == "<graph-1@outlook.com>"
+
+
+def test_timeout_creating_the_draft_is_a_safe_non_send() -> None:
+    """Creating a draft sends nothing, so a failure there is never ambiguous."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("Connection timed out")
+
+    provider = MicrosoftGraphProvider(
+        client_id="id",
+        client_secret="secret",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = provider.send_message(
+        {"access_token": "fake-token"},
+        OutboundMessageEnvelope(
+            to_address="lead@example.com",
+            from_address="sales@company.com",
+            subject="Test",
+            body_html="<p>Test</p>",
+        ),
+    )
+    assert result.status == "DEFINITIVELY_REJECTED"
+
+
+def test_rejected_send_discards_the_draft() -> None:
+    calls: list[tuple[str, str]] = []
+    inner = _graph_send_handler(send_status=400)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return inner(request)
+
+    provider = MicrosoftGraphProvider(
+        client_id="id",
+        client_secret="secret",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = provider.send_message(
+        {"access_token": "fake-token"},
+        OutboundMessageEnvelope(
+            to_address="lead@example.com",
+            from_address="sales@company.com",
+            subject="Test",
+            body_html="<p>Test</p>",
+        ),
+    )
+    assert result.status == "DEFINITIVELY_REJECTED"
+    assert ("DELETE", "/v1.0/me/messages/draft-1") in calls
 
 
 def test_error_classification_table() -> None:
@@ -234,3 +311,19 @@ def test_provider_registry_resolves_microsoft() -> None:
     provider = ProviderRegistry.get("MICROSOFT")
     assert isinstance(provider, MicrosoftGraphProvider)
     ProviderRegistry.reset()
+
+
+def test_lookup_only_searches_sent_items_so_an_unsent_draft_is_not_a_send() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json={"value": []})
+
+    provider = MicrosoftGraphProvider(
+        client_id="id",
+        client_secret="secret",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert provider.lookup_message({"access_token": "t"}, "<a@b.co>") is None
+    assert seen == ["/v1.0/me/mailFolders/sentitems/messages"]

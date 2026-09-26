@@ -35,7 +35,7 @@ class MigrationChecks(unittest.TestCase):
     def test_reviewed_chain(self):
         result,output=self.run_check()
         self.assertEqual(result,0,output)
-        self.assertIn('63 tables',output)
+        self.assertIn('64 tables',output)
 
     def test_original_notification_blocker(self):
         result,output=self.run_check(('0005_operations_platform.sql',

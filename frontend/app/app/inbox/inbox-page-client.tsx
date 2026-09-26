@@ -713,6 +713,11 @@ export function InboxPageClient() {
                                     {msg.classification}
                                   </span>
                                 )}
+                                {msg.sequence_step_position ? (
+                                  <span className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                                    Step {msg.sequence_step_position}
+                                  </span>
+                                ) : null}
                               </div>
                               <p className="text-[11px] text-slate-500 truncate">
                                 To: {msg.recipient_email}

@@ -348,7 +348,7 @@ export function AnalyticsPageClient() {
           rateLabel="bounce rate"
           icon={AlertOctagon}
           color="rose"
-          tooltip="Authoritative bounces recorded and permanently suppressed"
+          tooltip="Emails sent in this period that were reported undeliverable, each counted once. Bounce rate = bounced / sent."
         />
       </div>
 
@@ -372,7 +372,19 @@ export function AnalyticsPageClient() {
           color="amber"
           tooltip="Normalized provider spam reports (Google/Yahoo threshold: 0.1%)"
         />
-        {/* Honest open and click tracking card */}
+        {data.open_tracking_supported ? (
+          <StatCard
+            title="Opened"
+            value={(data.opens ?? 0).toLocaleString()}
+            rate={data.open_rate ?? 0}
+            rateLabel="open rate"
+            icon={BarChart3}
+            color="indigo"
+            subtitle="Estimated"
+            tooltip="Delivered emails opened at least once. Open rate = opened / delivered (sent minus bounced). Opens use a tiny image; privacy features can inflate or hide them."
+          />
+        ) : (
+        /* Honest open and click tracking card */
         <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-5 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -392,6 +404,7 @@ export function AnalyticsPageClient() {
             Open pixel and link click tracking are not active to maximize inbox deliverability.
           </p>
         </div>
+        )}
 
         <StatCard
           title="Send Failures"

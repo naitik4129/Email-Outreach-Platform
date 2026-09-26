@@ -184,6 +184,13 @@ would fail for every campaign, standard ones included. 0027–0029 are needed on
 feature (Part 9, "Enable hyper-personalized campaigns"): 0027 before the worker, 0028 before the
 scheduler sweep, 0029 before sample previews.
 
+**Email tracking and reply sync (migrations 0030–0031).** Additive; review each header, apply in
+order after 0026–0029. **Apply both before deploying this version of the backend/workers and before
+enabling sending:** the send path records each email's Message-ID (needs the 0030 column grant) and
+the reply pipeline needs the 0031 read grants; without them sends or reply processing fail with
+`permission denied`. 0030 creates `message_events` (opens and bounces, one row per email and kind);
+0031 lets the reply worker read `domain_events`/`outbox_work`. Neither changes existing rows.
+
 Finish with `unset DB`.
 
 ### 5.2 Storage bucket
@@ -216,6 +223,12 @@ https://YOUR_DOMAIN/api/v1/mailboxes/connect/gmail/callback
 Enable the **Gmail API**. In "Testing" mode, add every person who will connect a Gmail account as a
 **Test user**.
 
+Reply detection needs the **`gmail.readonly`** scope (added to the consent screen's scopes). It is a
+Google *restricted* scope: it works immediately for test users and your own Workspace, while a public
+app needs Google's verification. **Gmail mailboxes connected before this version must be
+disconnected and reconnected** to grant it; until then the mailbox page shows "Reply detection"
+as needing reconnection and replies are not detected.
+
 ### 5.6 Microsoft (only if you connect Outlook)
 
 Azure Portal → **App registrations** → your app → **Authentication** → **Web** redirect URI:
@@ -223,6 +236,10 @@ Azure Portal → **App registrations** → your app → **Authentication** → *
 ```text
 https://YOUR_DOMAIN/api/v1/mailboxes/connect/microsoft/callback
 ```
+
+Under **API permissions** the delegated permissions are now `Mail.Send` and **`Mail.ReadWrite`**
+(plus `offline_access`, `openid`, `profile`, `email`). Outlook mailboxes connected before this
+version must be disconnected and reconnected to grant `Mail.ReadWrite`.
 
 ---
 
@@ -325,6 +342,27 @@ PERSONALIZATION_ENABLED=false
 
 # Keep false for the first start. Part 9 turns it on after checking.
 SENDING_WORKER_ENABLED=false
+
+# Reply detection (polling). How far back a mailbox's first scan looks, and the
+# longest wait after repeated failures.
+REPLY_SYNC_INITIAL_HORIZON_DAYS=30
+REPLY_SYNC_MAX_BACKOFF_SECONDS=3600
+
+# Open tracking (optional; off by default). All three must be set for the pixel to
+# be added. TRACKING_BASE_URL is the public address of THIS app (same origin as
+# the site, e.g. https://outly.b2botix.ai) - the pixel is served from
+# /api/v1/t/o/..., which Caddy already routes to the backend. Use a long random
+# TRACKING_SIGNING_KEY (openssl rand -hex 32) and never change it casually:
+# tokens in emails already sent stop working.
+OPEN_TRACKING_ENABLED=false
+TRACKING_BASE_URL=""
+TRACKING_SIGNING_KEY=""
+
+# Provider webhooks stay disabled (HTTP 503) until their secret is set. They are
+# also blocked at Caddy; polling works without them.
+EVENT_WEBHOOK_SECRET=""
+GMAIL_WEBHOOK_SECRET=""
+MICROSOFT_WEBHOOK_CLIENT_STATE=""
 ```
 
 Save with `Ctrl+O`, `Enter`, `Ctrl+X`, then:
@@ -663,16 +701,12 @@ starts.
 
 Found while preparing this guide. They are code or design matters, not deployment steps, and were not changed here.
 
-1. **The webhook endpoints have no authentication (security issue).**
-   `backend/app/api/v1/webhooks.py` reads `gmail_webhook_secret`, `event_webhook_secret` and
-   `webhook_secret` from settings, but none of them exist in `backend/app/core/config.py`, so
-   they can never be set from `.env`. The three adapters skip verification when no secret is set,
-   so `POST /api/v1/webhooks/gmail`, `/microsoft` and `/events` accept anyone's requests, and
-   `/events` places bounce/complaint/unsubscribe safety holds immediately. **The Caddy block
-   therefore returns 403 for `/api/v1/webhooks/*`.** Do not register webhook URLs with Google,
-   Microsoft or an email provider, and do not remove that block, until the secrets are added to
-   `Settings` and the adapters reject requests when no secret is configured. Replies are still
-   collected by mailbox polling (`worker-sync`), so the MVP works without webhooks.
+1. **Webhook endpoints (fixed in code, still blocked at Caddy).** The secrets are now real
+   settings (`EVENT_WEBHOOK_SECRET`, `GMAIL_WEBHOOK_SECRET`, `MICROSOFT_WEBHOOK_CLIENT_STATE`) and each
+   endpoint answers 503 until its secret is set, so they can no longer accept unauthenticated
+   events. **Keep the Caddy 403 for `/api/v1/webhooks/*`** until item 2 is also fixed. Replies and
+   bounces are collected by mailbox polling (`worker-sync`), which does not need webhooks; Gmail
+   Pub/Sub and Graph subscriptions are not implemented (nothing registers them).
 2. **Webhook events would not be queued from the containerized backend.**
    `webhooks.py` imports `workers.celery_app`, but the backend image (`backend/Dockerfile`)
    does not contain the `workers` package, so the follow-up `event.process` task is not published, and

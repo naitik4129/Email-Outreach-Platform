@@ -10,6 +10,7 @@ import {
   HelpCircle,
   Info,
   Loader2,
+  Eye,
   MessageSquare,
   Send,
   Users,
@@ -136,8 +137,58 @@ export function CampaignAnalyticsClient() {
 
   return (
     <div className="space-y-8">
-      {/* Top KPI Cards */}
+      {/* Top KPI Cards: sent, bounced, opened, replied. Each tooltip states its definition. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard
+          title="Sent"
+          value={camp.sent.toLocaleString()}
+          subtitle={`${camp.unique_recipients_contacted.toLocaleString()} leads contacted`}
+          icon={Send}
+          color="emerald"
+          tooltip="Emails accepted by the mailbox provider. Retries do not inflate this count."
+        />
+        <MetricCard
+          title="Bounced"
+          value={camp.bounced.toLocaleString()}
+          rate={camp.bounce_rate}
+          rateLabel="bounce rate"
+          icon={AlertOctagon}
+          color="rose"
+          subtitle={
+            camp.hard_bounced !== undefined || camp.soft_bounced !== undefined
+              ? `${(camp.hard_bounced ?? 0).toLocaleString()} hard · ${(camp.soft_bounced ?? 0).toLocaleString()} soft`
+              : undefined
+          }
+          tooltip="Sent emails reported undeliverable, each counted once. Bounce rate = bounced / sent."
+        />
+        <MetricCard
+          title="Opened"
+          value={(camp.opened ?? 0).toLocaleString()}
+          rate={camp.open_tracking_supported || (camp.opened ?? 0) > 0 ? (camp.open_rate ?? 0) : null}
+          rateLabel="open rate"
+          icon={Eye}
+          color="indigo"
+          subtitle={
+            camp.open_tracking_supported || (camp.total_opens ?? 0) > 0
+              ? `${(camp.total_opens ?? 0).toLocaleString()} total opens`
+              : "Open tracking is off"
+          }
+          tooltip="Delivered emails opened at least once. Open rate = opened / delivered (sent minus bounced; providers send no delivery receipt, so this is an estimate). Opens use a tiny image and privacy features can inflate or hide them."
+        />
+        <MetricCard
+          title="Replied"
+          value={camp.replied.toLocaleString()}
+          rate={camp.reply_rate}
+          rateLabel="reply rate"
+          icon={MessageSquare}
+          color="indigo"
+          subtitle={`${camp.unique_recipients_replied.toLocaleString()} unique replied`}
+          tooltip="Genuine replies from leads. Auto-replies, out-of-office messages and bounce notices are not counted."
+        />
+      </div>
+
+      {/* Secondary Metrics */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <MetricCard
           title="Total Recipients"
           value={camp.total_recipients.toLocaleString()}
@@ -146,37 +197,6 @@ export function CampaignAnalyticsClient() {
           color="indigo"
           tooltip="Deduplicated leads and recipient addresses enrolled in this campaign"
         />
-        <MetricCard
-          title="Messages Sent"
-          value={camp.sent.toLocaleString()}
-          subtitle={`${camp.unique_recipients_contacted.toLocaleString()} leads contacted`}
-          icon={Send}
-          color="emerald"
-          tooltip="Authoritative sends accepted by provider. Retries do not inflate this count."
-        />
-        <MetricCard
-          title="Replies"
-          value={camp.replied.toLocaleString()}
-          rate={camp.reply_rate}
-          rateLabel="reply rate"
-          icon={MessageSquare}
-          color="indigo"
-          subtitle={`${camp.unique_recipients_replied.toLocaleString()} unique replied`}
-          tooltip="Inbound replies correlated to this campaign. Deduplicated by recipient enrollment."
-        />
-        <MetricCard
-          title="Hard Bounces"
-          value={camp.bounced.toLocaleString()}
-          rate={camp.bounce_rate}
-          rateLabel="bounce rate"
-          icon={AlertOctagon}
-          color="rose"
-          tooltip="Recipients whose messages permanently bounced and were suppressed"
-        />
-      </div>
-
-      {/* Secondary Metrics */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="Unsubscribes"
           value={camp.unsubscribed.toLocaleString()}
@@ -295,9 +315,21 @@ export function CampaignAnalyticsClient() {
                         </p>
                       </div>
                       <div>
+                        <p className="text-slate-400">Opens</p>
+                        <p className="font-semibold text-indigo-600">
+                          {(step.opened ?? 0).toLocaleString()}{" "}
+                          <span className="text-[11px] font-normal text-slate-500">
+                            ({step.open_rate ?? 0}%)
+                          </span>
+                        </p>
+                      </div>
+                      <div>
                         <p className="text-slate-400">Bounces</p>
                         <p className="font-semibold text-rose-600">
-                          {step.bounced.toLocaleString()}
+                          {step.bounced.toLocaleString()}{" "}
+                          <span className="text-[11px] font-normal text-slate-500">
+                            ({step.bounce_rate ?? 0}%)
+                          </span>
                         </p>
                       </div>
                       <div>

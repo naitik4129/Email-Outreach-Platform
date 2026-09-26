@@ -20,6 +20,12 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  IMAP_DEFAULTS,
+  ImapSettingsFields,
+  imapPayload,
+  type ImapSettings,
+} from "@/components/mailboxes/imap-settings-fields";
 import { ProviderBadge, providerSubtext } from "@/components/mailboxes/provider-badge";
 import { ApiError } from "@/lib/api-client";
 import {
@@ -77,6 +83,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
   const [smtpSecurityMode, setSmtpSecurityMode] = useState<SmtpSecurityMode>("STARTTLS");
   const [smtpUsername, setSmtpUsername] = useState("");
   const [smtpPassword, setSmtpPassword] = useState("");
+  const [imap, setImap] = useState<ImapSettings>(IMAP_DEFAULTS);
   const [hasLoadedSmtpForm, setHasLoadedSmtpForm] = useState(false);
 
   const mailboxQuery = useQuery({
@@ -95,6 +102,12 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
         setSmtpPort(data.smtp_config.port);
         setSmtpSecurityMode(data.smtp_config.security_mode);
         setSmtpUsername(data.smtp_config.username);
+        setImap({
+          host: data.smtp_config.imap_host ?? "",
+          port: data.smtp_config.imap_port ?? 993,
+          username: data.smtp_config.imap_username ?? "",
+          password: "",
+        });
         setHasLoadedSmtpForm(true);
       }
       return data;
@@ -181,6 +194,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
         // Omitted entirely (not an empty string) when left blank, so the
         // backend keeps the existing credential.
         ...(smtpPassword ? { password: smtpPassword } : {}),
+        ...imapPayload(imap),
       });
     },
     onSuccess: (updated) => {
@@ -192,6 +206,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
         queryKey: ["workspace", activeWorkspaceId, "mailboxes"],
       });
       setSmtpPassword("");
+      setImap((current) => ({ ...current, password: "" }));
       setShowSmtpEditForm(false);
       setActionSuccess("SMTP configuration updated and re-validated.");
       setActionError(null);
@@ -428,6 +443,14 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
             />
           </Field>
 
+          <ImapSettingsFields
+            idPrefix="smtp-edit"
+            value={imap}
+            onChange={setImap}
+            disabled={updateSmtpConfigMutation.isPending}
+            passwordLabel="New incoming mail secret (leave blank to keep current)"
+          />
+
           <div className="flex justify-end gap-3 pt-2">
             <Button
               variant="outline"
@@ -480,7 +503,44 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
               <dt className="text-xs text-slate-500">Username</dt>
               <dd className="font-medium text-slate-900">{mailbox.smtp_config.username}</dd>
             </div>
+            <div className="col-span-2 sm:col-span-4">
+              <dt className="text-xs text-slate-500">IMAP (reply detection)</dt>
+              <dd className="font-medium text-slate-900">
+                {mailbox.smtp_config.imap_host
+                  ? `${mailbox.smtp_config.imap_host}:${mailbox.smtp_config.imap_port ?? 993}`
+                  : "Not configured"}
+              </dd>
+            </div>
           </dl>
+        </div>
+      ) : null}
+
+      {/* Reply detection status: replies stop sequences, so it must be visible when it is not working */}
+      {mailbox.reply_sync_status && mailbox.reply_sync_status !== "UNSUPPORTED" ? (
+        <div
+          className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          data-testid="reply-sync-status"
+        >
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Reply detection
+          </h3>
+          {mailbox.reply_sync_status === "ENABLED" ? (
+            <p className="mt-2 text-sm text-slate-700">
+              Replies to emails sent from this mailbox are detected, and a lead&apos;s follow-ups
+              stop when they reply.
+            </p>
+          ) : mailbox.reply_sync_status === "RECONNECT_REQUIRED" ? (
+            <Alert variant="warning" className="mt-2">
+              This mailbox was connected before Outly could read replies. Disconnect and reconnect
+              it to grant read access; until then replies will not be detected and follow-ups will
+              not stop on a reply.
+            </Alert>
+          ) : (
+            <Alert variant="warning" className="mt-2">
+              Outly cannot see replies to this mailbox because no IMAP settings are saved. Use
+              Update Configuration to add them; until then follow-ups will not stop on a reply.
+            </Alert>
+          )}
         </div>
       ) : null}
 

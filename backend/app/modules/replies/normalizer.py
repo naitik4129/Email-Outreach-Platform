@@ -6,6 +6,7 @@ from email.utils import parseaddr
 from html.parser import HTMLParser
 
 from app.modules.mailboxes.providers.base import ProviderInboundMessage
+from app.modules.replies.dsn import parse_delivery_report
 from app.modules.replies.schemas import InboundClassification, NormalizedInboundMessage
 from app.modules.templates.sanitizer import sanitize_html_preview
 
@@ -224,12 +225,22 @@ def normalize_inbound_message(
             content_text = content_text[:MAX_CONTENT_TEXT_LENGTH]
 
     # Classification
-    classification = classify_inbound_message(
+    delivery_report = parse_delivery_report(
+        from_address=from_email,
         subject=subject,
         headers=provider_msg.headers,
         content_text=content_text,
-        is_automated_hint=provider_msg.is_automated,
+        report_text=provider_msg.report_text,
     )
+    if delivery_report is not None:
+        classification = InboundClassification.BOUNCE.value
+    else:
+        classification = classify_inbound_message(
+            subject=subject,
+            headers=provider_msg.headers,
+            content_text=content_text,
+            is_automated_hint=provider_msg.is_automated,
+        )
 
     received_at = provider_msg.received_at or datetime.now(UTC)
     if received_at.tzinfo is None:
@@ -254,4 +265,5 @@ def normalize_inbound_message(
         headers=provider_msg.headers,
         is_automated=(classification != InboundClassification.HUMAN_REPLY.value),
         classification=classification,
+        delivery_report=delivery_report,
     )

@@ -9,7 +9,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.metrics import (
-    record_bounce_processed,
     record_complaint_processed,
     record_event_failed,
     record_event_processed,
@@ -17,6 +16,7 @@ from app.core.metrics import (
     record_suppression_created,
     record_unsubscribe_processed,
 )
+from app.modules.events.bounce_service import BounceService
 from app.modules.events.repository import EventRepository
 from app.modules.events.schemas import (
     BounceClassification,
@@ -104,6 +104,12 @@ class InboundEventProcessor:
                 event_type=event_type,
                 payload_data=payload_data,
                 now=now,
+                occurred_at=receipt.get("verified_at"),
+                mailbox_id=(
+                    UUID(str(receipt["mailbox_id"]))
+                    if receipt.get("mailbox_id")
+                    else None
+                ),
             )
 
             # 3. Resolve safety hold
@@ -147,6 +153,8 @@ class InboundEventProcessor:
         event_type: InboundEventType,
         payload_data: dict[str, Any],
         now: datetime,
+        occurred_at: datetime | None = None,
+        mailbox_id: UUID | None = None,
     ) -> EventProcessResult:
         # A. Notification / Sync hint (e.g. Gmail Pub/Sub or Graph change)
         if event_type == InboundEventType.NOTIFICATION:
@@ -191,55 +199,22 @@ class InboundEventProcessor:
             except ValueError:
                 bounce_cls = BounceClassification.UNKNOWN
 
-            if bounce_cls == BounceClassification.HARD:
-                # Permanent delivery failure: durable suppression and cancellation
-                _, suppression_created = self.repo.upsert_suppression(
-                    workspace_id=workspace_id,
-                    address_id=address_id,
-                    reason="HARD_BOUNCE",
-                    provider_receipt_id=receipt_id,
-                    source_key=event_identity,
-                    evidence=payload_data,
-                )
-                stopped_ids = self.repo.stop_active_enrollments(
-                    workspace_id=workspace_id,
-                    address_id=address_id,
-                    stop_reason="HARD_BOUNCE",
-                )
-                enrollments_stopped = len(stopped_ids)
-                for eid in stopped_ids:
-                    self.repo.record_recipient_outcome(
-                        workspace_id=workspace_id,
-                        enrollment_id=eid,
-                        kind="HARD_BOUNCE",
-                        source_key=event_identity,
-                        occurred_at=now,
-                    )
-
-                messages_cancelled = self.repo.cancel_non_terminal_messages(
-                    workspace_id=workspace_id,
-                    address_id=address_id,
-                    terminal_reason="hard_bounce",
-                )
-
-                self.repo.record_domain_event(
-                    workspace_id=workspace_id,
-                    event_type="recipient.suppressed",
-                    aggregate_type="recipient_address",
-                    aggregate_id=address_id,
-                    semantic_key=f"hard_bounce:{event_identity}",
-                    occurred_at=now,
-                    payload={"reason": "HARD_BOUNCE", "receipt_id": str(receipt_id)},
-                )
-                record_bounce_processed(provider, "HARD")
-                if suppression_created:
-                    record_suppression_created("HARD_BOUNCE")
-                if messages_cancelled > 0:
-                    record_message_cancelled_due_to_event("hard_bounce")
-
-            else:
-                # Temporary / Soft bounce: record diagnostic evidence without permanent suppression
-                record_bounce_processed(provider, "SOFT")
+            bounce = BounceService(self.repo).record(
+                workspace_id=workspace_id,
+                recipient_email=raw_email,
+                bounce_type=bounce_cls.value,
+                source="WEBHOOK",
+                source_key=event_identity,
+                occurred_at=occurred_at or now,
+                mailbox_id=mailbox_id,
+                provider_message_id=payload_data.get("provider_message_id"),
+                detail=payload_data.get("reason"),
+                provider_receipt_id=receipt_id,
+                evidence=payload_data,
+            )
+            if bounce_cls != BounceClassification.HARD:
+                # Temporary / unknown bounce: recorded against the message as
+                # evidence, without permanent suppression.
                 return EventProcessResult(
                     receipt_id=receipt_id,
                     status="processed_soft_bounce",
@@ -247,6 +222,9 @@ class InboundEventProcessor:
                     suppression_created=False,
                     reason="Soft bounce recorded without permanent suppression",
                 )
+            suppression_created = bounce.suppression_created
+            enrollments_stopped = bounce.enrollments_stopped
+            messages_cancelled = bounce.messages_cancelled
 
         # Handle COMPLAINT
         elif event_type == InboundEventType.COMPLAINT:

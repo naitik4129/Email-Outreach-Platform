@@ -14,6 +14,7 @@ import {
   LeadProfileDetails,
   LeadProfileFields,
 } from "@/components/leads/lead-profile-fields";
+import { LeadActivityTimeline } from "@/components/leads/lead-activity";
 import { ApiError } from "@/lib/api-client";
 import {
   profilePayload,
@@ -342,6 +343,10 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           </div>
         )}
       </section>
+
+      {activeWorkspaceId ? (
+        <LeadActivityTimeline workspaceId={activeWorkspaceId} leadId={lead.id} />
+      ) : null}
     </main>
   );
 }

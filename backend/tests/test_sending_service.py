@@ -506,3 +506,133 @@ def test_credential_missing_marks_not_invoked_failed_never_calls_provider() -> N
     fake_provider.send_message.assert_not_called()
     kwargs = service.repository.finalize_attempt_result.call_args.kwargs
     assert kwargs["evidence_state"] == "NOT_INVOKED"
+
+
+# ---------------------------------------------------------------------------
+# Message-ID capture and open-tracking pixel (reply/bounce correlation)
+# ---------------------------------------------------------------------------
+
+
+def _send_capturing_envelope(
+    ctx: LoadedSendContext, result: ProviderSendResult, **settings_overrides: object
+):
+    fake_provider = MagicMock()
+    fake_provider.capabilities = frozenset()
+    fake_provider.send_message.return_value = result
+    ProviderRegistry.register("GMAIL", fake_provider)
+    service = _authorized_service(ctx)
+    configured = Settings.current().model_copy(update=settings_overrides)
+    with (
+        patch(
+            "app.modules.sending.service.decrypt_credentials",
+            return_value={"access_token": "x"},
+        ),
+        patch("app.modules.sending.service.Settings.current", return_value=configured),
+    ):
+        service.execute(
+            _payload(workspace_id=ctx.workspace_id, message_id=ctx.message_id)
+        )
+    envelope = fake_provider.send_message.call_args.args[1]
+    return envelope, service.repository.finalize_attempt_result.call_args.kwargs
+
+
+def test_a_message_id_is_generated_when_the_message_has_none_and_recorded() -> None:
+    ctx = _ctx(rfc_message_id=None)
+    envelope, kwargs = _send_capturing_envelope(
+        ctx, ProviderSendResult(status="ACCEPTED", provider_message_id="pmid-1")
+    )
+    assert envelope.rfc_message_id and envelope.rfc_message_id.endswith("@example.com>")
+    # The id that went out is the id recorded (and used as acceptance evidence).
+    assert kwargs["rfc_message_id"] == envelope.rfc_message_id
+    assert kwargs["provider_request_id"] == envelope.rfc_message_id
+
+
+def test_the_message_id_the_provider_reports_wins() -> None:
+    """Gmail/Graph may assign their own Message-ID; that is what replies quote."""
+    ctx = _ctx(rfc_message_id=None)
+    envelope, kwargs = _send_capturing_envelope(
+        ctx,
+        ProviderSendResult(
+            status="ACCEPTED",
+            provider_message_id="pmid-1",
+            provider_thread_id="thread-9",
+            rfc_message_id="<provider-assigned@mail.gmail.com>",
+        ),
+    )
+    assert envelope.rfc_message_id != "<provider-assigned@mail.gmail.com>"
+    assert kwargs["rfc_message_id"] == "<provider-assigned@mail.gmail.com>"
+    assert kwargs["provider_thread_id"] == "thread-9"
+
+
+def test_an_existing_message_id_is_reused_not_regenerated() -> None:
+    ctx = _ctx(rfc_message_id="abc@example.com")
+    envelope, _ = _send_capturing_envelope(
+        ctx, ProviderSendResult(status="ACCEPTED", provider_message_id="p")
+    )
+    assert envelope.rfc_message_id == "abc@example.com"
+
+
+def test_an_ambiguous_send_still_records_the_message_id_for_reconciliation() -> None:
+    ctx = _ctx(rfc_message_id=None)
+    envelope, kwargs = _send_capturing_envelope(
+        ctx,
+        ProviderSendResult(
+            status="UNKNOWN", error_category="NETWORK_ERROR", error_code="timeout"
+        ),
+    )
+    assert kwargs["message_status"] == "UNKNOWN_OUTCOME"
+    assert kwargs["rfc_message_id"] == envelope.rfc_message_id
+
+
+def test_a_rejected_send_does_not_record_a_message_id() -> None:
+    ctx = _ctx(rfc_message_id=None)
+    _, kwargs = _send_capturing_envelope(
+        ctx,
+        ProviderSendResult(
+            status="DEFINITIVELY_REJECTED",
+            error_category="PERMANENT_RECIPIENT_FAILURE",
+            error_code="x",
+        ),
+    )
+    assert kwargs.get("rfc_message_id") is None
+
+
+TRACKING = dict(
+    open_tracking_enabled=True,
+    tracking_base_url="https://outly.example.com",
+    tracking_signing_key="k" * 16,
+)
+
+
+def test_open_pixel_is_added_at_send_time_naming_this_message() -> None:
+    from app.modules.tracking.tokens import parse_open_token
+
+    ctx = _ctx()
+    envelope, _ = _send_capturing_envelope(
+        ctx, ProviderSendResult(status="ACCEPTED", provider_message_id="p"), **TRACKING
+    )
+    assert "/api/v1/t/o/" in envelope.body_html
+    assert envelope.body_html.startswith("<p>Hi</p>")
+    token = envelope.body_html.split("/api/v1/t/o/")[1].split(".gif")[0]
+    parsed = parse_open_token(token, TRACKING["tracking_signing_key"])
+    assert parsed == (ctx.workspace_id, ctx.message_id)
+    # The frozen snapshot is untouched: the pixel exists only on the envelope.
+    assert ctx.content_body_html == "<p>Hi</p>"
+
+
+def test_no_pixel_when_tracking_is_off_or_unconfigured() -> None:
+    accepted = ProviderSendResult(status="ACCEPTED", provider_message_id="p")
+    for overrides in (
+        {},
+        {**TRACKING, "open_tracking_enabled": False},
+        {**TRACKING, "tracking_signing_key": ""},
+    ):
+        envelope, _ = _send_capturing_envelope(_ctx(), accepted, **overrides)
+        assert envelope.body_html == "<p>Hi</p>"
+
+
+def test_the_pixel_does_not_break_the_content_digest_check() -> None:
+    """Adding the pixel must not make the send gate think the body changed."""
+    accepted = ProviderSendResult(status="ACCEPTED", provider_message_id="p")
+    envelope, kwargs = _send_capturing_envelope(_ctx(), accepted, **TRACKING)
+    assert kwargs["message_status"] == "SENT" and "<img" in envelope.body_html

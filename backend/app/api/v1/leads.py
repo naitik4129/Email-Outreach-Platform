@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext, get_db, get_workspace_context
 from app.core.permissions import require_permission
+from app.modules.leads.activity import LeadActivityService
 from app.modules.leads.pagination import DEFAULT_LIMIT
 from app.modules.leads.service import LeadService
 from app.schemas.leads import (
     ExpectedVersionIn,
+    LeadActivityOut,
     LeadCreateIn,
     LeadDetailOut,
     LeadListCreateIn,
@@ -63,6 +65,17 @@ def get_lead(
     db: Session = Depends(get_db),
 ) -> LeadDetailOut:
     return LeadService(db).get_lead_detail(context, lead_id)
+
+
+@router.get("/leads/{lead_id}/activity", response_model=LeadActivityOut)
+def get_lead_activity(
+    lead_id: UUID,
+    limit: int = Query(100, ge=1, le=200),
+    context: WorkspaceContext = Depends(get_workspace_context),
+    db: Session = Depends(get_db),
+) -> LeadActivityOut:
+    """Sent / opened / bounced / replied history of one lead, newest first."""
+    return LeadActivityService(db).get_activity(context, lead_id, limit=limit)
 
 
 @router.patch("/leads/{lead_id}", response_model=LeadOut)

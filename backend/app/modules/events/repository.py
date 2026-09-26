@@ -4,17 +4,16 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.modules.events.schemas import (
-    BounceClassification,
-    InboundEventType,
     ReceiptStatus,
     ScopeKind,
 )
+from app.modules.mailboxes.providers.message_builder import sql_normalized_message_id
 
 
 def _safe_set_role(session: Session, role: str) -> None:
@@ -30,6 +29,10 @@ def _safe_set_workspace(session: Session, workspace_id: UUID | None) -> None:
         session.execute(text(f"SET LOCAL app.current_workspace_id = '{val}'"))
 
 
+# NOTE: UPDATE statements on provider_receipts, safety_holds and suppressions do
+# not assign `version`: the *_touch_row triggers maintain it, and the worker
+# role's column grants deliberately exclude it (assigning it fails with
+# "permission denied"; only real PostgreSQL can show that).
 class EventRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -264,8 +267,7 @@ class EventRepository:
             """
             UPDATE public.safety_holds
             SET status = 'RESOLVED',
-                resolved_at = pg_catalog.transaction_timestamp(),
-                version = version + 1
+                resolved_at = pg_catalog.transaction_timestamp()
             WHERE workspace_id = :workspace_id
               AND source_receipt_id = :source_receipt_id
               AND status = 'ACTIVE'
@@ -335,8 +337,7 @@ class EventRepository:
                 lease_owner = :worker_owner,
                 lease_generation = lease_generation + 1,
                 lease_expires_at = :lease_expires_at,
-                next_due_at = :lease_expires_at,
-                version = version + 1
+                next_due_at = :lease_expires_at
             WHERE id = :id
               AND version = :version
             RETURNING *
@@ -360,8 +361,7 @@ class EventRepository:
             UPDATE public.provider_receipts
             SET receipt_status = 'PROCESSED',
                 lease_owner = NULL,
-                lease_expires_at = NULL,
-                version = version + 1
+                lease_expires_at = NULL
             WHERE id = :id
             """
         )
@@ -374,8 +374,7 @@ class EventRepository:
             SET receipt_status = 'FAILED',
                 safe_error = :error,
                 lease_owner = NULL,
-                lease_expires_at = NULL,
-                version = version + 1
+                lease_expires_at = NULL
             WHERE id = :id
             """
         )
@@ -397,8 +396,7 @@ class EventRepository:
                 next_due_at = :next_due_at,
                 safe_error = :error,
                 lease_owner = NULL,
-                lease_expires_at = NULL,
-                version = version + 1
+                lease_expires_at = NULL
             WHERE id = :id
             """
         )
@@ -445,8 +443,7 @@ class EventRepository:
                     UPDATE public.provider_receipts
                     SET receipt_status = 'RETRY',
                         lease_owner = NULL,
-                        lease_expires_at = NULL,
-                        version = version + 1
+                        lease_expires_at = NULL
                     WHERE id = :id
                       AND version = :version
                     """
@@ -521,6 +518,7 @@ class EventRepository:
         address_id: UUID,
         reason: str,
         provider_receipt_id: UUID | None = None,
+        domain_event_id: UUID | None = None,
         source_key: str,
         evidence: dict[str, Any] | None = None,
     ) -> tuple[UUID, bool]:
@@ -540,13 +538,14 @@ class EventRepository:
                 :workspace_id, :address_id, :reason, 'ACTIVE',
                 pg_catalog.transaction_timestamp(), pg_catalog.transaction_timestamp()
             )
+            -- version is maintained by suppressions_touch_row; the worker role has
+            -- no UPDATE grant on it, so assigning it here fails with permission denied.
             ON CONFLICT (workspace_id, address_id, reason) DO UPDATE
             SET status = 'ACTIVE',
                 last_observed_at = pg_catalog.transaction_timestamp(),
                 released_at = NULL,
                 release_actor_id = NULL,
-                release_audit_id = NULL,
-                version = suppressions.version + 1
+                release_audit_id = NULL
             RETURNING id, (xmax = 0) AS was_insert
             """
         )
@@ -584,16 +583,26 @@ class EventRepository:
             was_new = False
 
         # Persist suppression source evidence
-        source_kind = "PROVIDER_RECEIPT" if provider_receipt_id else "UNSUBSCRIBE_TOKEN"
+        # suppression_sources_source_identity_check requires the key of a
+        # PROVIDER_RECEIPT / DOMAIN_EVENT source to be the id of that row.
+        stored_source_key = source_key[:200]
+        if provider_receipt_id:
+            source_kind = "PROVIDER_RECEIPT"
+            stored_source_key = str(provider_receipt_id)
+        elif domain_event_id:
+            source_kind = "DOMAIN_EVENT"
+            stored_source_key = str(domain_event_id)
+        else:
+            source_kind = "UNSUBSCRIBE_TOKEN"
         source_stmt = text(
             """
             INSERT INTO public.suppression_sources (
                 workspace_id, suppression_id, source_kind, source_key,
-                provider_receipt_id, evidence
+                provider_receipt_id, domain_event_id, evidence
             )
             VALUES (
                 :workspace_id, :suppression_id, :source_kind, :source_key,
-                :provider_receipt_id, CAST(:evidence AS jsonb)
+                :provider_receipt_id, :domain_event_id, CAST(:evidence AS jsonb)
             )
             ON CONFLICT (workspace_id, suppression_id, source_kind, source_key) DO NOTHING
             """
@@ -604,8 +613,9 @@ class EventRepository:
                 "workspace_id": str(workspace_id),
                 "suppression_id": str(suppression_id),
                 "source_kind": source_kind,
-                "source_key": source_key[:200],
+                "source_key": stored_source_key,
                 "provider_receipt_id": str(provider_receipt_id) if provider_receipt_id else None,
+                "domain_event_id": str(domain_event_id) if domain_event_id else None,
                 "evidence": json.dumps(evidence or {}),
             },
         )
@@ -729,8 +739,9 @@ class EventRepository:
         semantic_key: str,
         occurred_at: datetime,
         payload: dict[str, Any] | None = None,
-    ) -> None:
-        """Durable append-only domain event."""
+    ) -> UUID | None:
+        """Durable append-only domain event. Returns the row id (existing row
+        when the semantic key was already recorded)."""
         _safe_set_workspace(self.session, workspace_id)
 
         stmt = text(
@@ -756,5 +767,168 @@ class EventRepository:
                 "semantic_key": semantic_key[:200],
                 "occurred_at": occurred_at,
                 "payload": json.dumps(payload or {}),
+            },
+        )
+        found = self.session.execute(
+            text(
+                """
+                SELECT id FROM public.domain_events
+                WHERE workspace_id = :workspace_id
+                  AND event_type = :event_type
+                  AND semantic_key = :semantic_key
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "event_type": event_type,
+                "semantic_key": semantic_key[:200],
+            },
+        ).first()
+        return UUID(str(found[0])) if found else None
+
+    # -------------------------------------------------------------------------
+    # Message-level bounce evidence
+    # -------------------------------------------------------------------------
+
+    def find_message_for_bounce(
+        self,
+        *,
+        workspace_id: UUID,
+        mailbox_id: UUID | None,
+        original_message_ids: Sequence[str],
+        referenced_message_ids: Sequence[str],
+        provider_message_id: str | None,
+        recipient_email: str | None,
+        before: datetime,
+        window_days: int = 14,
+    ) -> tuple[Mapping[str, Any] | None, str | None]:
+        """Find the SENT campaign message a bounce refers to.
+
+        Deterministic, strongest evidence first: the bounced email's own
+        Message-ID / provider id, then earlier messages named in the returned
+        headers, then (weakest, flagged as such) the most recent message sent
+        to that recipient from the same mailbox before the bounce arrived.
+        Returns (row, evidence) or (None, None); never guesses across ambiguity
+        at the identifier stages.
+        """
+        _safe_set_workspace(self.session, workspace_id)
+        is_sqlite = self.session.get_bind().dialect.name == "sqlite"
+        rfc_expr = sql_normalized_message_id("m.rfc_message_id", sqlite=is_sqlite)
+        mailbox_clause = "AND m.mailbox_id = :mailbox_id" if mailbox_id else ""
+        base_params: dict[str, Any] = {"ws": str(workspace_id)}
+        if mailbox_id:
+            base_params["mailbox_id"] = str(mailbox_id)
+
+        select = (
+            "SELECT m.id, m.enrollment_id, m.address_id, m.campaign_id, m.mailbox_id, "
+            "m.frozen_destination FROM public.messages m "
+            "WHERE m.workspace_id = :ws AND m.purpose = 'CAMPAIGN' "
+            "AND m.status = 'SENT' " + mailbox_clause
+        )
+
+        def by_ids(raw_ids: Sequence[str], evidence: str) -> tuple[Mapping[str, Any] | None, str | None]:
+            wanted = [i.strip().strip("<>").strip().lower() for i in raw_ids if i and i.strip()]
+            if not wanted:
+                return None, None
+            placeholders = ",".join(f":id_{n}" for n in range(len(wanted)))
+            params = dict(base_params)
+            params.update({f"id_{n}": v for n, v in enumerate(wanted)})
+            rows = self.session.execute(
+                text(f"{select} AND {rfc_expr} IN ({placeholders}) LIMIT 2"), params
+            ).mappings().all()
+            return (dict(rows[0]), evidence) if len(rows) == 1 else (None, None)
+
+        found, evidence = by_ids(original_message_ids, "MESSAGE_ID")
+        if found:
+            return found, evidence
+
+        if provider_message_id:
+            params = dict(base_params, pmid=provider_message_id)
+            rows = self.session.execute(
+                text(f"{select} AND m.provider_message_id = :pmid LIMIT 2"), params
+            ).mappings().all()
+            if len(rows) == 1:
+                return dict(rows[0]), "PROVIDER_MESSAGE_ID"
+
+        found, evidence = by_ids(referenced_message_ids, "REFERENCED_MESSAGE_ID")
+        if found:
+            return found, evidence
+
+        # Recipient-only association is the weakest evidence and is used only
+        # when the notification carried NO message identifiers at all. Identifiers
+        # that match nothing are contradicting evidence (e.g. a forged report),
+        # not a reason to guess from the recipient.
+        had_identifiers = bool(
+            [i for i in (*original_message_ids, *referenced_message_ids) if i and i.strip()]
+        )
+        if recipient_email and not had_identifiers:
+            params = dict(
+                base_params,
+                rcpt=recipient_email.strip().lower(),
+                before=before,
+                since=before - timedelta(days=window_days),
+            )
+            row = self.session.execute(
+                text(
+                    f"{select} AND LOWER(m.frozen_destination) = :rcpt "
+                    "AND m.accepted_at <= :before AND m.accepted_at >= :since "
+                    "ORDER BY m.accepted_at DESC LIMIT 1"
+                ),
+                params,
+            ).mappings().first()
+            if row:
+                return dict(row), "RECIPIENT_RECENT"
+        return None, None
+
+    def upsert_message_bounce(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID,
+        bounce_type: str,
+        bounce_code: str | None,
+        source: str,
+        detail: str | None,
+        occurred_at: datetime,
+    ) -> None:
+        """Record that a message bounced. One row per message: a repeated or
+        delayed notification only bumps the counters, and a HARD report is never
+        downgraded by a later SOFT one."""
+        _safe_set_workspace(self.session, workspace_id)
+        self.session.execute(
+            text(
+                """
+                INSERT INTO public.message_events (
+                    id, workspace_id, message_id, kind, bounce_type, bounce_code,
+                    source, detail, first_occurred_at, last_occurred_at,
+                    occurrence_count
+                ) VALUES (
+                    :id, :ws, :mid, 'BOUNCED', :bt, :code,
+                    :source, :detail, :at, :at, 1
+                )
+                ON CONFLICT (workspace_id, message_id, kind) DO UPDATE SET
+                    occurrence_count = message_events.occurrence_count + 1,
+                    last_occurred_at = CASE
+                        WHEN EXCLUDED.last_occurred_at > message_events.last_occurred_at
+                        THEN EXCLUDED.last_occurred_at
+                        ELSE message_events.last_occurred_at END,
+                    bounce_type = CASE
+                        WHEN message_events.bounce_type = 'HARD'
+                             OR EXCLUDED.bounce_type = 'HARD' THEN 'HARD'
+                        WHEN message_events.bounce_type = 'SOFT'
+                             OR EXCLUDED.bounce_type = 'SOFT' THEN 'SOFT'
+                        ELSE 'UNKNOWN' END,
+                    bounce_code = COALESCE(EXCLUDED.bounce_code, message_events.bounce_code)
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "ws": str(workspace_id),
+                "mid": str(message_id),
+                "bt": bounce_type,
+                "code": bounce_code,
+                "source": source[:50],
+                "detail": detail[:300] if detail else None,
+                "at": occurred_at,
             },
         )

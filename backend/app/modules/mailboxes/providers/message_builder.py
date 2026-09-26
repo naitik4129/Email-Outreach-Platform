@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from email.message import EmailMessage
+from uuid import uuid4
 
 from app.core.errors import AppError
 from app.modules.mailboxes.providers.base import OutboundMessageEnvelope
@@ -22,6 +23,31 @@ def validate_header_value(name: str, value: str | None) -> None:
             f"Header injection detected: newline characters not permitted in {name}",
             status_code=422,
         )
+
+
+def normalize_message_id(value: str | None) -> str | None:
+    """Canonical form for comparing RFC Message-IDs: no angle brackets or
+    whitespace, lower-case. Providers and our own send path disagree on
+    brackets and case, and matching must not depend on either."""
+    if not value:
+        return None
+    cleaned = value.strip().strip("<>").strip().lower()
+    return cleaned or None
+
+
+def sql_normalized_message_id(column: str, *, sqlite: bool) -> str:
+    """SQL expression equivalent of ``normalize_message_id`` for a column."""
+    trim = "TRIM" if sqlite else "BTRIM"
+    return f"LOWER({trim}({column}, '<> '))"
+
+
+def generate_message_id(from_address: str) -> str:
+    """A globally unique RFC 5322 Message-ID on the sender's own domain."""
+    domain = ""
+    if "@" in from_address:
+        domain = from_address.rsplit("@", 1)[-1].strip().lower()
+    domain = re.sub(r"[^a-z0-9.-]", "", domain) or "outly.local"
+    return f"<{uuid4().hex}@{domain}>"
 
 
 def build_rfc5322_message(envelope: OutboundMessageEnvelope) -> EmailMessage:

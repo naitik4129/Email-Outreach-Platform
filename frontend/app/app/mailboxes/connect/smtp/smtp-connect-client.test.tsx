@@ -112,4 +112,58 @@ describe("SmtpConnectClient", () => {
     await user.selectOptions(screen.getByLabelText(/security mode/i), "IMPLICIT_TLS");
     expect(portInput.value).toBe("465");
   });
+
+  it("sends the optional IMAP settings so replies can be detected", async () => {
+    useWorkspace.mockReturnValue({ activeWorkspaceId: "ws-1" });
+    connectSmtpMailbox.mockResolvedValue({
+      mailbox_id: "mb-99",
+      provider: "SMTP",
+      email_address: "sales@example.com",
+      connection_state: "CONNECTED",
+      health_state: "HEALTHY",
+    });
+    const user = userEvent.setup();
+    renderWithClient(<SmtpConnectClient />);
+
+    await user.type(screen.getByLabelText(/^host/i), "smtp.example.com");
+    await user.type(screen.getByLabelText(/^username/i), "user@example.com");
+    await user.type(screen.getByLabelText(/^password/i), "s3cret-password");
+    await user.type(screen.getByLabelText(/sender email address/i), "sales@example.com");
+    await user.type(screen.getByLabelText(/incoming mail server/i), "imap.example.com");
+    await user.click(screen.getByRole("button", { name: /validate & connect/i }));
+
+    expect(connectSmtpMailbox).toHaveBeenCalledWith(
+      "ws-1",
+      expect.objectContaining({
+        imap_host: "imap.example.com",
+        imap_port: 993,
+        imap_security_mode: "IMPLICIT_TLS",
+      }),
+    );
+    // Not entered -> not sent: the IMAP login falls back to the SMTP login.
+    const sent = connectSmtpMailbox.mock.calls[0][1];
+    expect(sent).not.toHaveProperty("imap_username");
+    expect(sent).not.toHaveProperty("imap_password");
+  });
+
+  it("does not send any IMAP field when none was entered (send-only mailbox)", async () => {
+    useWorkspace.mockReturnValue({ activeWorkspaceId: "ws-1" });
+    connectSmtpMailbox.mockResolvedValue({
+      mailbox_id: "mb-99",
+      provider: "SMTP",
+      email_address: "sales@example.com",
+      connection_state: "CONNECTED",
+      health_state: "HEALTHY",
+    });
+    const user = userEvent.setup();
+    renderWithClient(<SmtpConnectClient />);
+    await user.type(screen.getByLabelText(/^host/i), "smtp.example.com");
+    await user.type(screen.getByLabelText(/^username/i), "user@example.com");
+    await user.type(screen.getByLabelText(/^password/i), "s3cret-password");
+    await user.type(screen.getByLabelText(/sender email address/i), "sales@example.com");
+    await user.click(screen.getByRole("button", { name: /validate & connect/i }));
+
+    const sent = connectSmtpMailbox.mock.calls[0][1];
+    expect(Object.keys(sent).some((key) => key.startsWith("imap_"))).toBe(false);
+  });
 });

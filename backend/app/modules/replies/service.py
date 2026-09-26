@@ -6,8 +6,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings
 from app.core.crypto import decrypt_credentials, encrypt_credentials
 from app.core.errors import AppError
 from app.core.metrics import (
@@ -19,6 +21,9 @@ from app.core.metrics import (
     record_reply_sync_run,
     record_sync_resync_triggered,
 )
+from app.db.context import enter_worker_scope
+from app.modules.events.bounce_service import BounceService
+from app.modules.events.repository import EventRepository
 from app.modules.mailboxes.providers.base import (
     EmailProvider,
     ProviderCapability,
@@ -26,18 +31,47 @@ from app.modules.mailboxes.providers.base import (
 from app.modules.mailboxes.providers.gmail import GmailProvider
 from app.modules.mailboxes.providers.microsoft import MicrosoftGraphProvider
 from app.modules.mailboxes.providers.smtp import SmtpProvider
+from app.modules.mailboxes.reply_capability import (
+    ReplySyncStatus,
+    reply_sync_status,
+)
 from app.modules.replies.matcher import ReplyMatcher
 from app.modules.replies.normalizer import normalize_inbound_message
 from app.modules.replies.repository import ReplyRepository
 from app.modules.replies.schemas import (
     InboundClassification,
     MailboxSyncResult,
+    NormalizedInboundMessage,
     SyncCheckpoint,
 )
 
 logger = logging.getLogger(__name__)
 
 CREDENTIAL_REFRESH_SAFETY_MARGIN = timedelta(minutes=5)
+# How long a mailbox that cannot sync (no read scope, no IMAP) is parked.
+_PARKED_RETRY_SECONDS = 3600
+_BACKOFF_BASE_SECONDS = 60
+
+
+def _safe_error_summary(exc: BaseException) -> str:
+    """Error text that cannot carry email content.
+
+    A SQLAlchemy error string embeds the failing statement AND its bound
+    parameters (subject, body, addresses of the message being stored), which
+    must never reach logs or task results. Only the driver's first message
+    line is kept.
+    """
+    if isinstance(exc, SQLAlchemyError):
+        original = getattr(exc, "orig", None) or exc
+        first_line = str(original).splitlines()[0] if str(original) else ""
+        return f"{type(exc).__name__}/{type(original).__name__}: {first_line}"[:300]
+    return f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))}"[:300]
+
+
+def _retry_delay_seconds(failure_count: int, max_backoff_seconds: int) -> int:
+    """Exponential backoff: 2 min, 4 min, 8 min ... capped."""
+    delay = _BACKOFF_BASE_SECONDS * (2 ** min(failure_count, 12))
+    return int(min(max_backoff_seconds, delay))
 
 
 class ReplySyncService:
@@ -58,6 +92,40 @@ class ReplySyncService:
             "SMTP": SmtpProvider(),
         }
 
+    def ensure_sync_states(self, *, limit: int = 50) -> int:
+        """Create (or re-arm) the sync state that makes the scheduler dispatch
+        reply sync for connected mailboxes. Idempotent; safe every scheduler
+        tick. Without a sync state row a mailbox is never synchronized.
+        """
+        candidates = self.repository.discover_mailboxes_needing_sync_state(limit=limit)
+        for row in candidates:
+            workspace_id = UUID(str(row["workspace_id"]))
+            mailbox_id = UUID(str(row["mailbox_id"]))
+            generation = int(row["current_connection_generation"])
+            if row["sync_state_id"] is None:
+                self.repository.ensure_sync_state(
+                    workspace_id=workspace_id,
+                    mailbox_id=mailbox_id,
+                    connection_generation=generation,
+                )
+            else:
+                self.repository.rearm_sync_state(
+                    workspace_id=workspace_id,
+                    mailbox_id=mailbox_id,
+                    connection_generation=generation,
+                )
+            self.session.commit()
+            logger.info(
+                "reply_sync_state_ensured",
+                extra={
+                    "workspace_id": str(workspace_id),
+                    "mailbox_id": str(mailbox_id),
+                    "provider": row["provider"],
+                    "rearmed": row["sync_state_id"] is not None,
+                },
+            )
+        return len(candidates)
+
     def sync_mailbox(
         self,
         *,
@@ -69,12 +137,16 @@ class ReplySyncService:
         sync_interval_seconds: int = 300,
     ) -> MailboxSyncResult:
         """Execute incremental reply synchronization for a single connected mailbox."""
+        log_ctx: dict[str, Any] = {
+            "workspace_id": str(workspace_id),
+            "mailbox_id": str(mailbox_id),
+        }
         mailbox = self.repository.get_mailbox_for_sync(
             workspace_id=workspace_id,
             mailbox_id=mailbox_id,
         )
         if not mailbox:
-            logger.warning("Mailbox %s not found for sync", mailbox_id)
+            logger.warning("reply_sync_mailbox_not_found", extra=log_ctx)
             return MailboxSyncResult(
                 mailbox_id=mailbox_id,
                 workspace_id=workspace_id,
@@ -83,27 +155,18 @@ class ReplySyncService:
             )
 
         provider_name = (mailbox["provider"] or "").upper()
+        log_ctx["provider"] = provider_name
         provider = self.providers.get(provider_name)
-        if not provider or ProviderCapability.REPLY_SYNC not in provider.capabilities:
-            logger.info("Provider %s does not support REPLY_SYNC; skipping", provider_name)
-            self.repository.advance_sync_checkpoint(
-                workspace_id=workspace_id,
-                mailbox_id=mailbox_id,
-                cursor_data="",
-                status="UNAVAILABLE",
-            )
-            self.session.commit()
-            return MailboxSyncResult(
-                mailbox_id=mailbox_id,
-                workspace_id=workspace_id,
-                status="UNSUPPORTED_PROVIDER",
-            )
 
         if mailbox["connection_state"] != "CONNECTED":
+            # Parked until a new connection generation re-arms it.
+            self.repository.mark_sync_unavailable(
+                workspace_id=workspace_id, mailbox_id=mailbox_id
+            )
+            self.session.commit()
             logger.info(
-                "Mailbox %s is not CONNECTED (state=%s); skipping sync",
-                mailbox_id,
-                mailbox["connection_state"],
+                "reply_sync_skipped",
+                extra={**log_ctx, "reason": "not_connected", "state": mailbox["connection_state"]},
             )
             return MailboxSyncResult(
                 mailbox_id=mailbox_id,
@@ -112,9 +175,39 @@ class ReplySyncService:
                 error=f"Mailbox state is {mailbox['connection_state']}",
             )
 
-        # Ensure sync state exists
         connection_generation = mailbox["current_connection_generation"]
-        self.repository.ensure_sync_state(
+        eligibility = self._reply_sync_eligibility(
+            workspace_id=workspace_id,
+            mailbox_id=mailbox_id,
+            provider_name=provider_name,
+            provider=provider,
+            generation=connection_generation,
+        )
+        if eligibility is not ReplySyncStatus.ENABLED:
+            self.repository.ensure_sync_state(
+                workspace_id=workspace_id,
+                mailbox_id=mailbox_id,
+                connection_generation=connection_generation,
+            )
+            self.repository.mark_sync_unavailable(
+                workspace_id=workspace_id, mailbox_id=mailbox_id
+            )
+            self.session.commit()
+            logger.warning(
+                "reply_sync_unavailable",
+                extra={**log_ctx, "reason": eligibility.value},
+            )
+            record_reply_sync_run(provider_name, "unavailable")
+            return MailboxSyncResult(
+                mailbox_id=mailbox_id,
+                workspace_id=workspace_id,
+                status="UNAVAILABLE",
+                error=eligibility.value,
+            )
+        assert provider is not None  # ENABLED implies a known provider
+
+        # Ensure sync state exists
+        sync_state = self.repository.ensure_sync_state(
             workspace_id=workspace_id,
             mailbox_id=mailbox_id,
             connection_generation=connection_generation,
@@ -131,7 +224,7 @@ class ReplySyncService:
         self.session.commit()
 
         if not lease:
-            logger.debug("Sync lease for mailbox %s is held by another worker", mailbox_id)
+            logger.debug("reply_sync_lease_held", extra=log_ctx)
             return MailboxSyncResult(
                 mailbox_id=mailbox_id,
                 workspace_id=workspace_id,
@@ -144,6 +237,8 @@ class ReplySyncService:
             result = self._execute_sync(
                 workspace_id=workspace_id,
                 mailbox_id=mailbox_id,
+                mailbox_address=(mailbox.get("original_address") or "").strip().lower(),
+                connection_generation=connection_generation,
                 provider_name=provider_name,
                 provider=provider,
                 sync_state=lease,
@@ -154,13 +249,33 @@ class ReplySyncService:
             record_reply_sync_run(provider_name, result.status)
             return result
         except Exception as e:
-            logger.exception("Error syncing mailbox %s: %s", mailbox_id, e)
             self.session.rollback()
+            failures = int(sync_state.get("failure_count") or 0) + 1
+            delay = _retry_delay_seconds(
+                failures, Settings.current().reply_sync_max_backoff_seconds
+            )
+            retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+            # Structured, and free of message content: enough to tell which
+            # mailbox failed, on which provider, why, and when it will retry.
+            logger.error(
+                "reply_sync_failed",
+                extra={
+                    **log_ctx,
+                    "error_class": type(e).__name__,
+                    "error_code": getattr(e, "code", None),
+                    "failure_count": failures,
+                    "will_retry": True,
+                    "retry_at": retry_at.isoformat(),
+                    "error": _safe_error_summary(e),
+                },
+                # Tracebacks of database errors contain bound parameters.
+                exc_info=not isinstance(e, SQLAlchemyError),
+            )
             self.repository.release_sync_lease(
                 workspace_id=workspace_id,
                 mailbox_id=mailbox_id,
                 lease_owner=lease_owner,
-                next_due_at=datetime.now(UTC) + timedelta(minutes=2),
+                next_due_at=retry_at,
                 failure=True,
             )
             self.session.commit()
@@ -169,14 +284,42 @@ class ReplySyncService:
                 mailbox_id=mailbox_id,
                 workspace_id=workspace_id,
                 status="ERROR",
-                error=str(e),
+                error=_safe_error_summary(e),
             )
+
+    def _reply_sync_eligibility(
+        self,
+        *,
+        workspace_id: UUID,
+        mailbox_id: UUID,
+        provider_name: str,
+        provider: EmailProvider | None,
+        generation: int,
+    ) -> ReplySyncStatus:
+        """Can this mailbox's stored connection actually read inbound mail?
+
+        Checked before any provider call so a mailbox connected without the read
+        scope (or an SMTP mailbox with no IMAP settings) is parked with a clear
+        reason instead of failing with 403s or provider errors every run.
+        """
+        if provider is None or ProviderCapability.REPLY_SYNC not in provider.capabilities:
+            return ReplySyncStatus.UNSUPPORTED
+        conn = self.repository.get_mailbox_connection(
+            workspace_id=workspace_id, mailbox_id=mailbox_id, generation=generation
+        )
+        if not conn:
+            return ReplySyncStatus.RECONNECT_REQUIRED
+        return reply_sync_status(
+            provider_name, conn.get("granted_scopes"), conn.get("protected_config")
+        )
 
     def _execute_sync(
         self,
         *,
         workspace_id: UUID,
         mailbox_id: UUID,
+        mailbox_address: str,
+        connection_generation: int,
         provider_name: str,
         provider: EmailProvider,
         sync_state: dict[str, Any],
@@ -185,9 +328,15 @@ class ReplySyncService:
         sync_interval_seconds: int,
     ) -> MailboxSyncResult:
         now = datetime.now(UTC)
-        connection_generation = sync_state["connection_generation"]
-
-        # Load and refresh credential
+        log_ctx = {
+            "workspace_id": str(workspace_id),
+            "mailbox_id": str(mailbox_id),
+            "provider": provider_name,
+        }
+        # Use the mailbox's CURRENT connection generation, not the one stored on
+        # the sync state: the send worker rotates generations whenever it
+        # refreshes a token, and a stale generation would make this run's own
+        # token refresh collide with an existing one.
         credential, cred_gen = self._load_and_refresh_credential(
             workspace_id=workspace_id,
             mailbox_id=mailbox_id,
@@ -197,10 +346,11 @@ class ReplySyncService:
         )
 
         # Parse checkpoint
+        was_resync = sync_state.get("status") == "RESYNC_REQUIRED"
         checkpoint = self._load_checkpoint(
             provider_name=provider_name,
             cursor_data=sync_state.get("cursor_data"),
-            is_resync=sync_state.get("status") == "RESYNC_REQUIRED",
+            is_resync=was_resync,
         )
 
         discovered = 0
@@ -210,31 +360,30 @@ class ReplySyncService:
         unresolved = 0
         stopped_enr = 0
         cancelled_msg = 0
+        bounces = 0
         pages_processed = 0
+        finished = False
 
         while pages_processed < max_pages:
             page_result = provider.sync_inbound_messages(
                 credential=credential,
                 cursor=checkpoint.confirmed_cursor,
-                page_token=checkpoint.pending_page_token,
-                max_results=50,
+                page_size=50,
             )
 
             # Check if resync was triggered by provider (e.g. 404/410 cursor expiration)
             if page_result.resync_required:
-                logger.warning(
-                    "Resync required reported by provider %s for mailbox %s",
-                    provider_name,
-                    mailbox_id,
-                )
+                logger.warning("reply_sync_resync_required", extra=log_ctx)
                 self.repository.mark_resync_required(
                     workspace_id=workspace_id,
                     mailbox_id=mailbox_id,
                 )
+                # Unique per event so a later resync is held again, and
+                # released together once a full resync completes.
                 self.repository.insert_safety_hold(
                     workspace_id=workspace_id,
                     mailbox_id=mailbox_id,
-                    source_identity=f"resync:{mailbox_id}",
+                    source_identity=f"resync:{mailbox_id}:{int(now.timestamp())}",
                     reason="Provider checkpoint expired; resync required",
                 )
                 self.repository.release_sync_lease(
@@ -254,9 +403,8 @@ class ReplySyncService:
 
             if page_result.retry_after_seconds and page_result.retry_after_seconds > 0:
                 logger.warning(
-                    "Provider %s requested rate limit backoff: %s s",
-                    provider_name,
-                    page_result.retry_after_seconds,
+                    "reply_sync_rate_limited",
+                    extra={**log_ctx, "retry_after_seconds": page_result.retry_after_seconds},
                 )
                 next_due = now + timedelta(seconds=page_result.retry_after_seconds)
                 self.repository.release_sync_lease(
@@ -286,6 +434,23 @@ class ReplySyncService:
 
             for raw_msg in page_messages:
                 normalized = normalize_inbound_message(raw_msg, provider=provider_name)
+
+                # Our own copy of a sent message is never an inbound reply.
+                if mailbox_address and normalized.from_address == mailbox_address:
+                    continue
+
+                # Delivery-status notifications are bounce evidence, not replies.
+                if (
+                    normalized.classification == InboundClassification.BOUNCE.value
+                    and normalized.delivery_report is not None
+                ):
+                    self._record_bounce(
+                        workspace_id=workspace_id,
+                        mailbox_id=mailbox_id,
+                        normalized=normalized,
+                    )
+                    bounces += 1
+                    continue
 
                 # Find or create conversation
                 local_anchor = normalized.rfc_message_id or normalized.provider_message_id
@@ -406,10 +571,26 @@ class ReplySyncService:
             pages_processed += 1
 
             if not page_result.has_more:
+                finished = True
                 break
 
+        if finished:
+            # The whole traversal is done: a resync hold can now be released,
+            # and replies that arrived before their send was recorded are
+            # matched now that identifiers exist.
+            released = self.repository.resolve_resync_holds(
+                workspace_id=workspace_id, mailbox_id=mailbox_id
+            )
+            reconciled = self.reconcile_unresolved_inbound_messages(
+                workspace_id=workspace_id, mailbox_id=mailbox_id
+            )
+            if released or reconciled:
+                self.session.commit()
+
         # Release lease and schedule next sync run
-        next_due = datetime.now(UTC) + timedelta(seconds=sync_interval_seconds)
+        next_due = datetime.now(UTC) + timedelta(
+            seconds=sync_interval_seconds if finished else 5
+        )
         self.repository.release_sync_lease(
             workspace_id=workspace_id,
             mailbox_id=mailbox_id,
@@ -419,10 +600,25 @@ class ReplySyncService:
         )
         self.session.commit()
 
+        logger.info(
+            "reply_sync_run_completed",
+            extra={
+                **log_ctx,
+                "discovered": discovered,
+                "persisted": persisted,
+                "deduplicated": deduplicated,
+                "matched": matched,
+                "unresolved": unresolved,
+                "bounces": bounces,
+                "enrollments_stopped": stopped_enr,
+                "pages": pages_processed,
+                "complete": finished,
+            },
+        )
         return MailboxSyncResult(
             mailbox_id=mailbox_id,
             workspace_id=workspace_id,
-            status="CURRENT" if checkpoint.pending_page_token is None else "LAGGING",
+            status="CURRENT" if finished else "LAGGING",
             messages_discovered=discovered,
             messages_persisted=persisted,
             messages_deduplicated=deduplicated,
@@ -431,6 +627,51 @@ class ReplySyncService:
             enrollments_stopped=stopped_enr,
             future_messages_cancelled=cancelled_msg,
             resync_required=False,
+        )
+
+    def _record_bounce(
+        self,
+        *,
+        workspace_id: UUID,
+        mailbox_id: UUID,
+        normalized: NormalizedInboundMessage,
+    ) -> None:
+        """Apply a delivery-status notification found in the mailbox.
+
+        Runs under the event worker role (it suppresses addresses and cancels
+        sends, which the sync role may not), inside this page's transaction, so
+        the bounce commits or replays together with the page checkpoint.
+        """
+        report = normalized.delivery_report
+        assert report is not None
+        enter_worker_scope(
+            self.session, workspace_id=workspace_id, role_name="app_worker_general"
+        )
+        BounceService(EventRepository(self.session)).record(
+            workspace_id=workspace_id,
+            recipient_email=report.failed_recipient,
+            bounce_type=report.bounce_type,
+            source="DSN",
+            source_key=f"dsn:{mailbox_id}:{normalized.provider_message_id}"[:200],
+            occurred_at=normalized.received_at,
+            mailbox_id=mailbox_id,
+            # The DSN's own In-Reply-To names the bounced email as well.
+            original_message_ids=[
+                *report.original_message_ids,
+                *([normalized.in_reply_to] if normalized.in_reply_to else []),
+            ],
+            referenced_message_ids=[
+                *report.referenced_message_ids,
+                *normalized.references,
+            ],
+            status_code=report.status_code,
+            detail=report.diagnostic,
+            evidence={
+                "source": "DSN",
+                "status_code": report.status_code,
+                "bounce_type": report.bounce_type,
+            },
+            trust_recipient=False,
         )
 
     def _load_checkpoint(
@@ -448,7 +689,7 @@ class ReplySyncService:
                 return SyncCheckpoint(provider=provider_name)
             return cp
         except Exception:
-            logger.warning("Failed to deserialize cursor_data, resetting checkpoint")
+            logger.warning("reply_sync_checkpoint_reset", extra={"provider": provider_name})
             return SyncCheckpoint(provider=provider_name)
 
     def _load_and_refresh_credential(
@@ -568,20 +809,20 @@ class ReplySyncService:
             if in_reply_to:
                 rfc_ids.insert(0, in_reply_to)
 
+            thread_id = row.get("provider_thread_id")
             candidates = self.repository.load_outbound_candidates(
                 workspace_id=workspace_id,
                 mailbox_id=mailbox_id,
                 rfc_message_ids=rfc_ids,
                 sender_address=sender_addr,
+                provider_thread_id=thread_id,
             )
 
             # Re-construct minimal normalized representation for matcher
-            from app.modules.replies.schemas import NormalizedInboundMessage
-
             dummy_normalized = NormalizedInboundMessage(
                 provider="UNKNOWN",
                 provider_message_id=row["provider_message_id"],
-                provider_thread_id=None,
+                provider_thread_id=thread_id,
                 rfc_message_id=row["rfc_message_id"],
                 in_reply_to=in_reply_to,
                 references=references,
