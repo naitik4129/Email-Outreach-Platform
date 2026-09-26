@@ -446,7 +446,7 @@ class CampaignWorkerRepository:
             self.session.execute(
                 text(
                     """
-                    SELECT c.start_at, c.activated_audience_id,
+                    SELECT c.start_at, c.activated_audience_id, c.campaign_type,
                            c.activated_sequence_id, sv.timezone, sv.weekday_set,
                            sv.window_start_local, sv.window_end_local,
                            ss.id AS first_step_id
@@ -684,17 +684,36 @@ class CampaignWorkerRepository:
         )
 
     def fetch_planned_messages_chunk(
-        self, *, workspace_id: UUID, campaign_id: UUID, limit: int
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        limit: int,
+        hyper: bool = False,
     ) -> list[RowMapping]:
         """FOR UPDATE OF m SKIP LOCKED: rows leave PLANNED as they're
         rendered, so redelivery is naturally idempotent and multiple RENDER
-        workers can safely run concurrently over the same campaign."""
+        workers can safely run concurrently over the same campaign.
+
+        For a hyper-personalized campaign (ADR-0011) a message stays PLANNED until
+        its content is generated, so "not yet handled" is "PLANNED without a
+        generation row" instead. The standard query is unchanged, and does not
+        touch message_generations (so it works before migration 0028)."""
         _safe_set_role(self.session, "app_worker_general")
+        pending_filter = (
+            """AND NOT EXISTS (
+                          SELECT 1 FROM message_generations g
+                          WHERE g.workspace_id = m.workspace_id AND g.message_id = m.id
+                      )"""
+            if hyper
+            else ""
+        )
         rows = (
             self.session.execute(
                 text(
-                    """
-                    SELECT m.id, m.mailbox_id, e.frozen_variables, e.frozen_destination,
+                    f"""
+                    SELECT m.id, m.mailbox_id, m.enrollment_id, m.sequence_id,
+                           m.step_id, e.frozen_variables, e.frozen_destination,
                            ss.email_subject, ss.email_body_html, ss.email_preheader,
                            mb.original_address AS sender_address,
                            mb.sender_display_name AS sender_name
@@ -708,10 +727,11 @@ class CampaignWorkerRepository:
                     WHERE m.workspace_id = :workspace_id
                       AND m.campaign_id = :campaign_id
                       AND m.status = 'PLANNED'
+                      {pending_filter}
                     ORDER BY m.id
                     LIMIT :limit
                     FOR UPDATE OF m SKIP LOCKED
-                    """
+                    """  # noqa: S608 -- pending_filter is a fixed constant above
                 ),
                 {
                     "workspace_id": str(workspace_id),
@@ -771,6 +791,69 @@ class CampaignWorkerRepository:
             },
         )
 
+    def mark_generation_pending(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        sequence_id: UUID,
+        step_id: UUID,
+        enrollment_id: UUID,
+        message_id: UUID,
+        due_at: Any,
+        anchor_at: Any,
+        next_attempt_at: Any,
+        max_attempts: int,
+    ) -> bool:
+        """Hyper-personalized message (ADR-0011): keep it PLANNED with its
+        intended due/anchor time and create the durable generation job that the
+        personalization worker will pick up one lead time before it is due.
+        Returns False when a job already exists (a retried chunk converges)."""
+        _safe_set_role(self.session, "app_worker_general")
+        self.session.execute(
+            text(
+                """
+                UPDATE messages
+                SET due_at = :due_at, anchor_at = :anchor_at
+                WHERE workspace_id = :workspace_id AND id = :message_id
+                  AND status = 'PLANNED' AND rendered_at IS NULL
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "message_id": str(message_id),
+                "due_at": due_at,
+                "anchor_at": anchor_at,
+            },
+        )
+        row = self.session.execute(
+            text(
+                """
+                INSERT INTO message_generations
+                    (id, workspace_id, campaign_id, sequence_id, step_id,
+                     enrollment_id, message_id, state, max_attempts, next_attempt_at)
+                VALUES
+                    (:id, :workspace_id, :campaign_id, :sequence_id, :step_id,
+                     :enrollment_id, :message_id, 'PENDING', :max_attempts,
+                     :next_attempt_at)
+                ON CONFLICT (workspace_id, message_id) DO NOTHING
+                RETURNING id
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "workspace_id": str(workspace_id),
+                "campaign_id": str(campaign_id),
+                "sequence_id": str(sequence_id),
+                "step_id": str(step_id),
+                "enrollment_id": str(enrollment_id),
+                "message_id": str(message_id),
+                "max_attempts": max_attempts,
+                "next_attempt_at": next_attempt_at,
+            },
+        ).first()
+        return row is not None
+
     # -------------------------------------------------------------------
     # Follow-up progression (see progression.py / docs/adr/0009). Every
     # statement is workspace-scoped and runs as app_worker_general, which
@@ -789,6 +872,7 @@ class CampaignWorkerRepository:
                 text(
                     """
                     SELECT c.activated_sequence_id, c.schedule_generation,
+                           c.campaign_type,
                            sv.timezone, sv.weekday_set,
                            sv.window_start_local, sv.window_end_local
                     FROM campaigns c

@@ -5,6 +5,7 @@ import { useParams, usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 
+import { CampaignTypeBadge } from "@/components/campaigns/campaign-type-badge";
 import { Alert } from "@/components/ui/alert";
 import { ApiError } from "@/lib/api-client";
 import { getCampaign, getPreflight } from "@/lib/campaigns-api";
@@ -98,6 +99,16 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
   }
 
   const campaign = campaignQuery.data;
+  // Hyper-personalized campaigns get an extra tab for the objective, samples and
+  // approval; standard campaigns are unchanged.
+  const tabs =
+    campaign.campaign_type === "HYPER_PERSONALIZED"
+      ? [
+          ...TABS.slice(0, 4),
+          { href: "personalization", label: "Personalization" },
+          ...TABS.slice(4),
+        ]
+      : TABS;
   const errorCount = preflightQuery.data?.errors.length ?? 0;
 
   return (
@@ -115,6 +126,7 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
             {campaign.name}
           </h1>
           <StatusBadge status={campaign.status} />
+          <CampaignTypeBadge type={campaign.campaign_type} />
           {campaign.status === "DRAFT" && errorCount > 0 && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
               <AlertTriangle className="h-3 w-3" />
@@ -130,7 +142,7 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
 
       <div className="border-b border-slate-200">
         <nav className="-mb-px flex gap-6 overflow-x-auto">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const href = `/app/campaigns/${campaignId}/${tab.href}`;
             const isActive = pathname?.startsWith(href);
             return (

@@ -6,6 +6,8 @@ The backend capacity service decides whether an otherwise eligible operation can
 
 API abuse protection is separate: endpoint/user/IP/workspace request budgets return safe throttling responses and protect login, OAuth initiation, imports, SMTP tests and costly queries. It does not decrement campaign-email capacity. Recipient unsubscribe is protected from abuse without silently discarding valid suppression requests.
 
+LLM generation and website-research fetches ([ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)/[0012](../adr/0012-llm-port-data-handling-and-validation.md)/[0013](../adr/0013-research-sources-and-outbound-fetch.md)) are a third, separate budget: per-workspace daily caps (generation, preview, fetch) reserved atomically in PostgreSQL before each call, plus a global requests-per-minute limit. They never consume send capacity, and send workers never wait on them.
+
 ## Configuration and applicable scopes
 
 PostgreSQL stores versioned limit policies, effective dates, cooldowns and restrictions. Configuration precedence is the intersection of all applicable limits, never one override that erases a stricter scope.

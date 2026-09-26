@@ -59,6 +59,9 @@ type Props = {
   readOnly: boolean;
   // campaigns.execute: test emails go to real inboxes, so managers and above.
   canTestSend: boolean;
+  // Hyper-personalized campaign: this email is the reference every lead's version
+  // is written from, not the text that is sent (ADR-0011).
+  referenceMode?: boolean;
   mailboxes: CampaignMailbox[];
   onClose: () => void;
   // Called with the server's copy of whatever was saved.
@@ -88,6 +91,7 @@ export function EmailStepDialog({
   precedingWait,
   readOnly,
   canTestSend,
+  referenceMode = false,
   mailboxes,
   onClose,
   onSaved,
@@ -407,7 +411,7 @@ export function EmailStepDialog({
       headerContent={
         <span className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-700">
           <Mail className="h-4 w-4" aria-hidden="true" />
-          Email
+          {referenceMode ? "Reference email" : "Email"}
         </span>
       }
       footer={
@@ -473,6 +477,14 @@ export function EmailStepDialog({
           {readOnly ? (
             <Alert variant="info">
               This sequence can&apos;t be edited now. Duplicate the campaign to make changes.
+            </Alert>
+          ) : null}
+          {referenceMode ? (
+            <Alert variant="info">
+              This is your reference email: the message, offer and call to action you want to
+              communicate. Each lead receives a version personalized to them, written just before
+              it is sent. Variables like {"{{first_name}}"} are filled in first. Review generated
+              samples on the Personalization tab.
             </Alert>
           ) : null}
           {banner ? <Alert variant={banner.kind}>{banner.text}</Alert> : null}
@@ -571,7 +583,12 @@ export function EmailStepDialog({
               readOnly ? null : (
                 <>
                   <TemplatePicker workspaceId={workspaceId} onPick={applyTemplate} />
-                  <UploadButtons disabled={saving} uploading={uploading} onFile={uploadFile} />
+                  <UploadButtons
+                    disabled={saving}
+                    uploading={uploading}
+                    imagesDisabled={referenceMode}
+                    onFile={uploadFile}
+                  />
                 </>
               )
             }
@@ -632,6 +649,12 @@ export function EmailStepDialog({
             />
           </TabPanel>
           <div className="flex justify-end border-t border-slate-200 p-3">
+            {referenceMode ? (
+              <p className="text-xs text-slate-500">
+                Test sends are not available for a reference email: it is not what your leads
+                receive. Generate samples on the Personalization tab instead.
+              </p>
+            ) : (
             <TestSendControl
               workspaceId={workspaceId}
               campaignId={campaignId}
@@ -644,6 +667,7 @@ export function EmailStepDialog({
               bodyHtml={draft.bodyHtml}
               blockedReason={testSendBlockedReason}
             />
+            )}
           </div>
         </div>
       </div>

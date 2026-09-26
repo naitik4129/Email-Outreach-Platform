@@ -89,4 +89,32 @@ describe("CampaignsPageClient", () => {
     expect(await screen.findByText("Q1 Outbound")).toBeInTheDocument();
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
+
+  it("marks hyper-personalized campaigns and leaves standard ones unmarked", async () => {
+    mockWorkspace("MEMBER");
+    const base = {
+      workspace_id: "ws-1",
+      description: null,
+      status: "DRAFT",
+      draft_sequence_id: null,
+      draft_audience_id: null,
+      current_settings_id: null,
+      version: 1,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+    };
+    listCampaigns.mockResolvedValue({
+      items: [
+        { ...base, id: "a", name: "Founders", campaign_type: "HYPER_PERSONALIZED" },
+        { ...base, id: "b", name: "Newsletter", campaign_type: "STANDARD" },
+        { ...base, id: "c", name: "Legacy" },
+      ],
+      next_cursor: null,
+    });
+
+    renderWithClient(<CampaignsPageClient />);
+
+    expect(await screen.findByText("Founders")).toBeInTheDocument();
+    expect(screen.getAllByText("Hyper-Personalized")).toHaveLength(1);
+  });
 });

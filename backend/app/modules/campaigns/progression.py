@@ -10,6 +10,7 @@ from uuid import UUID
 from app.core.errors import AppError
 from app.modules.campaigns.message_rendering import render_step_content
 from app.modules.campaigns.scheduling import project_into_window
+from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,8 @@ class ProgressionRepository(Protocol):
 
     def render_message(self, **kwargs: Any) -> None: ...
 
+    def mark_generation_pending(self, **kwargs: Any) -> bool: ...
+
     def advance_enrollment(self, **kwargs: Any) -> bool: ...
 
     def complete_enrollment(self, **kwargs: Any) -> bool: ...
@@ -136,9 +139,15 @@ class ProgressionService:
         self,
         repo: ProgressionRepository,
         is_suppressed: Callable[[UUID, UUID], bool],
+        *,
+        personalization_lead_seconds: int = 3600,
+        personalization_max_attempts: int = 3,
     ) -> None:
         self.repo = repo
         self.is_suppressed = is_suppressed
+        # Only used for hyper-personalized campaigns (ADR-0011).
+        self.personalization_lead_seconds = personalization_lead_seconds
+        self.personalization_max_attempts = personalization_max_attempts
 
     def advance_batch(
         self,
@@ -233,12 +242,17 @@ class ProgressionService:
                 summary.skip("no_sending_window")
                 continue
 
-            rendered = render_step_content(
-                subject=plan.step["email_subject"],
-                body_html=plan.step["email_body_html"],
-                preheader=plan.step.get("email_preheader"),
-                frozen_variables=row["frozen_variables"] or {},
-                renderer_version=1,
+            hyper = ctx.get("campaign_type") == CAMPAIGN_TYPE_HYPER
+            rendered = (
+                None
+                if hyper
+                else render_step_content(
+                    subject=plan.step["email_subject"],
+                    body_html=plan.step["email_body_html"],
+                    preheader=plan.step.get("email_preheader"),
+                    frozen_variables=row["frozen_variables"] or {},
+                    renderer_version=1,
+                )
             )
             message_id = self.repo.insert_followup_message(
                 workspace_id=workspace_id,
@@ -250,7 +264,24 @@ class ProgressionService:
                 address_id=address_id,
                 schedule_generation=int(ctx["schedule_generation"]),
             )
-            if message_id is not None:
+            if message_id is not None and hyper:
+                # The follow-up is written just in time by the personalization
+                # worker (ADR-0011); it stays PLANNED with its intended time.
+                self.repo.mark_generation_pending(
+                    workspace_id=workspace_id,
+                    campaign_id=campaign_id,
+                    sequence_id=UUID(str(ctx["activated_sequence_id"])),
+                    step_id=UUID(str(plan.step["id"])),
+                    enrollment_id=enrollment_id,
+                    message_id=message_id,
+                    due_at=due_at,
+                    anchor_at=accepted_at,
+                    next_attempt_at=due_at
+                    - timedelta(seconds=self.personalization_lead_seconds),
+                    max_attempts=self.personalization_max_attempts,
+                )
+            elif message_id is not None:
+                assert rendered is not None
                 self.repo.render_message(
                     workspace_id=workspace_id,
                     message_id=message_id,

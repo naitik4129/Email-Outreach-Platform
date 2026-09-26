@@ -3,6 +3,7 @@
 .env.production
 .env.staging
 .env.test
+.env.personalization
 node_modules/
 .next/
 __pycache__/

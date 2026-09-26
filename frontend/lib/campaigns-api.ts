@@ -2,6 +2,7 @@ import { apiRequest } from "@/lib/api-client";
 import type {
   CampaignAudience,
   CampaignDetail,
+  CampaignType,
   CampaignMailbox,
   CampaignPage,
   CampaignPlanning,
@@ -57,7 +58,12 @@ export async function listCampaigns(
 
 export async function createCampaign(
   workspaceId: string,
-  payload: { name: string; description?: string | null },
+  payload: {
+    name: string;
+    description?: string | null;
+    // Chosen once and immutable; omitted means STANDARD.
+    campaign_type?: CampaignType;
+  },
 ) {
   const path = workspacePath(workspaceId, "/campaigns");
   return (

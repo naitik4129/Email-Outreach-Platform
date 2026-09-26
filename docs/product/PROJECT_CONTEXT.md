@@ -191,6 +191,8 @@ Avoid names such as:
 
 because AI should be a capability inside the product rather than an entirely separate campaign system.
 
+> **Amended 2026-09-26 (proposed, [ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)):** the owner chose a campaign-level entry point. A campaign is created as Standard or Hyper-Personalized (`campaign_type`, immutable). This is still not a separate campaign system: the engine, state machines, scheduler and send path are shared, and only the way each message's content snapshot is produced differs. The template-level "Smart Personalized Template" described above remains a possible later addition.
+
 ---
 
 # 5. FRONTEND APPLICATION SHELL
@@ -601,6 +603,8 @@ Available context can include:
 Preview personalized output on example leads.
 
 Allow Previous/Next Lead preview.
+
+> The Hyper-Personalized campaign type ([ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)) implements this for a whole campaign: a campaign objective plus a reference template per step, sample previews with manager approval before launch, and just-in-time per-lead generation. Enrichment providers remain an open decision; v1 uses the lead snapshot and website research ([ADR-0013](../adr/0013-research-sources-and-outbound-fetch.md)).
 
 ---
 

@@ -18,6 +18,10 @@ Relay publishes the committed outbox through [EVENT_SYSTEM](EVENT_SYSTEM.md). QU
 
 Follow-up emails are planned by a separate, slower pass (`SEQUENCE_PROGRESSION_INTERVAL_SECONDS`, default 30) when `SEQUENCE_PROGRESSION_ENABLED=true`. The scheduler role can read campaigns cross-tenant but not enrollments, so it only lists RUNNING campaigns with READY planning (keyset by campaign id, a bounded slice per interval, wrapping around) and queues `campaigns.advance_enrollments_chunk` for each. The task runs per workspace as `app_worker_general`; see [ADR-0009](../adr/0009-sequence-progression-sweeper.md). It never sends and never bypasses the due-discovery/claim path: planned follow-ups are ordinary SCHEDULED messages stamped with the campaign's current schedule generation.
 
+## Personalization generation sweep (proposed)
+
+For HYPER_PERSONALIZED campaigns ([ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)) a message stays PLANNED with an intended `due_at` until its content is generated. When `PERSONALIZATION_ENABLED=true` the scheduler runs a separate, read-only sweep (`PERSONALIZATION_DISPATCH_INTERVAL_SECONDS`) that lists RUNNING/READY campaigns having PENDING `message_generations` whose `next_attempt_at` (= `due_at` − lead time) has passed, and queues `personalization.generate_chunk` (ids only) on the `personalization` queue. Like the progression sweep it never generates, never sends and never claims messages: the task claims a generation row under `FOR UPDATE SKIP LOCKED`, and the resulting SCHEDULED message flows through the ordinary due-discovery/claim path. Duplicate tasks are harmless.
+
 ## Dispatch lease and lost work
 
 Dispatch lease bounds time until a worker authorizes an attempt, not how long an accepted provider request may run. Worker validates generation and lease. Expired QUEUED with no attempt returns to its recorded origin, increments generation and recomputes due time; stale outbox deliveries are superseded. Old workers/tasks cannot authorize the new generation.

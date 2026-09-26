@@ -4,7 +4,7 @@ from datetime import datetime, time
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Weekday bit order (documented here since no migration comment defines it):
 # bit 0 = Monday ... bit 6 = Sunday (ISO week order). A `weekdays` list of
@@ -17,12 +17,21 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # ---------------------------------------------------------------------------
 
 
+CampaignType = Literal["STANDARD", "HYPER_PERSONALIZED"]
+
+
 class CampaignCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
+    # Chosen once and immutable (ADR-0011).
+    campaign_type: CampaignType = "STANDARD"
 
 
 class CampaignUpdateIn(BaseModel):
+    # The campaign type cannot be changed after creation; an unknown field is
+    # rejected rather than silently ignored.
+    model_config = ConfigDict(extra="forbid")
+
     expected_version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=2000)
@@ -42,6 +51,7 @@ class CampaignListItem(BaseModel):
     name: str
     description: str | None = None
     status: str
+    campaign_type: CampaignType = "STANDARD"
     draft_sequence_id: UUID | None = None
     draft_audience_id: UUID | None = None
     current_settings_id: UUID | None = None
@@ -62,6 +72,7 @@ class CampaignDetailOut(BaseModel):
     description: str | None = None
     creator_id: UUID
     status: str
+    campaign_type: CampaignType = "STANDARD"
     start_at: datetime | None = None
     draft_sequence_id: UUID | None = None
     draft_audience_id: UUID | None = None

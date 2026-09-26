@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { canDraftCampaign, canExecuteCampaign } from "@/lib/permissions";
+import {
+  canApprovePersonalization,
+  canDraftCampaign,
+  canExecuteCampaign,
+} from "@/lib/permissions";
 
 describe("canDraftCampaign", () => {
   it("denies VIEWER and undefined", () => {
@@ -27,5 +31,16 @@ describe("canExecuteCampaign", () => {
     expect(canExecuteCampaign("MANAGER")).toBe(true);
     expect(canExecuteCampaign("ADMIN")).toBe(true);
     expect(canExecuteCampaign("OWNER")).toBe(true);
+  });
+});
+
+describe("canApprovePersonalization", () => {
+  it("is the same tier as activating: managers and above only", () => {
+    for (const role of ["OWNER", "ADMIN", "MANAGER"] as const) {
+      expect(canApprovePersonalization(role)).toBe(true);
+    }
+    for (const role of ["MEMBER", "VIEWER", undefined] as const) {
+      expect(canApprovePersonalization(role)).toBe(false);
+    }
   });
 });

@@ -164,7 +164,7 @@ def check():
     for name,roles,privileges in grants:
         if any(r in roles for r in ['PUBLIC','anon','authenticated','service_role']): error(f'browser grant {name}')
         if name in ['mailbox_connections','oauth_flows'] and 'app_worker_general' in roles: error(f'general worker secret access {name}')
-        if 'DELETE' in privileges and name not in ['lead_list_memberships','sequence_steps','campaign_mailboxes']: error(f'history DELETE grant {name}')
+        if 'DELETE' in privileges and name not in ['lead_list_memberships','sequence_steps','campaign_mailboxes','campaign_step_attachments','personalization_research_cache','personalization_previews']: error(f'history DELETE grant {name}')
         if privileges[0] == 'INSERT' and '(' in privileges:
             cols,_ = parens(privileges,1)
             missing=required[name]-set(cols)
@@ -173,7 +173,7 @@ def check():
                 if name==other_name and roles==other_roles and other_privileges[0]=='INSERT':
                     missing -= set(other_privileges)
             if missing: error(f'INSERT cannot supply required {name} columns {sorted(missing)} for {roles}')
-    if len(paths) < 6 or len(tables) != 56: error(f'expected at least 6 files / 56 tables, found {len(paths)} / {len(tables)}')
+    if len(paths) < 6 or len(tables) != 63: error(f'expected at least 6 files / 63 tables, found {len(paths)} / {len(tables)}')
     for warning in warnings: print('WARNING:',warning)
     for message in errors: print('ERROR:',message)
     print(f'{len(paths)} migrations; {len(tables)} tables; {len(fks)} FKs; {len(policies)} policies; {len(functions)} functions; {len(grants)} table grants')

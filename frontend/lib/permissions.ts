@@ -27,6 +27,13 @@ export function canExecuteCampaign(role: RoleCode): boolean {
   return Boolean(role && EXECUTE_ROLES.has(role));
 }
 
+/** Approving the sample emails that unlock activating a hyper-personalized
+ * campaign uses the same capability as activating it (campaigns.execute). UX
+ * only -- the server and RLS enforce it. */
+export function canApprovePersonalization(role: RoleCode): boolean {
+  return canExecuteCampaign(role);
+}
+
 const INBOX_MANAGE_ROLES = new Set(["OWNER", "ADMIN", "MANAGER"]);
 
 /** inbox.manage: archive or unarchive conversations. */

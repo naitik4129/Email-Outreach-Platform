@@ -35,6 +35,7 @@ class CampaignRepository:
         name: str,
         description: str | None,
         creator_id: UUID,
+        campaign_type: str = "STANDARD",
     ) -> RowMapping:
         campaign_id = uuid.uuid4()
         row = (
@@ -42,9 +43,11 @@ class CampaignRepository:
                 text(
                     """
                     INSERT INTO campaigns
-                        (id, workspace_id, name, description, creator_id, status)
+                        (id, workspace_id, name, description, creator_id, status,
+                         campaign_type)
                     VALUES
-                        (:id, :workspace_id, :name, :description, :creator_id, 'DRAFT')
+                        (:id, :workspace_id, :name, :description, :creator_id, 'DRAFT',
+                         :campaign_type)
                     RETURNING *
                     """
                 ),
@@ -54,6 +57,7 @@ class CampaignRepository:
                     "name": name,
                     "description": description,
                     "creator_id": str(creator_id),
+                    "campaign_type": campaign_type,
                 },
             )
             .mappings()
@@ -64,7 +68,11 @@ class CampaignRepository:
             actor_id=creator_id,
             action="campaign.create",
             target_id=campaign_id,
-            after_state={"name": name, "status": "DRAFT"},
+            after_state={
+                "name": name,
+                "status": "DRAFT",
+                "campaign_type": campaign_type,
+            },
         )
         return row
 
@@ -386,6 +394,59 @@ class CampaignRepository:
             workspace_id=workspace_id, campaign_id=campaign_id, sequence_id=sequence_id
         )
         return row
+
+    def set_sequence_personalization_config(
+        self,
+        *,
+        workspace_id: UUID,
+        sequence_id: UUID,
+        config: dict[str, Any],
+        expected_version: int | None = None,
+    ) -> RowMapping | None:
+        """Store the campaign objective on the draft sequence (ADR-0011). The
+        sequence guard trigger rejects this once the campaign is activated or the
+        sequence frozen. None when the version guard or DRAFT status did not
+        match."""
+        return (
+            self.session.execute(
+                text(
+                    """
+                    UPDATE campaign_sequences
+                    SET personalization_config = CAST(:config AS jsonb)
+                    WHERE workspace_id = :workspace_id AND id = :sequence_id
+                      AND status = 'DRAFT'
+                      AND (CAST(:expected_version AS bigint) IS NULL
+                           OR version = CAST(:expected_version AS bigint))
+                    RETURNING *
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "sequence_id": str(sequence_id),
+                    "config": json.dumps(config),
+                    "expected_version": expected_version,
+                },
+            )
+            .mappings()
+            .first()
+        )
+
+    def record_audit_event(
+        self,
+        *,
+        workspace_id: UUID,
+        actor_id: UUID,
+        action: str,
+        target_id: UUID,
+        after_state: dict[str, Any] | None = None,
+    ) -> None:
+        self._record_audit_event(
+            workspace_id=workspace_id,
+            actor_id=actor_id,
+            action=action,
+            target_id=target_id,
+            after_state=after_state,
+        )
 
     def list_steps_ordered(
         self, *, workspace_id: UUID, sequence_id: UUID

@@ -44,12 +44,25 @@ def render_step_content(
     rendered_body = inject_preheader(
         rendered_body, render_preheader(preheader, frozen_variables)
     )
-    digest_input = f"{rendered_subject}\x00{rendered_body}\x00{renderer_version}"
-    content_digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+    content_digest = compute_content_digest(
+        rendered_subject, rendered_body, renderer_version
+    )
     return RenderedMessageContent(rendered_subject, rendered_body, content_digest)
 
 
-def compute_sequence_content_digest(steps: Sequence[Mapping[str, Any]]) -> str:
+def compute_content_digest(subject: str, body_html: str, renderer_version: int) -> str:
+    """The message content digest the send gate recomputes from the stored
+    subject, body and renderer version. Shared by template rendering and by
+    model-generated content so both hash identically."""
+    digest_input = f"{subject}\x00{body_html}\x00{renderer_version}"
+    return hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
+
+
+def compute_sequence_content_digest(
+    steps: Sequence[Mapping[str, Any]],
+    *,
+    personalization_config: Mapping[str, Any] | None = None,
+) -> str:
     """A stable sha256 over a sequence's step content, satisfying
     campaign_sequences_frozen_check's ^[0-9a-f]{64}$ shape.
 
@@ -84,5 +97,21 @@ def compute_sequence_content_digest(steps: Sequence[Mapping[str, Any]]) -> str:
                 key=lambda a: (a["disposition"], a["content_id"]),
             )
         canonical.append(entry)
-    payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    if personalization_config is not None:
+        # Only present for hyper-personalized sequences, so every existing
+        # (standard) sequence digest is byte-identical to before. The objective
+        # and prompt version are frozen with the reference templates (ADR-0011).
+        from app.modules.personalization.version import PROMPT_VERSION
+
+        payload = json.dumps(
+            {
+                "steps": canonical,
+                "personalization": dict(personalization_config),
+                "prompt_version": PROMPT_VERSION,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

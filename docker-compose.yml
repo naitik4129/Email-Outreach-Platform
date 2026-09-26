@@ -118,6 +118,19 @@ services:
         "--loglevel=INFO", "--queues=mailbox.sync", "--concurrency=1",
       ]
 
+  # Hyper-personalized generation (docs/adr/0011-0013). The ONLY service that
+  # receives PERSONALIZATION_OPENAI_API_KEY: put it in .env.personalization (not
+  # in .env, which every other container loads). Idle unless
+  # PERSONALIZATION_ENABLED=true in .env. `required: false` needs Docker Compose
+  # 2.24 or newer.
+  worker-personalization:
+    <<: [*worker, *app-env]
+    env_file:
+      - path: .env
+      - path: .env.personalization
+        required: false
+    command: ["python", "-m", "workers.personalization_worker"]
+
   rate-controller:
     <<: [*worker, *app-env]
     command: ["python", "-m", "workers.rate_controller"]

@@ -23,6 +23,10 @@ from app.modules.campaigns.schemas import (
     PlanningJobStatusOut,
     ResumeIn,
 )
+from app.modules.personalization.version import (
+    CAMPAIGN_TYPE_HYPER,
+    CAMPAIGN_TYPE_STANDARD,
+)
 
 _ACTIVATE_OPERATION = "campaign.activate"
 
@@ -142,11 +146,24 @@ class CampaignActivationService:
             attachments_by_step.setdefault(str(attachment["step_id"]), []).append(
                 dict(attachment)
             )
+        sequence_row = self.repo.get_sequence(
+            workspace_id=context.workspace_id, campaign_id=campaign_id
+        )
+        # The objective is frozen with the reference templates (ADR-0011); only
+        # hyper-personalized sequences carry one, so standard digests are unchanged.
+        objective = (
+            dict(sequence_row["personalization_config"])
+            if campaign.get("campaign_type") == CAMPAIGN_TYPE_HYPER
+            and sequence_row is not None
+            and sequence_row.get("personalization_config")
+            else None
+        )
         content_digest = compute_sequence_content_digest(
             [
                 {**dict(step), "attachments": attachments_by_step.get(str(step["id"]))}
                 for step in steps
-            ]
+            ],
+            personalization_config=objective,
         )
         frozen_sequence = self.repo.freeze_sequence(
             workspace_id=context.workspace_id,
@@ -404,6 +421,7 @@ class CampaignActivationService:
             description=row["description"],
             creator_id=row["creator_id"],
             status=row["status"],
+            campaign_type=row.get("campaign_type", CAMPAIGN_TYPE_STANDARD),
             start_at=row["start_at"],
             draft_sequence_id=row["draft_sequence_id"],
             draft_audience_id=row["draft_audience_id"],

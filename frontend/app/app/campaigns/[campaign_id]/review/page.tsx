@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Loader2, Lock, Rocket } from "lucide-react";
 import { useState } from "react";
 
+import { GenerationProgressPanel } from "@/components/campaigns/personalization/generation-progress-panel";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ProviderBadge } from "@/components/mailboxes/provider-badge";
@@ -17,6 +18,7 @@ import {
   pauseCampaign,
   resumeCampaign,
 } from "@/lib/campaigns-api";
+import { getPersonalization } from "@/lib/personalization-api";
 import { canExecuteCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignPlanning, PreflightIssue } from "@/types/domain";
@@ -31,6 +33,7 @@ const TAB_FOR_FIELD: Record<string, string> = {
   mailboxes: "senders",
   audience: "audience",
   settings: "schedule",
+  personalization: "personalization",
 };
 
 function tabForIssue(issue: PreflightIssue): string {
@@ -166,6 +169,13 @@ export default function CampaignReviewPage() {
         : Promise.reject(new Error("No active workspace")),
     enabled: Boolean(activeWorkspaceId && campaignId && isActivated),
     refetchInterval: (query) => (planningIsNonTerminal(query.state.data) ? 4000 : false),
+  });
+
+  const isHyper = reviewQuery.data?.campaign.campaign_type === "HYPER_PERSONALIZED";
+  const personalizationQuery = useQuery({
+    queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId, "personalization"],
+    queryFn: () => getPersonalization(activeWorkspaceId as string, campaignId),
+    enabled: Boolean(activeWorkspaceId && campaignId && isHyper),
   });
 
   const invalidateAll = () => {
@@ -333,9 +343,36 @@ export default function CampaignReviewPage() {
         )}
       </section>
 
+      {isHyper && personalizationQuery.data ? (
+        <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-900">Personalization</h3>
+          <p className="mt-1 text-sm text-slate-600">
+            {personalizationQuery.data.config
+              ? `Objective: ${personalizationQuery.data.config.objective}`
+              : "No objective defined yet."}
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            {personalizationQuery.data.approval.status === "APPROVED"
+              ? "Sample emails approved."
+              : personalizationQuery.data.approval.status === "STALE"
+                ? "Approval is out of date: generate and approve new samples."
+                : "Sample emails have not been approved yet."}{" "}
+            Each email is written shortly before it is sent.
+          </p>
+        </section>
+      ) : null}
+
       {isActivated && planningQuery.data && (
         <PlanningStatusPanel planning={planningQuery.data} />
       )}
+
+      {isHyper && isActivated && activeWorkspaceId ? (
+        <GenerationProgressPanel
+          workspaceId={activeWorkspaceId}
+          campaignId={campaignId}
+          active
+        />
+      ) : null}
 
       <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
         {campaign.status === "DRAFT" ? (
@@ -356,7 +393,10 @@ export default function CampaignReviewPage() {
                   window.confirm(
                     `Activate "${campaign.name}"? This freezes the sequence, senders and ` +
                       "audience and creates a durable message plan. No email is sent by " +
-                      "this action, and configuration becomes restricted from editing.",
+                      "this action, and configuration becomes restricted from editing." +
+                      (isHyper
+                        ? " Each personalized email is written shortly before it is due to send."
+                        : ""),
                   )
                 ) {
                   activateMutation.mutate();

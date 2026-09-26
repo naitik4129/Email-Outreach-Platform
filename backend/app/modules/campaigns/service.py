@@ -6,6 +6,7 @@ from sqlalchemy import RowMapping
 from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext
+from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.campaigns.repository import CampaignRepository
 from app.modules.campaigns.schemas import (
@@ -17,6 +18,10 @@ from app.modules.campaigns.schemas import (
     CampaignUpdateIn,
 )
 from app.modules.leads.pagination import decode_cursor, encode_cursor, normalize_limit
+from app.modules.personalization.version import (
+    CAMPAIGN_TYPE_HYPER,
+    CAMPAIGN_TYPE_STANDARD,
+)
 
 _ALLOWED_STATUS_FILTERS = {
     "DRAFT",
@@ -27,6 +32,18 @@ _ALLOWED_STATUS_FILTERS = {
     "COMPLETED",
     "ARCHIVED",
 }
+
+
+def _require_personalization_enabled() -> None:
+    """Hyper-personalized campaigns exist only where the operator enabled the
+    feature (ADR-0011/0012): fail closed instead of creating a campaign that can
+    never be activated."""
+    if not Settings.current().personalization_enabled:
+        raise AppError(
+            "personalization_disabled",
+            "Hyper-personalized campaigns are not enabled for this deployment",
+            status_code=409,
+        )
 
 
 def _validate_name(name: str) -> str:
@@ -51,11 +68,14 @@ class CampaignService:
         self, context: WorkspaceContext, payload: CampaignCreateIn
     ) -> CampaignDetailOut:
         clean_name = _validate_name(payload.name)
+        if payload.campaign_type == CAMPAIGN_TYPE_HYPER:
+            _require_personalization_enabled()
         row = self.repo.create_campaign(
             workspace_id=context.workspace_id,
             name=clean_name,
             description=payload.description,
             creator_id=context.user_id,
+            campaign_type=payload.campaign_type,
         )
         return self._to_detail_out(row)
 
@@ -150,11 +170,15 @@ class CampaignService:
             if payload.name
             else f"{source['name']} (Copy)"[:200]
         )
+        source_type = source.get("campaign_type", CAMPAIGN_TYPE_STANDARD)
+        if source_type == CAMPAIGN_TYPE_HYPER:
+            _require_personalization_enabled()
         new_campaign = self.repo.create_campaign(
             workspace_id=context.workspace_id,
             name=dup_name,
             description=source["description"],
             creator_id=context.user_id,
+            campaign_type=source_type,
         )
         new_campaign_id = UUID(str(new_campaign["id"]))
 
@@ -165,6 +189,14 @@ class CampaignService:
             new_sequence = self.repo.create_sequence(
                 workspace_id=context.workspace_id, campaign_id=new_campaign_id
             )
+            if source_sequence.get("personalization_config"):
+                # The objective is copied; sample approvals never are -- the copy
+                # must be previewed and approved on its own (ADR-0011).
+                self.repo.set_sequence_personalization_config(
+                    workspace_id=context.workspace_id,
+                    sequence_id=UUID(str(new_sequence["id"])),
+                    config=dict(source_sequence["personalization_config"]),
+                )
             source_steps = self.repo.list_steps_ordered(
                 workspace_id=context.workspace_id,
                 sequence_id=UUID(str(source_sequence["id"])),
@@ -233,6 +265,7 @@ class CampaignService:
             name=row["name"],
             description=row["description"],
             status=row["status"],
+            campaign_type=row.get("campaign_type", CAMPAIGN_TYPE_STANDARD),
             draft_sequence_id=row["draft_sequence_id"],
             draft_audience_id=row["draft_audience_id"],
             current_settings_id=row["current_settings_id"],
@@ -249,6 +282,7 @@ class CampaignService:
             description=row["description"],
             creator_id=row["creator_id"],
             status=row["status"],
+            campaign_type=row.get("campaign_type", CAMPAIGN_TYPE_STANDARD),
             start_at=row["start_at"],
             draft_sequence_id=row["draft_sequence_id"],
             draft_audience_id=row["draft_audience_id"],

@@ -11,10 +11,11 @@ Workers are independent Python/Celery runtime entrypoints into one authoritative
 | worker-send | Dispatch one authorized message attempt; safe send retry uses the same service. | Bounded provider I/O; low prefetch; credential access; independently scalable within rate limits. |
 | worker-sync | Mailbox page synchronization, normalization/matching and reconciliation lookups. | Bounded page size, one cursor owner per mailbox/folder, read-capability credentials. |
 | worker-general | Separate consumers for safety webhooks, import chunks, planning, notifications and maintenance. | Reserve capacity for safety events; imports must not occupy all general slots. |
+| worker-personalization (implemented, flag-gated, [ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)/[0012](../adr/0012-llm-port-data-handling-and-validation.md)/[0013](../adr/0013-research-sources-and-outbound-fetch.md)) | Just-in-time generation of hyper-personalized message content and preview samples; website research fetch. | The only group holding the LLM API key; DB role `app_worker_general`; no mailbox credentials; no DB transaction or lock held across LLM/fetch I/O; enabled only by `PERSONALIZATION_ENABLED`. |
 | scheduler | Bounded durable due discovery and claim/recovery iteration. | Small database pool; no provider credentials. One initial replica, concurrency-safe protocol. |
 | outbox relay | Bounded delivery leasing and broker publication. May be a specialized general entrypoint. | Broker publish access plus scoped delivery metadata; no email credentials/content. |
 
-One codebase can run several process invocations with different queue selections. `worker-general` is not a license for a single FIFO where a large import blocks unsubscribe processing. Dedicated safety-consumer capacity is required even if it uses the same image. Later worker-import/analytics groups split measured workloads; worker-ai, verification and personalization remain later capabilities and have no MVP queues or secrets.
+One codebase can run several process invocations with different queue selections. `worker-general` is not a license for a single FIFO where a large import blocks unsubscribe processing. Dedicated safety-consumer capacity is required even if it uses the same image. Later worker-import/analytics groups split measured workloads; worker-ai and verification remain later capabilities and have no MVP queues or secrets. Personalization is the exception proposed by [ADR-0011](../adr/0011-hyper-personalized-campaign-type.md): a flag-gated `worker-personalization` group whose key and queue exist only when that feature is enabled.
 
 ## Durable task contract
 
@@ -43,6 +44,7 @@ Never share ORM sessions or provider clients unsafely across process forks. Inst
 | Mailbox sync | Mailbox/folder generation + page/checkpoint | Replay page and deduplicate inbound IDs before cursor advance. |
 | Provider event | Provider receipt ID + consumer effect key | Apply state/event/dedupe marker atomically. |
 | Import | Object version/mapping + row ordinal + chunk checkpoint | Replay rows; no duplicate leads or overwritten contacts. |
+| Personalization | `message_generations` row (unique per message) + lease + durable attempt counters; final write guarded by `WHERE status='PLANNED'` | Lease expiry abandons the attempt (still counted); bounded attempts then `FAILED`; a duplicate task cannot double-finalize. |
 | Notification | Source event + recipient/channel | In-app upsert; external delivery separately tracked, uncertain delivery does not alter campaign. |
 | Maintenance | Resource ID + expected version + operation | Recheck current state, process bounded batch. No unapproved destructive retention job. |
 | Analytics | Domain event ID + aggregate consumer | Deduplicate or recompute from durable facts; never blocks sends. |

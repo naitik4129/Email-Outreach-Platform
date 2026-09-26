@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from app.modules.campaigns.message_rendering import render_step_content
 from app.modules.campaigns.progression import ProgressionService
 from app.modules.campaigns.scheduling import project_into_window
 from app.modules.campaigns.worker_repository import CampaignWorkerRepository
+from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 from app.modules.suppression.checks import is_address_suppressed
 from app.modules.templates.rendering import build_lead_render_context
 from workers.celery_app import celery_app
@@ -542,24 +544,49 @@ def render_messages_chunk(
                 session.rollback()
                 return
 
+            hyper = ctx["campaign_type"] == CAMPAIGN_TYPE_HYPER
             rows = repo.fetch_planned_messages_chunk(
-                workspace_id=ws_uuid, campaign_id=campaign_uuid, limit=BATCH_SIZE
+                workspace_id=ws_uuid,
+                campaign_id=campaign_uuid,
+                limit=BATCH_SIZE,
+                hyper=hyper,
             )
+            personalization = Settings.current() if hyper else None
 
             for row in rows:
-                rendered = render_step_content(
-                    subject=row["email_subject"],
-                    body_html=row["email_body_html"],
-                    preheader=row["email_preheader"],
-                    frozen_variables=row["frozen_variables"] or {},
-                    renderer_version=1,
-                )
                 due_at = project_into_window(
                     lower_bound_utc=ctx["start_at"],
                     timezone=ctx["timezone"],
                     weekday_set=ctx["weekday_set"],
                     window_start_local=ctx["window_start_local"],
                     window_end_local=ctx["window_end_local"],
+                )
+                if personalization is not None:
+                    # Hyper-personalized (ADR-0011): the message stays PLANNED
+                    # with its intended time; the personalization worker writes
+                    # the content snapshot one lead time before it is due.
+                    repo.mark_generation_pending(
+                        workspace_id=ws_uuid,
+                        campaign_id=campaign_uuid,
+                        sequence_id=UUID(str(row["sequence_id"])),
+                        step_id=UUID(str(row["step_id"])),
+                        enrollment_id=UUID(str(row["enrollment_id"])),
+                        message_id=UUID(str(row["id"])),
+                        due_at=due_at,
+                        anchor_at=ctx["start_at"],
+                        next_attempt_at=due_at
+                        - timedelta(
+                            seconds=personalization.personalization_lead_time_seconds
+                        ),
+                        max_attempts=personalization.personalization_max_attempts,
+                    )
+                    continue
+                rendered = render_step_content(
+                    subject=row["email_subject"],
+                    body_html=row["email_body_html"],
+                    preheader=row["email_preheader"],
+                    frozen_variables=row["frozen_variables"] or {},
+                    renderer_version=1,
                 )
                 repo.render_message(
                     workspace_id=ws_uuid,
@@ -678,6 +705,8 @@ def advance_enrollments_chunk(
             is_suppressed=lambda ws, address_id: is_address_suppressed(
                 session, ws, address_id
             ),
+            personalization_lead_seconds=settings.personalization_lead_time_seconds,
+            personalization_max_attempts=settings.personalization_max_attempts,
         )
         try:
             summary = service.advance_batch(

@@ -176,6 +176,14 @@ psql "$DB" -c "select count(*) as app_roles from pg_roles where rolname like 'ap
 
   If a file fails, do not edit it. Keep the error text and ask for help.
 
+**Hyper-personalized campaigns (migrations 0026–0029).** These are additive and are applied
+like any other missing file: review each one (its header is the migration review), apply in order,
+one at a time. **0026 must be applied before you deploy this version of the backend and workers**:
+campaign creation and message planning select `campaigns.campaign_type`, so an unmigrated database
+would fail for every campaign, standard ones included. 0027–0029 are needed only when you enable the
+feature (Part 9, "Enable hyper-personalized campaigns"): 0027 before the worker, 0028 before the
+scheduler sweep, 0029 before sample previews.
+
 Finish with `unset DB`.
 
 ### 5.2 Storage bucket
@@ -311,6 +319,9 @@ SEQUENCE_PROGRESSION_INTERVAL_SECONDS=30
 SEQUENCE_PROGRESSION_CAMPAIGNS_PER_RUN=200
 SEQUENCE_PROGRESSION_BATCH_SIZE=100
 SUPABASE_ATTACHMENTS_BUCKET="email-attachments"
+
+# Hyper-personalized campaigns. Keep false unless you follow Part 9's optional section.
+PERSONALIZATION_ENABLED=false
 
 # Keep false for the first start. Part 9 turns it on after checking.
 SENDING_WORKER_ENABLED=false
@@ -531,6 +542,59 @@ docker compose logs -f worker-send     # Ctrl+C stops watching only
 Check the test emails arrive. Reply to one; within a few minutes the reply should appear in
 **Inbox** (`worker-sync` plus the scheduler). Only then use real leads, with low daily limits on
 new mailboxes.
+
+### Enable hyper-personalized campaigns (optional)
+
+A Hyper-Personalized campaign writes an individual email for each lead shortly before it is sent
+(docs/adr/0011). **Turning it on sends lead data to OpenAI** and fetches each lead's company
+website. Read `docs/adr/0012` (what is sent, retention, budgets) and `docs/adr/0013` (website
+fetch policy) first; enabling it is your assertion that this is allowed for your customers' data.
+Sent to the model: first/last name, company, job title, industry, location, a few other profile
+and custom fields, and text from the company website. **Never** the email address, phone number
+or LinkedIn URLs.
+
+Do this only after real sending works (above), and after migrations 0026–0029 are applied.
+
+1. Put the key in its **own** file so only one container can read it (`.env` is loaded by every
+   service):
+
+   ```bash
+   cd ~/outly
+   nano .env.personalization      # one line: PERSONALIZATION_OPENAI_API_KEY=sk-...
+   chmod 600 .env.personalization
+   ```
+
+   Loading it needs Docker Compose 2.24 or newer (`docker compose version`). The file is in
+   `.gitignore`; never commit it.
+2. In `.env` set `PERSONALIZATION_ENABLED=true` and `PERSONALIZATION_MODEL=` to the OpenAI model
+   you want (there is deliberately no default). Optional limits and their defaults are listed in
+   `.env.example` (`PERSONALIZATION_DAILY_GENERATION_CAP`, `_DAILY_PREVIEW_CAP`,
+   `_DAILY_FETCH_CAP`, `_RPM`, `_LEAD_TIME_SECONDS`, ...). Do **not** put the key in `.env`.
+3. Rebuild and start (the API and scheduler need the flag; only the new worker has the key):
+
+   ```bash
+   docker compose up -d --build backend scheduler worker-general worker-personalization
+   docker compose logs --tail=50 worker-personalization
+   ```
+
+   The worker refuses to start if the flag is on and the key is missing.
+4. In the app: create a **Hyper-Personalized** campaign, save the objective, write a reference
+   email, generate samples on the **Personalization** tab and check them. A manager approves them.
+   Only then activate a small campaign to your own addresses.
+
+Things to know:
+
+- **Follow-ups need `SEQUENCE_PROGRESSION_ENABLED=true`.** A multi-step personalized campaign
+  cannot be activated while it is off.
+- **Switching the flag off later stops generation.** Messages already planned stay unsent (they
+  are not lost) until it is switched on again; the campaign's Review page shows them as "Waiting".
+  Nothing is ever sent without a validated, stored email.
+- An email that cannot be written safely after the configured attempts is marked failed and is
+  **not sent**; the Review page shows the reason. A lead with too little data receives the
+  reference email with normal variable substitution instead.
+- Costs are bounded by the per-workspace daily caps and the global `PERSONALIZATION_RPM`, not by
+  a currency amount; set them deliberately.
+- Logs contain ids, counts and reason codes only, never lead data or generated text.
 
 ---
 

@@ -41,6 +41,8 @@ Completed/archived outreach is duplicated into a new draft, never reopened.
 Published content and sending history are retained. Hard deletion and retention
 jobs remain disabled until their workflows are approved and implemented.
 
+Hyper-personalized campaigns ([ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)) add no capability: editing the objective and generating sample previews use campaigns.draft, approving the previews that unlock activation uses campaigns.execute, and reading generation progress uses product.read.
+
 Database capability names: product.read, contacts.manage, templates.manage,
 campaigns.draft, campaigns.execute, mailboxes.manage, inbox.manage,
 suppression.add, suppression.release_manual, workspace.manage, audit.read,

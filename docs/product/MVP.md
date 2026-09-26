@@ -186,7 +186,7 @@ Every product area is classified into one of four categories.
 | Deliverability | MVP — Basic |
 | Notifications | MVP — Basic |
 | Admin / Abuse Controls | MVP — Basic |
-| Advanced Personalization | V1.1 / Later |
+| Advanced Personalization | V1.1 / Later (Hyper-Personalized campaign type planned for V1.1 — [ADR-0011](../adr/0011-hyper-personalized-campaign-type.md); flag-gated, off by default, does not block the core sending platform) |
 | AI Campaign Generation | Later |
 | Advanced Workflow Automation | Later |
 | Multi-channel Outreach | Later |

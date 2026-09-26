@@ -440,12 +440,17 @@ export type CampaignStatus =
   | "COMPLETED"
   | "ARCHIVED";
 
+// Chosen once when the campaign is created and never changes (ADR-0011).
+export type CampaignType = "STANDARD" | "HYPER_PERSONALIZED";
+
 export type CampaignListItem = {
   id: string;
   workspace_id: string;
   name: string;
   description: string | null;
   status: CampaignStatus;
+  // Absent on responses from a server that predates hyper-personalized campaigns.
+  campaign_type?: CampaignType;
   draft_sequence_id: string | null;
   draft_audience_id: string | null;
   current_settings_id: string | null;
@@ -466,6 +471,7 @@ export type CampaignDetail = {
   description: string | null;
   creator_id: string;
   status: CampaignStatus;
+  campaign_type?: CampaignType;
   start_at: string | null;
   draft_sequence_id: string | null;
   draft_audience_id: string | null;
@@ -612,6 +618,94 @@ export type CampaignPlanning = {
   planning_status: "PENDING" | "READY";
   enroll: PlanningJobStatus | null;
   render: PlanningJobStatus | null;
+};
+
+// --- Hyper-personalized campaigns ---
+
+export type PersonalizationCapabilities = {
+  enabled: boolean;
+  model: string | null;
+};
+
+export type PersonalizationConfig = {
+  objective: string;
+  offer: string;
+  cta: string;
+  target: string;
+  problem_solved: string;
+  tone: string;
+  must_mention: string[];
+  never_say: string[];
+};
+
+export type PersonalizationApproval = {
+  status: "NONE" | "APPROVED" | "STALE";
+  approved_at: string | null;
+  approved_by: string | null;
+};
+
+export type PersonalizationState = {
+  campaign_id: string;
+  campaign_type: CampaignType;
+  enabled: boolean;
+  model: string | null;
+  config: PersonalizationConfig | null;
+  config_version: number | null;
+  config_digest: string;
+  approval: PersonalizationApproval;
+};
+
+export type PreviewFact = { id: string; source: "LEAD" | "WEBSITE"; text: string };
+
+export type PreviewItem = {
+  id: string;
+  recipient: {
+    audience_member_id: string;
+    first_name: string | null;
+    last_name: string | null;
+    company: string | null;
+    title: string | null;
+  };
+  step_id: string;
+  step_position: number;
+  state: "PENDING" | "OK" | "FAILED";
+  subject: string | null;
+  body_html: string | null;
+  facts: PreviewFact[];
+  research_summary: { status?: string; source_url?: string | null; excerpt?: string } | null;
+  fallback_used: boolean;
+  failure_codes: string[];
+};
+
+export type PreviewBatch = {
+  batch_id: string;
+  config_digest: string;
+  current_digest: string;
+  stale: boolean;
+  created_at: string;
+  expires_at: string;
+  complete: boolean;
+  all_ok: boolean;
+  items: PreviewItem[];
+};
+
+export type GenerationProgress = {
+  campaign_id: string;
+  pending: number;
+  succeeded: number;
+  failed: number;
+  superseded: number;
+  fallback: number;
+  oldest_pending_at: string | null;
+  failure_codes: Record<string, number>;
+  budget: {
+    generation_used: number;
+    generation_cap: number;
+    preview_used: number;
+    preview_cap: number;
+    fetch_used: number;
+    fetch_cap: number;
+  };
 };
 
 export type InboxFilter = "ALL" | "UNREAD" | "READ" | "REPLIED" | "ARCHIVED";

@@ -8,6 +8,7 @@ from sqlalchemy import RowMapping
 from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext
+from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.campaigns.attachments import extract_cid_references
 from app.modules.campaigns.audience_service import AudienceService
@@ -16,9 +17,16 @@ from app.modules.campaigns.repository import CampaignRepository
 from app.modules.campaigns.schemas import PreflightIssue, PreflightResult
 from app.modules.campaigns.sequence_service import SequenceService
 from app.modules.campaigns.settings_service import CampaignSettingsService
+from app.modules.personalization.api_service import PersonalizationApiService
+from app.modules.personalization.config_schema import parse_config
+from app.modules.personalization.context_builder import build_context
+from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 from app.modules.templates.variables import validate_template_content
 
 _HIGH_EXCLUSION_RATE_THRESHOLD = 0.5
+# How many audience members are sampled to estimate how many leads have too little
+# data to personalize (bounded so preflight stays cheap on huge audiences).
+_THIN_CONTEXT_SAMPLE = 200
 _TAG_RE = re.compile(r"<[^>]*>")
 
 
@@ -63,6 +71,8 @@ class PreflightService:
         warnings: list[PreflightIssue] = []
 
         self._check_sequence(context, campaign_id, errors)
+        if campaign.get("campaign_type") == CAMPAIGN_TYPE_HYPER:
+            self._check_personalization(context, campaign, errors, warnings)
         self._check_mailboxes(context, campaign_id, errors, warnings)
         self._check_audience(context, campaign_id, errors, warnings)
         self._check_settings(campaign, errors)
@@ -159,6 +169,120 @@ class PreflightService:
                         message=f"Email step at position {step.position}: "
                         f"{exc.message}",
                         field_path=field_path,
+                    )
+                )
+
+    def _check_personalization(
+        self,
+        context: WorkspaceContext,
+        campaign: RowMapping,
+        errors: list[PreflightIssue],
+        warnings: list[PreflightIssue],
+    ) -> None:
+        """Rules specific to a hyper-personalized campaign (ADR-0011). The
+        reference templates themselves are validated by _check_sequence (same
+        variable rules as any step)."""
+        settings = Settings.current()
+        campaign_id = UUID(str(campaign["id"]))
+        if not settings.personalization_enabled:
+            errors.append(
+                PreflightIssue(
+                    code="personalization_disabled",
+                    message="Hyper-personalized campaigns are not enabled for "
+                    "this deployment.",
+                    field_path="personalization",
+                )
+            )
+            return
+
+        service = PersonalizationApiService(self.session, settings)
+        digest, sequence, steps = service.current_digest(context, campaign_id)
+        try:
+            config = (
+                parse_config(sequence["personalization_config"])
+                if sequence is not None
+                else None
+            )
+        except Exception:
+            config = None
+        if config is None:
+            errors.append(
+                PreflightIssue(
+                    code="personalization_objective_missing",
+                    message="Define the campaign objective (offer, call to "
+                    "action) before launching.",
+                    field_path="personalization",
+                )
+            )
+
+        email_steps = [s for s in steps if s["kind"] == "EMAIL"]
+        for step in email_steps:
+            if extract_cid_references(step["email_body_html"]):
+                errors.append(
+                    PreflightIssue(
+                        code="reference_inline_image_unsupported",
+                        message=f"Email step at position {step['position']} "
+                        "contains an inline image, which personalized emails do "
+                        "not support. Use an attachment instead.",
+                        field_path=f"sequence.steps[{step['position']}]",
+                    )
+                )
+        if len(email_steps) > 1 and not settings.sequence_progression_enabled:
+            errors.append(
+                PreflightIssue(
+                    code="followups_require_progression",
+                    message="Follow-up emails are not enabled on this "
+                    "deployment, so a multi-step personalized sequence cannot "
+                    "run.",
+                    field_path="sequence",
+                )
+            )
+
+        approval = service.approval_status(context, campaign_id, digest)
+        if approval.status == "NONE":
+            errors.append(
+                PreflightIssue(
+                    code="personalization_not_approved",
+                    message="Generate sample emails and approve them before "
+                    "launching.",
+                    field_path="personalization",
+                )
+            )
+        elif approval.status == "STALE":
+            errors.append(
+                PreflightIssue(
+                    code="personalization_approval_stale",
+                    message="The objective or emails changed since the samples "
+                    "were approved. Generate and approve new samples.",
+                    field_path="personalization",
+                )
+            )
+
+        audience_id = campaign["draft_audience_id"]
+        if audience_id is not None and settings.personalization_min_facts > 0:
+            members = self.repo.list_accepted_audience_members(
+                workspace_id=context.workspace_id,
+                audience_id=UUID(str(audience_id)),
+                after_ordinal=None,
+                limit=_THIN_CONTEXT_SAMPLE,
+            )
+            thin = sum(
+                1
+                for member in members
+                if build_context(
+                    member["frozen_variables"] or {},
+                    min_facts=settings.personalization_min_facts,
+                ).thin
+            )
+            if thin:
+                warnings.append(
+                    PreflightIssue(
+                        code="leads_missing_context_warning",
+                        message=f"{thin} of {len(members)} sampled leads have "
+                        "little data to personalize with. Unless their company "
+                        "website adds more, they will receive your reference "
+                        "email with normal variable substitution.",
+                        field_path="audience",
                     )
                 )
 

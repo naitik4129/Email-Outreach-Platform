@@ -214,6 +214,17 @@ Sequence and campaign composite FK, unique `(workspace_id,sequence_id,position)`
 
 Files attached to an EMAIL step (migration 0025; [ADR-0010](../adr/0010-step-attachments-and-inline-images.md)). Composite FK `(workspace_id,sequence_id,step_id)` to `sequence_steps` (draft step deletion cascades), campaign FK, disposition ATTACHMENT/INLINE, `content_id` (stable `cid:` token), private-bucket `storage_key`, filename, allow-listed content type, size 1..2.5 MiB, SHA-256. Unique `(workspace_id,step_id,content_id)` and `(workspace_id,step_id,sha256,disposition)`; indexes by step and by storage key (reference counting). RLS enabled and forced: `app_api` may SELECT (`product.read`) and INSERT/DELETE (`campaigns.draft`) — no UPDATE, rows are immutable; `app_worker_send` SELECT only. A trigger rejects any change once the parent sequence is FROZEN. Copied rows share the storage object and content id. The frozen sequence digest covers each row's content id, SHA-256 and disposition.
 
+### Hyper-personalization additions (migrations 0026–0029 prepared; not applied to any shared environment)
+
+Per [ADR-0011](../adr/0011-hyper-personalized-campaign-type.md), [ADR-0012](../adr/0012-llm-port-data-handling-and-validation.md) and [ADR-0013](../adr/0013-research-sources-and-outbound-fetch.md); each migration is prepared separately and applied only after its own review (each file's header is the migration review). Apply 0026 before deploying the code; 0027, 0028 and 0029 before enabling `PERSONALIZATION_ENABLED`, `personalization` dispatch and sample previews respectively. Existing rows are unaffected.
+
+- **0026** — `campaigns.campaign_type` (`STANDARD`/`HYPER_PERSONALIZED`, NOT NULL default `STANDARD`, INSERT-only grant to `app_api`, never updated) and `campaign_sequences.personalization_config` (jsonb object, size-capped, frozen with the sequence by the existing guard). Reference templates reuse `sequence_steps` subject/body/preheader.
+- **0027** — `personalization_research_cache` (T, per workspace, unique `(workspace_id,source,url_hash)`, bounded extracted text, TTL columns, worker-role access only) and `personalization_usage_daily` (T, PK `(workspace_id,usage_day,kind)`, atomic capped increments).
+- **0028** — `message_generations` (T, one row per message, unique `(workspace_id,message_id)`, state/lease/attempt counters, provenance model/prompt version/context digest, `fallback_used`, bounded facts/angle) and append-only `message_generation_attempts` (T, outcome, failure codes, token/cost/latency, digests; never message content or lead data). `app_worker_general` writes; `app_api` reads; the scheduler role gets read-only discovery.
+- **0029** — `personalization_previews` (T, bounded sanitized samples, expiry) and append-only `campaign_personalization_approvals` (T, bound to a config digest; approval is valid only while the digest matches).
+
+All are tenant-owned with `workspace_id`, composite FKs, and enabled/forced RLS, like the surrounding tables.
+
 ### campaign_settings_versions (T)
 
 Campaign FK, positive revision/generation, timezone, weekday set, same-day start/end, lower-bound start, configured limits, enabled approved settings and computation version. Unique campaign/revision; check valid window/ranges/nonempty days and positive configured limits. Parent-version lookup is main index. Timezone validity is validated against configured tzdata in service. Append new version for permitted paused edit; never mutate historical scheduling assumptions. T-read/T-service.

@@ -76,6 +76,44 @@ class SchedulerRepository:
         ).all()
         return [(UUID(str(ws)), UUID(str(cid))) for ws, cid in rows]
 
+    def find_campaigns_with_due_generation(
+        self, *, after_id: UUID | None, limit: int
+    ) -> list[tuple[UUID, UUID]]:
+        """(workspace_id, campaign_id) of RUNNING campaigns that have
+        hyper-personalized messages ready for generation (ADR-0011): a PENDING
+        job that is due (or has used up its attempts and needs failing) and that
+        no worker currently holds.
+
+        Read-only cross-tenant discovery through the narrow scheduler policy on
+        message_generations (migration 0028), mirroring find_running_campaigns.
+        The claim itself is workspace-scoped and done by the personalization
+        task; this only names campaigns."""
+        _safe_set_role(self.session, "app_scheduler")
+        _safe_set_workspace(self.session, None)
+        rows = self.session.execute(
+            text(
+                """
+                SELECT g.workspace_id, g.campaign_id
+                FROM message_generations g
+                JOIN campaigns c
+                  ON c.workspace_id = g.workspace_id AND c.id = g.campaign_id
+                WHERE g.state = 'PENDING'
+                  AND (g.lease_owner IS NULL
+                       OR g.lease_expires_at < pg_catalog.transaction_timestamp())
+                  AND (g.next_attempt_at <= pg_catalog.transaction_timestamp()
+                       OR g.attempt_count >= g.max_attempts)
+                  AND c.status = 'RUNNING' AND c.planning_status = 'READY'
+                  AND (CAST(:after_id AS uuid) IS NULL
+                       OR g.campaign_id > CAST(:after_id AS uuid))
+                GROUP BY g.workspace_id, g.campaign_id
+                ORDER BY g.campaign_id
+                LIMIT :limit
+                """
+            ),
+            {"after_id": str(after_id) if after_id else None, "limit": limit},
+        ).all()
+        return [(UUID(str(ws)), UUID(str(cid))) for ws, cid in rows]
+
     def find_due_messages(
         self,
         *,

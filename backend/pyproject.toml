@@ -49,6 +49,9 @@ select = ["E", "F", "I", "UP", "B"]
 # as literal argument defaults; this is the documented, idiomatic pattern, not a bug.
 "app/api/**.py" = ["B008"]
 "app/core/permissions.py" = ["B008"]
+# Long SQL literals: the statements read better unwrapped than re-broken to fit.
+"app/modules/personalization/repository.py" = ["E501"]
+"app/modules/personalization/api_repository.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

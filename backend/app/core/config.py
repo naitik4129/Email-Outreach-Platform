@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo-root .env, resolved from this file's location so it is found
@@ -67,6 +67,43 @@ class Settings(BaseSettings):
     sequence_progression_interval_seconds: float = Field(default=30.0, gt=0, le=3600)
     sequence_progression_campaigns_per_run: int = Field(default=200, ge=1, le=5000)
     sequence_progression_batch_size: int = Field(default=100, ge=1, le=1000)
+
+    # Hyper-personalized campaigns (docs/adr/0011-0013). Off by default: nothing
+    # generates, fetches or calls the model until this is enabled deliberately.
+    # Enabling it is the operator's assertion that lead data (never email,
+    # phone or LinkedIn) may be sent to the model provider as a subprocessor.
+    personalization_enabled: bool = False
+    # Only the personalization worker needs these; the key never appears in task
+    # payloads, logs or database rows.
+    personalization_openai_api_key: SecretStr = SecretStr("")
+    personalization_openai_base_url: str = "https://api.openai.com/v1"
+    # No baked-in default model: it must be chosen explicitly.
+    personalization_model: str = ""
+    personalization_request_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    personalization_max_output_tokens: int = Field(default=1200, ge=100, le=8000)
+    # Generate this long before a message's intended due time.
+    personalization_lead_time_seconds: int = Field(default=3600, ge=0, le=86_400)
+    personalization_max_attempts: int = Field(default=3, ge=1, le=10)
+    personalization_max_transient_errors: int = Field(default=8, ge=1, le=50)
+    personalization_lease_seconds: int = Field(default=300, ge=30, le=3600)
+    personalization_dispatch_interval_seconds: float = Field(
+        default=10.0, gt=0, le=3600
+    )
+    personalization_campaigns_per_run: int = Field(default=100, ge=1, le=5000)
+    personalization_chunk_size: int = Field(default=10, ge=1, le=200)
+    # Fewer usable facts than this means "thin context": the reference template
+    # is sent with ordinary variable substitution instead of a generated email.
+    personalization_min_facts: int = Field(default=2, ge=0, le=20)
+    personalization_website_research_enabled: bool = True
+    # Global requests-per-minute ceiling for model calls, and per-workspace daily
+    # caps. Separate from send rate limiting: they never consume send capacity.
+    personalization_rpm: int = Field(default=60, ge=1, le=100_000)
+    personalization_daily_generation_cap: int = Field(
+        default=2_000, ge=1, le=10_000_000
+    )
+    personalization_daily_preview_cap: int = Field(default=100, ge=1, le=100_000)
+    personalization_daily_fetch_cap: int = Field(default=2_000, ge=1, le=10_000_000)
+    personalization_preview_ttl_hours: int = Field(default=168, ge=1, le=720)
 
     # Phase 10: while false, the email.send Celery task keeps the Phase 9
     # placeholder behavior (validates the payload, never calls a provider).
@@ -147,6 +184,25 @@ class Settings(BaseSettings):
         if self.app_env == "production" and "*" in self.cors_origins:
             raise ValueError("Wildcard CORS origins are not allowed in production")
         return self
+
+    @model_validator(mode="after")
+    def validate_personalization(self) -> Settings:
+        # The API process needs the flag and the model name (approvals are bound to
+        # the model) but must NOT hold the API key, so the key is checked by the
+        # personalization worker only (require_personalization_worker_ready).
+        if self.personalization_enabled and not self.personalization_model.strip():
+            raise ValueError("PERSONALIZATION_ENABLED requires PERSONALIZATION_MODEL")
+        return self
+
+    def require_personalization_worker_ready(self) -> None:
+        """Called at personalization worker start: refuse to run without the key."""
+        if not self.personalization_enabled:
+            return
+        if not self.personalization_openai_api_key.get_secret_value():
+            raise RuntimeError(
+                "PERSONALIZATION_ENABLED requires PERSONALIZATION_OPENAI_API_KEY "
+                "in the personalization worker environment"
+            )
 
     @property
     def cors_origins(self) -> list[str]:

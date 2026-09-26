@@ -16,12 +16,20 @@ import type { StepAttachment } from "@/types/domain";
 type UploadButtonsProps = {
   disabled: boolean;
   uploading: boolean;
+  // Personalized emails are built by the platform and cannot contain inline
+  // images (attachments are still allowed).
+  imagesDisabled?: boolean;
   onFile: (file: File, disposition: "ATTACHMENT" | "INLINE") => void;
 };
 
 // Toolbar buttons: attach a file / insert an image. Each opens the browser's file
 // picker; the upload itself is handled by the caller.
-export function UploadButtons({ disabled, uploading, onFile }: UploadButtonsProps) {
+export function UploadButtons({
+  disabled,
+  uploading,
+  imagesDisabled = false,
+  onFile,
+}: UploadButtonsProps) {
   const fileRef = React.useRef<HTMLInputElement>(null);
   const imageRef = React.useRef<HTMLInputElement>(null);
 
@@ -58,8 +66,12 @@ export function UploadButtons({ disabled, uploading, onFile }: UploadButtonsProp
       <button
         type="button"
         aria-label="Insert an image"
-        title="Insert an image"
-        disabled={disabled || uploading}
+        title={
+          imagesDisabled
+            ? "Inline images aren't supported in personalized emails. Attach a file instead."
+            : "Insert an image"
+        }
+        disabled={disabled || uploading || imagesDisabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => imageRef.current?.click()}
         className={buttonClass}

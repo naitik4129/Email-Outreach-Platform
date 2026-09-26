@@ -127,11 +127,11 @@ def validate_hostname_syntax(host: str) -> str:
     return host
 
 
-def _is_unsafe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def is_unsafe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(ip, ipaddress.IPv6Address):
         mapped = ip.ipv4_mapped
         if mapped is not None:
-            return _is_unsafe_ip(mapped)
+            return is_unsafe_ip(mapped)
 
     if str(ip) in _METADATA_DENYLIST:
         return True
@@ -194,7 +194,7 @@ def resolve_and_validate(
     pinned: tuple[int, str] | None = None
     for family, ip_str in addresses:
         ip_obj = ipaddress.ip_address(ip_str)
-        if _is_unsafe_ip(ip_obj):
+        if is_unsafe_ip(ip_obj):
             raise UnsafeDestinationError(
                 "SMTP host resolves to a disallowed network address"
             )

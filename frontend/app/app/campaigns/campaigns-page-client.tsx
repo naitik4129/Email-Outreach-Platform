@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Megaphone, Plus, Search } from "lucide-react";
 
+import { CampaignTypeBadge } from "@/components/campaigns/campaign-type-badge";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -214,6 +215,9 @@ export function CampaignsPageClient() {
                     >
                       {c.name}
                     </Link>
+                    <span className="ml-2 align-middle">
+                      <CampaignTypeBadge type={c.campaign_type} />
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     <StatusBadge status={c.status} />

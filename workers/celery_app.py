@@ -47,4 +47,5 @@ import workers.campaigns  # noqa: F401
 import workers.send_task  # noqa: F401
 import workers.events  # noqa: F401
 import workers.sync_task  # noqa: F401
+import workers.personalization  # noqa: F401
 

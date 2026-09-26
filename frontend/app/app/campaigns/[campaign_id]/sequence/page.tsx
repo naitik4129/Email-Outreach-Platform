@@ -29,6 +29,11 @@ import type { CampaignSequence, CampaignSettings, SequenceStep } from "@/types/d
 const DEFAULT_WAIT_MINUTES = 2 * 24 * 60;
 const NEW_EMAIL_SUBJECT = "New email";
 const NEW_EMAIL_BODY = "<p>Hi {{first_name|there}},</p><p></p>";
+// Hyper-personalized campaigns: a starting point for the reference email.
+const NEW_REFERENCE_SUBJECT = "Quick idea for {{company|your team}}";
+const NEW_REFERENCE_BODY =
+  "<p>Hi {{first_name|there}},</p><p>Write the email you want to send: your offer, why it matters " +
+  "and what you'd like them to do next. Each lead receives a version personalized to them.</p><p>Best,</p>";
 
 const WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -85,6 +90,7 @@ export default function CampaignSequencePage() {
     enabled: ready,
   });
 
+  const isHyper = campaignQuery.data?.campaign_type === "HYPER_PERSONALIZED";
   const sequence = sequenceQuery.data;
   const steps = sequence?.steps ?? [];
   const campaignStatus = campaignQuery.data?.status;
@@ -117,8 +123,8 @@ export default function CampaignSequencePage() {
       addSequenceStep(activeWorkspaceId as string, campaignId, {
         kind: "EMAIL",
         position: input.position,
-        email_subject: NEW_EMAIL_SUBJECT,
-        email_body_html: NEW_EMAIL_BODY,
+        email_subject: isHyper ? NEW_REFERENCE_SUBJECT : NEW_EMAIL_SUBJECT,
+        email_body_html: isHyper ? NEW_REFERENCE_BODY : NEW_EMAIL_BODY,
         // Server inserts the wait and the email in one transaction.
         leading_wait_minutes: input.withWait ? DEFAULT_WAIT_MINUTES : undefined,
       }),
@@ -228,6 +234,7 @@ export default function CampaignSequencePage() {
         precedingWait={precedingWait}
         readOnly={readOnly}
         canTestSend={canExecuteCampaign(activeWorkspace?.role_code)}
+        referenceMode={isHyper}
         mailboxes={(mailboxesQuery.data ?? []).filter((mb) => mb.active)}
         onClose={() => setOpenStepId(null)}
         onSaved={() => afterChange()}
@@ -245,8 +252,12 @@ export default function CampaignSequencePage() {
       <div>
         <h2 className="text-lg font-semibold text-slate-900">Sequence</h2>
         <p className="text-sm text-slate-500">
-          Each email is sent to every prospect in the audience. Waits set how long after the
-          previous email a follow-up goes out.
+          {isHyper
+            ? "Write one reference email per step. Each lead receives a version personalized to " +
+              "them, written just before it is sent. Waits set how long after the previous email " +
+              "a follow-up goes out."
+            : "Each email is sent to every prospect in the audience. Waits set how long after the " +
+              "previous email a follow-up goes out."}
         </p>
       </div>
 

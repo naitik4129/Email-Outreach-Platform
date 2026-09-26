@@ -609,3 +609,92 @@ class TestAdvanceBatch:
         # The permanently skipped (suppressed) row never starves the others.
         assert first.advanced + second.advanced + third.advanced == 4
         assert third.fetched == 1
+
+
+class HyperWorld(FakeWorld):
+    """A hyper-personalized campaign: follow-ups are not rendered here; a
+    generation job is created instead (ADR-0011)."""
+
+    def __init__(self, steps, **kw: Any) -> None:
+        super().__init__(steps, campaign_type="HYPER_PERSONALIZED", **kw)
+        self.pending: list[dict[str, Any]] = []
+
+    def mark_generation_pending(self, **kw):
+        for message in self.messages.values():
+            if message["id"] == kw["message_id"]:
+                message.update(due_at=kw["due_at"], anchor_at=kw["anchor_at"])
+        self.pending.append(kw)
+        self.calls.append("pending")
+        return True
+
+
+class TestHyperPersonalizedProgression:
+    def test_follow_up_stays_planned_and_gets_a_generation_job(self) -> None:
+        world = HyperWorld(_three_email_sequence())
+        eid = world.enroll(name="Ada", company="Engine")
+        world.accept(eid, T)
+
+        summary = _run(world)
+
+        assert summary.advanced == 1
+        step3 = world.steps[2]["id"]
+        message = world.messages[(eid, step3)]
+        assert message["status"] == "PLANNED"  # no content snapshot, not sendable
+        assert "subject" not in message and "digest" not in message
+        assert "render" not in world.calls and world.calls == ["insert", "pending"]
+        # The pointer still moves, exactly as for standard campaigns.
+        assert world.enrollments[eid]["next_step_id"] == step3
+
+    def test_generation_is_scheduled_one_lead_time_before_the_due_time(self) -> None:
+        world = HyperWorld(_three_email_sequence(wait1=2880))
+        eid = world.enroll(name="Ada", company="Engine")
+        world.accept(eid, T)
+        ProgressionService(
+            world,
+            is_suppressed=lambda ws, a: False,
+            personalization_lead_seconds=1800,
+            personalization_max_attempts=4,
+        ).advance_batch(workspace_id=WS, campaign_id=CAMPAIGN, limit=10)
+
+        (job,) = world.pending
+        due = T + timedelta(days=2)
+        assert job["due_at"] == due and job["anchor_at"] == T
+        assert job["next_attempt_at"] == due - timedelta(seconds=1800)
+        assert job["max_attempts"] == 4
+        assert job["step_id"] == world.steps[2]["id"]
+        assert job["enrollment_id"] == eid
+
+    def test_the_intended_time_is_still_projected_into_the_sending_window(self) -> None:
+        world = HyperWorld(_three_email_sequence(wait1=120))
+        eid = world.enroll(name="Ada", company="Engine")
+        world.accept(eid, datetime(2026, 3, 2, 16, 30, tzinfo=UTC))  # near close
+        _run(world)
+        (job,) = world.pending
+        assert job["due_at"] == datetime(2026, 3, 3, 9, 0, tzinfo=UTC)
+
+    def test_a_replayed_run_does_not_create_a_second_job(self) -> None:
+        world = HyperWorld(_three_email_sequence())
+        eid = world.enroll(name="Ada", company="Engine")
+        world.accept(eid, T)
+        _run(world)
+        # Simulate the pointer not having moved (crash after insert): the unique
+        # (enrollment, step) key returns no new message, so no second job.
+        world.enrollments[eid]["next_step_id"] = world.steps[0]["id"]
+        _run(world)
+        assert len(world.pending) == 1
+
+    def test_a_failed_email_still_fails_the_enrollment_without_a_job(self) -> None:
+        world = HyperWorld(_three_email_sequence())
+        eid = world.enroll(name="Ada", company="Engine")
+        world.fail(eid)
+        summary = _run(world)
+        assert summary.failed == 1 and world.pending == []
+        assert world.enrollments[eid]["state"] == "FAILED"
+
+    def test_standard_campaigns_are_unchanged(self) -> None:
+        world = FakeWorld(_three_email_sequence())
+        eid = world.enroll(name="Ada", company="Engine")
+        world.accept(eid, T)
+        _run(world)
+        assert world.calls == ["insert", "render"]
+        assert world.messages[(eid, world.steps[2]["id"])]["status"] == "SCHEDULED"

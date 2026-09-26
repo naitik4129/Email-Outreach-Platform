@@ -22,6 +22,9 @@ class SchedulerRuntime:
         # RUNNING campaigns in id order across runs.
         self._progression_last_run = float("-inf")
         self._progression_cursor: UUID | None = None
+        # Hyper-personalized generation (ADR-0011) has its own cadence and cursor.
+        self._personalization_last_run = float("-inf")
+        self._personalization_cursor: UUID | None = None
 
     def stop(self, signum: int | None = None, frame: object | None = None) -> None:
         logger.info("Scheduler shutdown requested")
@@ -114,6 +117,14 @@ class SchedulerRuntime:
         except Exception:
             logger.exception("Error during follow-up progression dispatch")
 
+        # 7c. Queue just-in-time generation for hyper-personalized messages
+        try:
+            queued = self._dispatch_personalization()
+            if queued > 0:
+                logger.info(f"Scheduler queued personalization for {queued} campaigns")
+        except Exception:
+            logger.exception("Error during personalization dispatch")
+
         # 8. Discover and enqueue due mailbox reply syncs (Phase 13)
         if self.settings.reply_sync_enabled:
             try:
@@ -197,6 +208,43 @@ class SchedulerRuntime:
                     "campaign_id": str(campaign_id),
                 },
                 queue="campaigns",
+            )
+        return len(campaigns)
+
+    def _dispatch_personalization(self) -> int:
+        """Queue a generation task for each RUNNING campaign that has due
+        hyper-personalized messages (a bounded slice per interval, wrapping
+        around). Read-only: it never generates and never claims messages. The
+        task claims work under a lease, so duplicates are harmless."""
+        if not self.settings.personalization_enabled:
+            return 0
+        now = time.monotonic()
+        if now - self._personalization_last_run < (
+            self.settings.personalization_dispatch_interval_seconds
+        ):
+            return 0
+        self._personalization_last_run = now
+
+        from app.modules.scheduler.repository import SchedulerRepository
+
+        from workers.celery_app import celery_app
+
+        limit = self.settings.personalization_campaigns_per_run
+        with session_scope(self.settings) as session:
+            campaigns = SchedulerRepository(session).find_campaigns_with_due_generation(
+                after_id=self._personalization_cursor, limit=limit
+            )
+        self._personalization_cursor = (
+            campaigns[-1][1] if len(campaigns) >= limit else None
+        )
+        for workspace_id, campaign_id in campaigns:
+            celery_app.send_task(
+                "personalization.generate_chunk",
+                kwargs={
+                    "workspace_id": str(workspace_id),
+                    "campaign_id": str(campaign_id),
+                },
+                queue="personalization",
             )
         return len(campaigns)
 

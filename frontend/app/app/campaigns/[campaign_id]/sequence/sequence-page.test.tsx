@@ -26,9 +26,15 @@ vi.mock("@/lib/workspace-context", () => ({ useWorkspace }));
 // The dialog (TipTap + preview) has its own tests; here it is a stub that just
 // reports which step it was opened for.
 vi.mock("@/components/campaigns/sequence/email-step-dialog", () => ({
-  EmailStepDialog: (props: { step: { id: string }; stepNumber: number; readOnly: boolean }) => (
+  EmailStepDialog: (props: {
+    step: { id: string };
+    stepNumber: number;
+    readOnly: boolean;
+    referenceMode?: boolean;
+  }) => (
     <div role="dialog" aria-label="Step editor">
       editing {props.step.id} as step {props.stepNumber} {props.readOnly ? "read-only" : "editable"}
+      {props.referenceMode ? " (reference email)" : ""}
     </div>
   ),
 }));
@@ -433,5 +439,59 @@ describe("CampaignSequencePage", () => {
     await user.click(await screen.findByRole("button", { name: /duplicate step 1/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/couldn.t complete that request/i);
+  });
+});
+
+describe("CampaignSequencePage for a hyper-personalized campaign", () => {
+  beforeEach(() => {
+    api.getCampaign.mockResolvedValue({
+      id: "camp-1",
+      status: "DRAFT",
+      version: 1,
+      campaign_type: "HYPER_PERSONALIZED",
+    });
+  });
+
+  it("explains that each step is a reference email", async () => {
+    mockWorkspace("MEMBER");
+    api.getSequence.mockResolvedValue(threeEmails());
+    renderPage();
+    expect(await screen.findByText(/Write one reference email per step/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Each email is sent to every prospect/i)).not.toBeInTheDocument();
+  });
+
+  it("starts a new step from a reference-email template", async () => {
+    mockWorkspace("MEMBER");
+    api.getSequence.mockResolvedValue(emptySequence);
+    api.addSequenceStep.mockResolvedValue(makeStep("new", 1, "EMAIL"));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Add email step" }));
+    await waitFor(() => expect(api.addSequenceStep).toHaveBeenCalled());
+    const payload = api.addSequenceStep.mock.calls[0][2];
+    expect(payload.email_subject).toBe("Quick idea for {{company|your team}}");
+    expect(payload.email_body_html).toContain("Each lead receives a version personalized to them");
+  });
+
+  it("opens the editor in reference mode", async () => {
+    mockWorkspace("MEMBER");
+    api.getSequence.mockResolvedValue(threeEmails());
+    const user = userEvent.setup();
+    renderPage();
+    const card = await screen.findByRole("article", { name: "Step 1: Email" });
+    await user.click(within(card).getByRole("button", { name: /edit/i }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("(reference email)");
+  });
+
+  it("leaves standard campaigns untouched", async () => {
+    api.getCampaign.mockResolvedValue({ id: "camp-1", status: "DRAFT", version: 1 });
+    mockWorkspace("MEMBER");
+    api.getSequence.mockResolvedValue(emptySequence);
+    api.addSequenceStep.mockResolvedValue(makeStep("new", 1, "EMAIL"));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Add email step" }));
+    await waitFor(() => expect(api.addSequenceStep).toHaveBeenCalled());
+    expect(api.addSequenceStep.mock.calls[0][2].email_subject).toBe("New email");
   });
 });

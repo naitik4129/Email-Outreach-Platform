@@ -16,6 +16,7 @@ from app.api.v1.mailboxes import (
 )
 from app.api.v1.me import router as me_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.personalization import router as personalization_router
 from app.api.v1.suppressions import router as suppressions_router
 from app.api.v1.team import router as team_router
 from app.api.v1.templates import router as templates_router
@@ -62,6 +63,11 @@ api_router.include_router(
     campaigns_router,
     prefix="/workspaces/{workspace_id}",
     tags=["campaigns"],
+)
+api_router.include_router(
+    personalization_router,
+    prefix="/workspaces/{workspace_id}",
+    tags=["personalization"],
 )
 api_router.include_router(
     inbox_router,
