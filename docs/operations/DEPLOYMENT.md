@@ -8,7 +8,7 @@ Files this guide uses:
 
 | File | What it is |
 |---|---|
-| `docker-compose.prod.yml` | Starts every part of the app (own project name, no clashes) |
+| `docker-compose.yml` | Starts every part of the app (own project name, no clashes) |
 | `infrastructure/vps/Caddyfile.snippet` | The block you add to your existing Caddyfile |
 | `.env` (you create it on the VPS) | All settings and secrets |
 
@@ -47,7 +47,7 @@ The database is **not** on the server. It stays in Supabase.
 
 ```powershell
 git status
-git add docker-compose.prod.yml infrastructure docs/operations/DEPLOYMENT.md
+git add docker-compose.yml infrastructure docs/operations/DEPLOYMENT.md
 git commit -m "chore: add VPS production deployment files"
 git push
 ```
@@ -124,7 +124,7 @@ Below, `YOUR_DOMAIN` means that full name, for example `outly.yourcompany.com`.
 cd ~
 git clone https://github.com/naitik4129/Email-Outreach-Platform.git outly
 cd outly
-ls docker-compose.prod.yml
+ls docker-compose.yml
 apt install -y postgresql-client        # only if psql is missing; it is just a client program
 ```
 
@@ -333,8 +333,8 @@ Building one image at a time is gentler on a shared server:
 
 ```bash
 cd ~/outly
-COMPOSE_PARALLEL_LIMIT=1 docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
+COMPOSE_PARALLEL_LIMIT=1 docker compose build
+docker compose up -d
 ```
 
 The build takes about 5–15 minutes. If it stops with `Set NEXT_PUBLIC_... in .env`, that
@@ -343,7 +343,7 @@ variable is missing.
 **Check the containers:**
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
+docker compose ps
 ```
 
 You must see 9 services `Up`: `redis`, `backend` (healthy), `frontend`, `scheduler`,
@@ -364,10 +364,10 @@ curl -s http://127.0.0.1:4130/api/v1/ready
 **Check the workers and the queue:**
 
 ```bash
-docker compose -f docker-compose.prod.yml logs --tail=30 scheduler
-docker compose -f docker-compose.prod.yml logs --tail=30 worker-send
-docker compose -f docker-compose.prod.yml logs --tail=30 rate-controller
-docker compose -f docker-compose.prod.yml exec worker-general python -m workers.smoke
+docker compose logs --tail=30 scheduler
+docker compose logs --tail=30 worker-send
+docker compose logs --tail=30 rate-controller
+docker compose exec worker-general python -m workers.smoke
 ```
 
 Expect "Scheduler heartbeat" lines, `ready.` from `worker-send`, and a result from the smoke test
@@ -519,13 +519,13 @@ Only after steps 1–5 work. From here emails are **really sent** from connected
 ```bash
 cd ~/outly
 nano .env            # change SENDING_WORKER_ENABLED=false to true
-docker compose -f docker-compose.prod.yml up -d worker-send
+docker compose up -d worker-send
 ```
 
 Activate the small test campaign and watch it:
 
 ```bash
-docker compose -f docker-compose.prod.yml logs -f worker-send     # Ctrl+C stops watching only
+docker compose logs -f worker-send     # Ctrl+C stops watching only
 ```
 
 Check the test emails arrive. Reply to one; within a few minutes the reply should appear in
@@ -536,16 +536,16 @@ new mailboxes.
 
 ## Part 10 — Everyday operations
 
-Always run these from `~/outly` and always with
-`-f docker-compose.prod.yml`, so they affect only this project.
+Always run these from `~/outly` (the project name `outly` is fixed in
+`docker-compose.yml`), so they affect only this project.
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs --tail=100 backend
-docker compose -f docker-compose.prod.yml logs -f scheduler
-docker compose -f docker-compose.prod.yml restart worker-send
-docker compose -f docker-compose.prod.yml up -d                       # after editing .env
-docker compose -f docker-compose.prod.yml up -d --build frontend      # after changing any NEXT_PUBLIC_ value
+docker compose ps
+docker compose logs --tail=100 backend
+docker compose logs -f scheduler
+docker compose restart worker-send
+docker compose up -d                       # after editing .env
+docker compose up -d --build frontend      # after changing any NEXT_PUBLIC_ value
 ```
 
 **Update to new code**
@@ -553,8 +553,8 @@ docker compose -f docker-compose.prod.yml up -d --build frontend      # after ch
 ```bash
 cd ~/outly
 git pull
-COMPOSE_PARALLEL_LIMIT=1 docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
+COMPOSE_PARALLEL_LIMIT=1 docker compose build
+docker compose up -d
 ```
 
 If the update adds a file in `supabase/migrations/`, review and apply it as its own deliberate step
@@ -563,7 +563,7 @@ If the update adds a file in `supabase/migrations/`, review and apply it as its 
 **Stop only this project** (data is safe; it lives in Supabase)
 
 ```bash
-docker compose -f docker-compose.prod.yml down
+docker compose down
 ```
 
 **Backups:** data is in Supabase (use its backups). Keep a copy of `.env`, especially

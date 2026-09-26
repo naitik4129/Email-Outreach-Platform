@@ -1,7 +1,56 @@
+# The one Compose file for this project (production-style; also fine locally).
+#   docker compose up -d --build     # start / update everything
+#   docker compose ps                # status
+#
+# - Every Celery queue in workers/celery_app.py has a consumer, and the rate
+#   controller runs (it owns the rate_control READY state the send worker needs).
+# - Ports bind to 127.0.0.1 only; the reverse proxy (Caddy) terminates TLS.
+#   Host ports are configurable (BACKEND_HOST_PORT / FRONTEND_HOST_PORT in .env,
+#   defaults 8000 / 3000) because this stack may share a server with other
+#   projects. On the production server they are 4130 / 4131.
+# - Fixed project name, so containers/networks cannot collide with other
+#   Compose projects on the same host.
+# - Restart policies, and Redis is never published outside the Docker network.
+# - Worker groups follow docs/architecture/WORKERS.md: imports cannot starve
+#   safety (webhooks) or send capacity.
+# See docs/operations/DEPLOYMENT.md.
+
+name: outly
+
+x-app-env: &app-env
+  env_file:
+    - .env
+  environment:
+    # Inside Docker the broker is the "redis" service, whatever .env says
+    # (a local-dev .env commonly points at localhost).
+    REDIS_URL: redis://redis:6379/0
+
+# Cap container logs: this stack shares a server, and unbounded json-file logs
+# would slowly fill its disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-worker: &worker
+  logging: *default-logging
+  build:
+    context: .
+    dockerfile: workers/Dockerfile
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+  networks:
+    - app
+
 services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no"]
+    restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -14,23 +63,11 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    env_file:
-      - .env
-    environment:
-      APP_ENV: ${APP_ENV:-local}
-      APP_NAME: ${APP_NAME:-Email Outreach Platform}
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in .env}
-      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
-      SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:-authenticated}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
-      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-imports}
+    <<: *app-env
+    restart: unless-stopped
+    logging: *default-logging
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -48,70 +85,66 @@ services:
     networks:
       - app
 
-  worker:
-    build:
-      context: .
-      dockerfile: workers/Dockerfile
-    env_file:
-      - .env
-    environment:
-      APP_ENV: ${APP_ENV:-local}
-      APP_NAME: ${APP_NAME:-Email Outreach Platform}
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in .env}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
-      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-imports}
+  worker-general:
+    <<: [*worker, *app-env]
     command:
       [
-        "celery",
-        "-A",
-        "workers.celery_app:celery_app",
-        "worker",
-        "--loglevel=INFO",
-        "--queues=maintenance,imports,campaigns",
+        "celery", "-A", "workers.celery_app:celery_app", "worker",
+        "--loglevel=INFO", "--queues=maintenance,imports,campaigns",
+        "--concurrency=2",
       ]
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - app
 
+  worker-events:
+    <<: [*worker, *app-env]
+    command:
+      [
+        "celery", "-A", "workers.celery_app:celery_app", "worker",
+        "--loglevel=INFO", "--queues=webhooks", "--concurrency=1",
+      ]
+
+  worker-send:
+    <<: [*worker, *app-env]
+    command:
+      [
+        "celery", "-A", "workers.celery_app:celery_app", "worker",
+        "--loglevel=INFO", "--queues=email.send", "--concurrency=2",
+      ]
+
+  worker-sync:
+    <<: [*worker, *app-env]
+    command:
+      [
+        "celery", "-A", "workers.celery_app:celery_app", "worker",
+        "--loglevel=INFO", "--queues=mailbox.sync", "--concurrency=1",
+      ]
+
+  rate-controller:
+    <<: [*worker, *app-env]
+    command: ["python", "-m", "workers.rate_controller"]
+
+  # Exactly one replica: due-work discovery is concurrency-safe, but there is
+  # no reason to run more than one.
   scheduler:
-    build:
-      context: .
-      dockerfile: workers/Dockerfile
-    env_file:
-      - .env
-    environment:
-      APP_ENV: ${APP_ENV:-local}
-      APP_NAME: ${APP_NAME:-Email Outreach Platform}
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      SCHEDULER_POLL_SECONDS: ${SCHEDULER_POLL_SECONDS:-5}
+    <<: [*worker, *app-env]
     command: ["python", "-m", "workers.scheduler"]
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - app
 
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      # NEXT_PUBLIC_* values are compiled into the JavaScript bundle at build
+      # time. Changing them in .env requires rebuilding this image.
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?Set NEXT_PUBLIC_API_BASE_URL in .env}
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?Set NEXT_PUBLIC_SUPABASE_URL in .env}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?Set NEXT_PUBLIC_SUPABASE_ANON_KEY in .env}
+    restart: unless-stopped
+    logging: *default-logging
     environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3000}:3000"
     depends_on:
       backend:
         condition: service_healthy

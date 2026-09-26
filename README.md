@@ -56,14 +56,21 @@ python -m workers.scheduler
 
 ## Docker Compose
 
+There is a single `docker-compose.yml` (the production stack; it also works
+locally). Use it as-is, with no `-f` flag:
+
 ```powershell
 docker compose config
-docker compose up --build
+docker compose up -d --build
+docker compose ps
 docker compose down
 ```
 
-The Compose stack starts `frontend`, `backend`, `redis`, `worker`, and
-`scheduler`. PostgreSQL remains external via `DATABASE_URL`.
+It starts `redis`, `backend`, `frontend`, `scheduler`, `rate-controller` and four
+Celery workers (`worker-general`, `worker-events`, `worker-send`, `worker-sync`).
+Ports are published on 127.0.0.1 only (`BACKEND_HOST_PORT` / `FRONTEND_HOST_PORT`
+in `.env`, default 8000 / 3000). PostgreSQL remains external via `DATABASE_URL`.
+See [DEPLOYMENT.md](docs/operations/DEPLOYMENT.md).
 
 ## Database
 
