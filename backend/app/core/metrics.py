@@ -168,7 +168,7 @@ def record_event_received(provider: str, event_type: str | None = None) -> None:
 
 
 def record_open_tracking(result: str) -> None:
-    """result: recorded | rejected | not_found | error."""
+    """result: recorded | automated | rejected | not_found | error."""
     metrics.increment("open_tracking_requests_total", result=result)
 
 

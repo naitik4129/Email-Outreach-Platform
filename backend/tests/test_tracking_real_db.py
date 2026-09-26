@@ -46,6 +46,18 @@ from tests.support.real_seed import World, _insert, seed_world
 pytestmark = pytest.mark.filterwarnings("ignore")
 
 SIGNING_KEY = "test-tracking-signing-key"
+HUMAN_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
+SCANNER_UA = "Mozilla/5.0 (compatible; Barracuda Sentinel)"
+
+
+def open_token(w, message_id=None, *, sent_seconds_ago: int = 3600) -> str:
+    """A current (v2) pixel token for an email sent ``sent_seconds_ago`` ago."""
+    return make_open_token(
+        w.ws,
+        message_id or w.message1_id,
+        SIGNING_KEY,
+        sent_at=datetime.now(UTC) - timedelta(seconds=sent_seconds_ago),
+    )
 SENT_RFC_ID = "<sent1@acme.test>"
 
 
@@ -301,7 +313,9 @@ class TestMigrationGrants:
             conn.execute("SET LOCAL ROLE app_api")
             conn.execute("SELECT set_config('app.workspace_id', %s, true)", [str(w.ws)])
             conn.execute(
-                "UPDATE public.message_events SET occurrence_count = occurrence_count + 1 WHERE message_id=%s",
+                "UPDATE public.message_events SET occurrence_count = occurrence_count + 1, "
+                "qualified_count = qualified_count + 1, automated_count = automated_count + 1, "
+                "qualified_at = COALESCE(qualified_at, now()), last_user_agent = 'x' WHERE message_id=%s",
                 [w.message1_id],
             )
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
@@ -336,9 +350,22 @@ class TestMigrationGrants:
 
 
 class TestOpenTracking:
-    def pixel(self, client: TestClient, w: World, message_id: uuid.UUID | None = None):
-        token = make_open_token(w.ws, message_id or w.message1_id, SIGNING_KEY)
-        return client.get(f"/api/v1/t/o/{token}.gif")
+    def pixel(
+        self,
+        client: TestClient,
+        w: World,
+        message_id: uuid.UUID | None = None,
+        *,
+        ua: str = HUMAN_UA,
+        sent_seconds_ago: int = 3600,
+    ):
+        token = open_token(w, message_id, sent_seconds_ago=sent_seconds_ago)
+        return client.get(f"/api/v1/t/o/{token}.gif", headers={"User-Agent": ua})
+
+    def opened_stats(self, session_factory, w: World):
+        with session_factory() as session:
+            as_api(session, w)
+            return AnalyticsRepository(session).get_campaign_analytics(w.ws, w.campaign_id)
 
     def test_pixel_serves_a_gif_and_counts_repeated_opens_once_per_email(self, su, tracking_client):
         w = seed_sent_world(su)
@@ -349,10 +376,67 @@ class TestOpenTracking:
             assert response.content == TRANSPARENT_GIF
             assert "no-store" in response.headers["cache-control"]
         rows = su.execute(
-            "SELECT kind, occurrence_count FROM public.message_events WHERE message_id=%s", [w.message1_id]
+            "SELECT kind, occurrence_count, qualified_count, automated_count "
+            "FROM public.message_events WHERE message_id=%s",
+            [w.message1_id],
         ).fetchall()
         # 5 requests = ONE opened email, opened 5 times.
-        assert rows == [("OPENED", 5)]
+        assert rows == [("OPENED", 5, 5, 0)]
+
+    def test_a_scanner_fetch_right_after_send_is_stored_but_is_not_an_open(
+        self, su, tracking_client, session_factory
+    ):
+        w = seed_sent_world(su)
+        connect_mailbox(su, w)
+        assert self.pixel(tracking_client, w, ua=HUMAN_UA, sent_seconds_ago=2).status_code == 200
+        row = su.execute(
+            "SELECT occurrence_count, qualified_count, automated_count, qualified_at, last_user_agent "
+            "FROM public.message_events WHERE message_id=%s",
+            [w.message1_id],
+        ).fetchone()
+        assert row == (1, 0, 1, None, HUMAN_UA)  # evidence kept, never counted
+        stats = self.opened_stats(session_factory, w)
+        assert stats["opened"] == 0 and stats["total_opens"] == 0 and stats["open_rate"] == 0.0
+
+    def test_a_person_opening_after_the_scanner_makes_it_opened_once(
+        self, su, tracking_client, session_factory
+    ):
+        w = seed_sent_world(su)
+        connect_mailbox(su, w)
+        self.pixel(tracking_client, w, ua=SCANNER_UA, sent_seconds_ago=3)  # delivery scan
+        self.pixel(tracking_client, w, ua=HUMAN_UA, sent_seconds_ago=3600)  # reader
+        self.pixel(tracking_client, w, ua=HUMAN_UA, sent_seconds_ago=3700)  # re-read
+        row = su.execute(
+            "SELECT occurrence_count, qualified_count, automated_count, qualified_at IS NOT NULL "
+            "FROM public.message_events WHERE message_id=%s",
+            [w.message1_id],
+        ).fetchone()
+        assert row == (3, 2, 1, True)
+        stats = self.opened_stats(session_factory, w)
+        assert stats["opened"] == 1 and stats["total_opens"] == 2
+
+    def test_old_tokens_without_a_send_time_and_bot_agents_never_count(
+        self, su, tracking_client, session_factory
+    ):
+        w = seed_sent_world(su)
+        connect_mailbox(su, w)
+        v1 = make_open_token(w.ws, w.message1_id, SIGNING_KEY)
+        assert tracking_client.get(f"/api/v1/t/o/{v1}.gif", headers={"User-Agent": HUMAN_UA}).status_code == 200
+        self.pixel(tracking_client, w, ua="python-requests/2.31")
+        self.pixel(tracking_client, w, ua="")
+        assert scalar(su, "SELECT qualified_count FROM public.message_events WHERE message_id=%s", [w.message1_id]) == 0
+        assert self.opened_stats(session_factory, w)["opened"] == 0
+
+    def test_bulk_send_scanned_at_delivery_shows_no_opens(self, su, tracking_client, session_factory):
+        """Every recipient's provider scans its email seconds after a bulk send."""
+        w = seed_sent_world(su)
+        connect_mailbox(su, w)
+        for _ in range(20):
+            self.pixel(tracking_client, w, ua=HUMAN_UA, sent_seconds_ago=1)
+            self.pixel(tracking_client, w, ua=SCANNER_UA, sent_seconds_ago=1)
+        assert scalar(su, "SELECT occurrence_count FROM public.message_events WHERE message_id=%s", [w.message1_id]) == 40
+        stats = self.opened_stats(session_factory, w)
+        assert stats["opened"] == 0 and stats["total_opens"] == 0 and stats["open_rate"] == 0.0
 
     def test_invalid_forged_and_unknown_tokens_return_the_same_gif_and_write_nothing(self, su, tracking_client):
         w = seed_sent_world(su)
@@ -368,8 +452,8 @@ class TestOpenTracking:
         w = seed_sent_world(su)
         other = seed_sent_world(su)
         # Valid signature for workspace A but naming a message of workspace B.
-        token = make_open_token(w.ws, other.message1_id, SIGNING_KEY)
-        response = tracking_client.get(f"/api/v1/t/o/{token}.gif")
+        token = open_token(w, other.message1_id)
+        response = tracking_client.get(f"/api/v1/t/o/{token}.gif", headers={"User-Agent": HUMAN_UA})
         assert response.status_code == 200
         assert scalar(su, "SELECT count(*) FROM public.message_events", []) >= 0
         assert (
@@ -378,7 +462,7 @@ class TestOpenTracking:
 
     def test_head_requests_are_not_opens(self, su, tracking_client):
         w = seed_sent_world(su)
-        token = make_open_token(w.ws, w.message1_id, SIGNING_KEY)
+        token = open_token(w)
         response = tracking_client.head(f"/api/v1/t/o/{token}.gif")
         assert response.status_code == 200
         assert scalar(su, "SELECT count(*) FROM public.message_events WHERE message_id=%s", [w.message1_id]) == 0
@@ -620,9 +704,10 @@ class TestEndToEnd:
         connect_mailbox(su, w)
 
         # recipient opens the email three times
-        token = make_open_token(w.ws, w.message1_id, SIGNING_KEY)
+        token = open_token(w)
         for _ in range(3):
-            assert tracking_client.get(f"/api/v1/t/o/{token}.gif").status_code == 200
+            response = tracking_client.get(f"/api/v1/t/o/{token}.gif", headers={"User-Agent": HUMAN_UA})
+            assert response.status_code == 200
         # recipient replies; Outly's mailbox sync picks it up
         result, _ = run_sync(session_factory, w, [page(reply_message())])
         assert result.status == "CURRENT", result.error
@@ -668,8 +753,9 @@ class TestEndToEnd:
         w = seed_sent_world(su)
         connect_mailbox(su, w)
         su.execute(
-            "INSERT INTO public.message_events (workspace_id, message_id, kind, source, first_occurred_at, last_occurred_at, occurrence_count) "
-            "VALUES (%s,%s,'OPENED','PIXEL',now(),now(),2)",
+            "INSERT INTO public.message_events (workspace_id, message_id, kind, source, first_occurred_at, last_occurred_at, "
+            "occurrence_count, qualified_at, qualified_count) "
+            "VALUES (%s,%s,'OPENED','PIXEL',now(),now(),2,now(),2)",
             [w.ws, w.message1_id],
         )
         run_sync(session_factory, w, [page(dsn_message("dsn-1"))])

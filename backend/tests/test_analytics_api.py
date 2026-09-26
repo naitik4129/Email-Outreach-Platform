@@ -195,6 +195,10 @@ def api_setup():
             first_occurred_at TIMESTAMP NOT NULL,
             last_occurred_at TIMESTAMP NOT NULL,
             occurrence_count INTEGER NOT NULL DEFAULT 1,
+            qualified_at TIMESTAMP,
+            qualified_count INTEGER NOT NULL DEFAULT 0,
+            automated_count INTEGER NOT NULL DEFAULT 0,
+            last_user_agent TEXT,
             UNIQUE (workspace_id, message_id, kind)
         );
         """

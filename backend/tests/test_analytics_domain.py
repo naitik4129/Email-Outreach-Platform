@@ -196,6 +196,10 @@ def analytics_db() -> Session:
             first_occurred_at TIMESTAMP NOT NULL,
             last_occurred_at TIMESTAMP NOT NULL,
             occurrence_count INTEGER NOT NULL DEFAULT 1,
+            qualified_at TIMESTAMP,
+            qualified_count INTEGER NOT NULL DEFAULT 0,
+            automated_count INTEGER NOT NULL DEFAULT 0,
+            last_user_agent TEXT,
             UNIQUE (workspace_id, message_id, kind)
         );
         """
@@ -312,10 +316,11 @@ def test_campaign_analytics_metric_calculations(analytics_db: Session) -> None:
         text(
             """
             INSERT INTO public.message_events
-                (id, workspace_id, message_id, kind, bounce_type, first_occurred_at, last_occurred_at, occurrence_count)
+                (id, workspace_id, message_id, kind, bounce_type, first_occurred_at, last_occurred_at, occurrence_count,
+                 qualified_at, qualified_count, automated_count)
             VALUES
-                (:x1, :ws, :m2, 'BOUNCED', 'HARD', :now, :now, 1),
-                (:x2, :ws, :m1, 'OPENED', NULL, :now, :now, 5)
+                (:x1, :ws, :m2, 'BOUNCED', 'HARD', :now, :now, 1, NULL, 0, 0),
+                (:x2, :ws, :m1, 'OPENED', NULL, :now, :now, 7, :now, 5, 2)
             """
         ),
         {

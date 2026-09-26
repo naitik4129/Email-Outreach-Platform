@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from html import escape
 from urllib.parse import urlparse
 from uuid import UUID
@@ -33,7 +34,14 @@ def open_tracking_ready(settings: Settings) -> bool:
 
 
 def open_pixel_url(settings: Settings, workspace_id: UUID, message_id: UUID) -> str:
-    token = make_open_token(workspace_id, message_id, settings.tracking_signing_key)
+    # The send time is signed into the token: it is what separates a
+    # delivery-time scanner fetch from a later human open.
+    token = make_open_token(
+        workspace_id,
+        message_id,
+        settings.tracking_signing_key,
+        sent_at=datetime.now(UTC),
+    )
     return f"{settings.tracking_base_url.rstrip('/')}{OPEN_PATH_PREFIX}{token}.gif"
 
 

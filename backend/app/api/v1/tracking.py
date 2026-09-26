@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -10,8 +11,9 @@ from app.api.deps import get_db
 from app.core.config import Settings
 from app.core.metrics import record_open_tracking
 from app.db.context import set_transaction_context
+from app.modules.tracking.classify import classify_open
 from app.modules.tracking.pixel import TRANSPARENT_GIF
-from app.modules.tracking.service import record_open
+from app.modules.tracking.service import MAX_USER_AGENT_LENGTH, record_open
 from app.modules.tracking.tokens import parse_open_token
 
 logger = logging.getLogger(__name__)
@@ -39,9 +41,13 @@ def open_pixel_head(filename: str) -> Response:
 
 
 @router.get("/o/{filename}", include_in_schema=False)
-def open_pixel(filename: str, db: Session = Depends(get_db)) -> Response:
-    """Record an email open and return a 1x1 transparent GIF.
+def open_pixel(
+    filename: str, request: Request, db: Session = Depends(get_db)
+) -> Response:
+    """Record a pixel request and return a 1x1 transparent GIF.
 
+    Only requests that look like a person count as an open (see
+    ``classify_open``); scanner and prefetch fetches are stored as evidence.
     The same image is returned for valid, invalid, unknown and failing requests
     so the response leaks nothing about which tokens exist.
     """
@@ -54,10 +60,24 @@ def open_pixel(filename: str, db: Session = Depends(get_db)) -> Response:
         logger.info("open_tracking_rejected", extra={"reason": "invalid_token"})
         return _pixel()
 
-    workspace_id, message_id = parsed
+    workspace_id, message_id, sent_at = parsed
+    user_agent = request.headers.get("user-agent")
+    classification = classify_open(
+        user_agent=user_agent,
+        headers=request.headers,
+        sent_at=sent_at,
+        now=datetime.now(UTC),
+        min_delay_seconds=settings.open_tracking_min_delay_seconds,
+    )
     try:
         set_transaction_context(db, workspace_id=workspace_id)
-        recorded = record_open(db, workspace_id=workspace_id, message_id=message_id)
+        recorded = record_open(
+            db,
+            workspace_id=workspace_id,
+            message_id=message_id,
+            qualified=classification.qualified,
+            user_agent=user_agent,
+        )
     except SQLAlchemyError:
         db.rollback()
         record_open_tracking("error")
@@ -75,5 +95,14 @@ def open_pixel(filename: str, db: Session = Depends(get_db)) -> Response:
         )
         return _pixel()
 
-    record_open_tracking("recorded")
+    record_open_tracking("recorded" if classification.qualified else "automated")
+    if not classification.qualified:
+        logger.info(
+            "open_tracking_not_counted",
+            extra={
+                "reason": classification.reason,
+                "workspace_id": str(workspace_id),
+                "user_agent": (user_agent or "")[:MAX_USER_AGENT_LENGTH],
+            },
+        )
     return _pixel()

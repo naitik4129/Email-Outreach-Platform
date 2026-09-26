@@ -615,7 +615,10 @@ def test_open_pixel_is_added_at_send_time_naming_this_message() -> None:
     assert envelope.body_html.startswith("<p>Hi</p>")
     token = envelope.body_html.split("/api/v1/t/o/")[1].split(".gif")[0]
     parsed = parse_open_token(token, TRACKING["tracking_signing_key"])
-    assert parsed == (ctx.workspace_id, ctx.message_id)
+    assert parsed is not None
+    assert (parsed.workspace_id, parsed.message_id) == (ctx.workspace_id, ctx.message_id)
+    # The send time is signed in so scanner fetches can be told from human opens.
+    assert parsed.sent_at is not None
     # The frozen snapshot is untouched: the pixel exists only on the envelope.
     assert ctx.content_body_html == "<p>Hi</p>"
 

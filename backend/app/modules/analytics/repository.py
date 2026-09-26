@@ -48,7 +48,8 @@ class AnalyticsRepository:
     - bounced         distinct sent messages with a BOUNCED event
     - delivered (est.) sent - bounced. No provider reports delivery, so this is
                       "accepted and not reported undeliverable"
-    - opened          distinct delivered messages with an OPENED event
+    - opened          distinct delivered messages with a human-like OPENED hit
+                      (scanner/prefetch hits are stored but never counted)
     - bounce rate     bounced / sent
     - open rate       opened / delivered (est.)
     """
@@ -90,7 +91,7 @@ class AnalyticsRepository:
                         COUNT(CASE WHEN b.bounce_type = 'HARD' THEN 1 END) AS hard_bounced,
                         COUNT(CASE WHEN b.bounce_type = 'SOFT' THEN 1 END) AS soft_bounced,
                         COUNT(CASE WHEN b.id IS NULL AND o.id IS NOT NULL THEN 1 END) AS opened,
-                        COALESCE(SUM(CASE WHEN b.id IS NULL THEN o.occurrence_count END), 0)
+                        COALESCE(SUM(CASE WHEN b.id IS NULL THEN o.qualified_count END), 0)
                             AS total_opens
                     FROM public.messages m
                     LEFT JOIN public.message_events b
@@ -98,7 +99,7 @@ class AnalyticsRepository:
                      AND b.kind = 'BOUNCED'
                     LEFT JOIN public.message_events o
                       ON o.workspace_id = m.workspace_id AND o.message_id = m.id
-                     AND o.kind = 'OPENED'
+                     AND o.kind = 'OPENED' AND o.qualified_at IS NOT NULL
                     WHERE {" AND ".join(filters)}
                     {group_by}
                     """

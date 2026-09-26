@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # Public origin that serves /api/v1/t/o/... (same origin as the app).
     tracking_base_url: str = ""
     tracking_signing_key: str = ""
+    # A pixel fetch sooner than this after sending is a delivery-time scanner or
+    # prefetch, not a person reading the email, and is not counted as an open.
+    open_tracking_min_delay_seconds: int = Field(default=60, ge=0, le=3600)
 
     # Shared secrets for the provider webhooks. When unset the endpoint is
     # disabled (503) instead of accepting unauthenticated events.

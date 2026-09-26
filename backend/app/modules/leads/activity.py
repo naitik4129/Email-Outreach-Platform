@@ -97,8 +97,11 @@ class LeadActivityService:
 
         for r in self._rows(
             """
-            SELECT me.kind, me.bounce_type, me.occurrence_count,
-                   me.first_occurred_at AS at, m.id AS message_id,
+            SELECT me.kind, me.bounce_type,
+                   CASE WHEN me.kind = 'OPENED' THEN me.qualified_count
+                        ELSE me.occurrence_count END AS occurrence_count,
+                   CASE WHEN me.kind = 'OPENED' THEN me.qualified_at
+                        ELSE me.first_occurred_at END AS at, m.id AS message_id,
                    m.content_subject AS subject, m.campaign_id,
                    camp.name AS campaign_name, st.position AS step_position
             FROM public.message_events me
@@ -111,6 +114,7 @@ class LeadActivityService:
             LEFT JOIN public.sequence_steps st
               ON st.workspace_id = m.workspace_id AND st.id = m.step_id
             WHERE e.workspace_id = :ws AND e.lead_id = :lid
+              AND (me.kind <> 'OPENED' OR me.qualified_at IS NOT NULL)
             """,
             params,
         ):

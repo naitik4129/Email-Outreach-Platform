@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import re
 import uuid
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +17,7 @@ from app.api.deps import get_db
 from app.core.config import Settings
 from app.main import app
 from app.modules.mailboxes.providers.message_builder import generate_message_id
+from app.modules.tracking.classify import classify_open
 from app.modules.tracking.pixel import (
     TRANSPARENT_GIF,
     inject_open_pixel,
@@ -42,7 +44,21 @@ def settings(**overrides: object) -> Settings:
 class TestTokens:
     def test_round_trip(self) -> None:
         token = make_open_token(WS, MSG, KEY)
-        assert parse_open_token(token, KEY) == (WS, MSG)
+        assert parse_open_token(token, KEY) == (WS, MSG, None)
+
+    def test_v2_round_trip_carries_the_send_time(self) -> None:
+        sent = datetime(2026, 9, 26, 10, 0, 0, tzinfo=UTC)
+        token = make_open_token(WS, MSG, KEY, sent_at=sent)
+        assert parse_open_token(token, KEY) == (WS, MSG, sent)
+
+    def test_send_time_is_signed_and_cannot_be_rewritten(self) -> None:
+        sent = datetime(2026, 9, 26, 10, 0, 0, tzinfo=UTC)
+        token = make_open_token(WS, MSG, KEY, sent_at=sent)
+        raw = bytearray(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+        raw[32:36] = (int(sent.timestamp()) - 3600).to_bytes(4, "big")
+        forged = base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode()
+        assert parse_open_token(forged, KEY) is None
+        assert parse_open_token(token, "another-key") is None
 
     def test_token_is_urlsafe_and_carries_no_readable_ids(self) -> None:
         token = make_open_token(WS, MSG, KEY)
@@ -107,7 +123,85 @@ class TestPixel:
         url = open_pixel_url(cfg, WS, MSG)
         assert url.startswith("https://outly.example.com/api/v1/t/o/") and url.endswith(".gif")
         token = url.rsplit("/", 1)[1].removesuffix(".gif")
-        assert parse_open_token(token, KEY) == (WS, MSG)
+        parsed = parse_open_token(token, KEY)
+        assert parsed is not None and (parsed.workspace_id, parsed.message_id) == (WS, MSG)
+        assert parsed.sent_at is not None  # send time is minted into the URL
+
+
+SENT = datetime(2026, 9, 26, 10, 0, 0, tzinfo=UTC)
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
+GMAIL_PROXY_UA = "Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)"
+
+
+def classify(
+    ua: str | None = BROWSER_UA,
+    *,
+    after: int = 600,
+    sent_at: datetime | None = SENT,
+    headers: dict[str, str] | None = None,
+) -> tuple[bool, str]:
+    result = classify_open(
+        user_agent=ua,
+        headers=headers or ({"user-agent": ua} if ua else {}),
+        sent_at=sent_at,
+        now=SENT + timedelta(seconds=after),
+        min_delay_seconds=60,
+    )
+    return result.qualified, result.reason
+
+
+class TestClassifier:
+    """Default-deny: only a hit that looks like a person is an open."""
+
+    def test_a_normal_browser_or_mail_client_well_after_send_counts(self) -> None:
+        assert classify() == (True, "human_like")
+        assert classify("Thunderbird/115.0")[0] is True
+        assert classify("YahooMailProxy")[0] is True
+
+    def test_gmail_image_proxy_counts_because_real_gmail_opens_arrive_through_it(self) -> None:
+        assert classify(GMAIL_PROXY_UA) == (True, "human_like")
+
+    @pytest.mark.parametrize("after", [0, 2, 59])
+    def test_delivery_time_fetches_never_count_even_with_a_browser_ua(self, after: int) -> None:
+        # The bulk-send case: every recipient's scanner fetches seconds after send.
+        assert classify(GMAIL_PROXY_UA, after=after) == (False, "too_soon_after_send")
+
+    def test_the_minimum_delay_boundary(self) -> None:
+        assert classify(after=60)[0] is True
+
+    def test_tokens_without_a_send_time_cannot_prove_it_and_never_count(self) -> None:
+        assert classify(sent_at=None) == (False, "no_send_time")
+
+    @pytest.mark.parametrize("name", ["purpose", "sec-purpose", "x-purpose", "x-moz"])
+    @pytest.mark.parametrize("value", ["prefetch", "Preview"])
+    def test_prefetch_headers_do_not_count(self, name: str, value: str) -> None:
+        assert classify(headers={name: value}) == (False, "prefetch_header")
+
+    @pytest.mark.parametrize("ua", [None, "", "   "])
+    def test_missing_user_agent_does_not_count(self, ua: str | None) -> None:
+        assert classify(ua) == (False, "missing_user_agent")
+
+    @pytest.mark.parametrize(
+        "ua",
+        [
+            "curl/8.4.0",
+            "python-requests/2.31",
+            "Go-http-client/2.0",
+            "Mozilla/5.0 HeadlessChrome/120.0 Safari/537.36",
+            "Mozilla/5.0 (compatible; Googlebot/2.1)",
+            "Mozilla/5.0 (compatible; Barracuda Sentinel)",
+            "Mimecast Link Scanner",
+            "Mozilla/5.0 SafeLinks Protection",
+            "Slackbot-LinkExpanding 1.0",
+            "facebookexternalhit/1.1",
+        ],
+    )
+    def test_scanners_and_bots_do_not_count_even_when_they_look_like_browsers(self, ua: str) -> None:
+        assert classify(ua) == (False, "automated_user_agent")
+
+    @pytest.mark.parametrize("ua", ["SomethingUnknown/1.0", "MyCustomFetcherApp", "Java"])
+    def test_unrecognised_agents_are_not_counted(self, ua: str) -> None:
+        assert classify(ua)[0] is False
 
 
 class TestMessageId:

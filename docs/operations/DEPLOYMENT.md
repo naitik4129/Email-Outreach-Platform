@@ -191,6 +191,11 @@ the reply pipeline needs the 0031 read grants; without them sends or reply proce
 `permission denied`. 0030 creates `message_events` (opens and bounces, one row per email and kind);
 0031 lets the reply worker read `domain_events`/`outbox_work`. Neither changes existing rows.
 
+**Open classification (migration 0032).** Additive; apply after 0030 and **before deploying** the
+backend that classifies pixel hits (the code writes its new `message_events` columns). Only
+human-like hits count as opens; scanner/prefetch hits are stored as evidence. It deliberately does
+not backfill: opens recorded before it were never classified, so they stop counting in analytics.
+
 Finish with `unset DB`.
 
 ### 5.2 Storage bucket
@@ -357,6 +362,9 @@ REPLY_SYNC_MAX_BACKOFF_SECONDS=3600
 OPEN_TRACKING_ENABLED=false
 TRACKING_BASE_URL=""
 TRACKING_SIGNING_KEY=""
+# A pixel fetch sooner than this after sending is a delivery-time scanner or
+# prefetch, not a person, and is not counted as an open.
+OPEN_TRACKING_MIN_DELAY_SECONDS=60
 
 # Provider webhooks stay disabled (HTTP 503) until their secret is set. They are
 # also blocked at Caddy; polling works without them.
