@@ -124,7 +124,7 @@ export function SmtpConnectClient() {
             Back
           </Link>
         </Button>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
           Connect Custom SMTP
         </h1>
         <p className="mt-1 text-sm text-slate-500">
@@ -134,7 +134,7 @@ export function SmtpConnectClient() {
 
       {displayedError ? <Alert variant="error">{displayedError}</Alert> : null}
 
-      <form onSubmit={handleSubmit} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <form onSubmit={handleSubmit} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <Field label="Host" required>
           <Input
             value={host}
@@ -145,7 +145,7 @@ export function SmtpConnectClient() {
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="smtp-security-mode">Security Mode</Label>
             <select
@@ -153,7 +153,7 @@ export function SmtpConnectClient() {
               value={securityMode}
               onChange={(e) => handleSecurityModeChange(e.target.value as SmtpSecurityMode)}
               disabled={isSubmitting}
-              className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
             >
               <option value="STARTTLS">STARTTLS (587)</option>
               <option value="IMPLICIT_TLS">Implicit TLS (465)</option>

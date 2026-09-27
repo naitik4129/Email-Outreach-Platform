@@ -80,8 +80,8 @@ function ToolbarButton({
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:pointer-events-none disabled:opacity-40",
-        active && "bg-indigo-50 text-indigo-700",
+        "inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:pointer-events-none disabled:opacity-40",
+        active && "bg-brand-50 text-brand-700",
       )}
     >
       {children}
@@ -117,8 +117,8 @@ function LinkControl({ editor, disabled }: { editor: Editor; disabled: boolean }
           }}
           {...ariaProps}
           className={cn(
-            "inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:pointer-events-none disabled:opacity-40",
-            editor.isActive("link") && "bg-indigo-50 text-indigo-700",
+            "inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:pointer-events-none disabled:opacity-40",
+            editor.isActive("link") && "bg-brand-50 text-brand-700",
           )}
         >
           <Link2 className="h-4 w-4" aria-hidden="true" />
@@ -371,7 +371,7 @@ function MoreMenu({ editor, disabled }: { editor: Editor; disabled: boolean }) {
           onMouseDown={(event) => event.preventDefault()}
           onClick={toggle}
           {...ariaProps}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:pointer-events-none disabled:opacity-40"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:pointer-events-none disabled:opacity-40"
         >
           <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
         </button>
@@ -390,7 +390,7 @@ function MoreMenu({ editor, disabled }: { editor: Editor; disabled: boolean }) {
                 }}
                 className={cn(
                   "w-full rounded px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100",
-                  item.active && "bg-indigo-50 text-indigo-700",
+                  item.active && "bg-brand-50 text-brand-700",
                 )}
               >
                 {item.label}
@@ -583,7 +583,7 @@ export const EmailBodyEditor = React.forwardRef<EmailBodyEditorHandle, Props>(
               synced.current = null;
               onChange(event.target.value);
             }}
-            className="block min-h-[16rem] w-full resize-y rounded-b-md p-3 font-mono text-xs leading-5 text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-600"
+            className="block min-h-[16rem] w-full resize-y rounded-b-md p-3 font-mono text-xs leading-5 text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600"
           />
         )}
       </div>

@@ -5,8 +5,8 @@ import { QueryProvider } from "@/lib/query-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Email Outreach Platform",
-  description: "Production application foundation for the email outreach platform.",
+  title: { default: "Outly", template: "%s · Outly" },
+  description: "Outly: run cold email outreach campaigns, manage leads and mailboxes, and turn conversations into opportunities.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

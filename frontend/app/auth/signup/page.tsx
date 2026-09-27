@@ -61,7 +61,7 @@ export default function SignupPage() {
           confirmation link to finish creating your account.
         </Alert>
         <p className="mt-6 text-center text-sm text-slate-500">
-          <Link href="/auth/login" className="font-medium text-teal-700 hover:underline">
+          <Link href="/auth/login" className="font-medium text-brand-700 hover:underline">
             Back to sign in
           </Link>
         </p>
@@ -106,7 +106,7 @@ export default function SignupPage() {
       </form>
       <p className="mt-6 text-center text-sm text-slate-500">
         Already have an account?{" "}
-        <Link href="/auth/login" className="font-medium text-teal-700 hover:underline">
+        <Link href="/auth/login" className="font-medium text-brand-700 hover:underline">
           Sign in
         </Link>
       </p>

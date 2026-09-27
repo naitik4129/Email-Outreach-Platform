@@ -8,6 +8,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
 import type { PreviewBatch, PreviewItem } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 type Props = {
   batch: PreviewBatch | null;
@@ -129,7 +130,7 @@ export function SamplePreviewPanel({
   return (
     <section
       aria-label="Sample emails"
-      className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+      className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-card"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -164,9 +165,7 @@ export function SamplePreviewPanel({
       {loadError ? <Alert variant="error">{errorMessage(loadError)}</Alert> : null}
 
       {loading ? (
-        <div className="flex min-h-[80px] items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-slate-400" aria-label="Loading" />
-        </div>
+        <LoadingBlock />
       ) : null}
 
       {batch?.stale ? (

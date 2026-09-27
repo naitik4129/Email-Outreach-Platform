@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, UploadCloud } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
+import { ImportStatusBadge } from "@/components/ui/status-badge";
 import { ApiError } from "@/lib/api-client";
 import { listImports } from "@/lib/imports-api";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -59,7 +61,7 @@ export function ImportsPageClient() {
     <main className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Imports
           </h1>
           <p className="mt-2 text-sm text-slate-500">
@@ -78,7 +80,7 @@ export function ImportsPageClient() {
         </div>
       </div>
 
-      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {importsQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
@@ -88,17 +90,25 @@ export function ImportsPageClient() {
             <Alert>{errorMessage(importsQuery.error)}</Alert>
           </div>
         ) : importsQuery.data?.items.length === 0 ? (
-          <div className="p-8 text-center">
-            <h2 className="text-lg font-semibold text-slate-950">No imports yet</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Upload a CSV file to add multiple leads or suppressions at once.
-            </p>
-          </div>
+          <EmptyState
+            className="rounded-none border-0"
+            icon={<UploadCloud />}
+            title="No imports yet"
+            description="Upload a CSV file to add multiple leads or suppressions at once."
+            action={
+              <Button asChild>
+                <Link href="/app/leads/imports/new">
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  New import
+                </Link>
+              </Button>
+            }
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Date</th>
                     <th className="px-4 py-3">Type</th>
@@ -110,26 +120,14 @@ export function ImportsPageClient() {
                 <tbody className="divide-y divide-slate-100">
                   {importsQuery.data?.items.map((job) => (
                     <tr key={job.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
+                      <td className="px-4 py-3 font-medium text-slate-900">
                         <Link href={`/app/leads/imports/${job.id}`}>
                           {formatDate(job.created_at)}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-slate-700">{job.import_kind}</td>
                       <td className="px-4 py-3 text-slate-700">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            job.status === "COMPLETED"
-                              ? "bg-green-100 text-green-800"
-                              : job.status === "FAILED"
-                                ? "bg-red-100 text-red-800"
-                                : job.status === "COMPLETED_WITH_ERRORS"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-blue-100 text-blue-800"
-                          }`}
-                        >
-                          {job.status}
-                        </span>
+                        <ImportStatusBadge status={job.status} />
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {job.processed_rows} / {job.total_rows ?? "?"}

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { GenerationProgressPanel } from "@/components/campaigns/personalization/generation-progress-panel";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ProviderBadge } from "@/components/mailboxes/provider-badge";
 import { ApiError } from "@/lib/api-client";
 import {
@@ -22,6 +23,7 @@ import { getPersonalization } from "@/lib/personalization-api";
 import { canExecuteCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignPlanning, PreflightIssue } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -145,6 +147,7 @@ export default function CampaignReviewPage() {
   const mayExecute = canExecuteCampaign(activeWorkspace?.role_code);
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<"activate" | "pause" | "resume" | null>(null);
 
   const reviewQuery = useQuery({
     queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId, "review"],
@@ -231,9 +234,7 @@ export default function CampaignReviewPage() {
 
   if (reviewQuery.isLoading) {
     return (
-      <div className="flex min-h-[200px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-      </div>
+      <LoadingBlock />
     );
   }
   if (reviewQuery.isError || !reviewQuery.data) {
@@ -289,7 +290,7 @@ export default function CampaignReviewPage() {
         </div>
       </div>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <h3 className="text-sm font-semibold text-slate-900">Sequence</h3>
         <p className="mt-1 text-sm text-slate-600">
           {sequence && sequence.steps.length > 0
@@ -300,7 +301,7 @@ export default function CampaignReviewPage() {
         </p>
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <h3 className="text-sm font-semibold text-slate-900">Senders</h3>
         {mailboxes.length === 0 ? (
           <p className="mt-1 text-sm text-slate-600">No mailboxes assigned.</p>
@@ -316,7 +317,7 @@ export default function CampaignReviewPage() {
         )}
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <h3 className="text-sm font-semibold text-slate-900">Schedule</h3>
         {settings ? (
           <p className="mt-1 text-sm text-slate-600">
@@ -329,7 +330,7 @@ export default function CampaignReviewPage() {
         )}
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <h3 className="text-sm font-semibold text-slate-900">Audience</h3>
         {audience && audience.is_committed ? (
           <p className="mt-1 text-sm text-slate-600">
@@ -344,7 +345,7 @@ export default function CampaignReviewPage() {
       </section>
 
       {isHyper && personalizationQuery.data ? (
-        <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
           <h3 className="text-sm font-semibold text-slate-900">Personalization</h3>
           <p className="mt-1 text-sm text-slate-600">
             {personalizationQuery.data.config
@@ -374,7 +375,7 @@ export default function CampaignReviewPage() {
         />
       ) : null}
 
-      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
         {campaign.status === "DRAFT" ? (
           <>
             <Button
@@ -389,18 +390,7 @@ export default function CampaignReviewPage() {
               }
               onClick={() => {
                 if (!canStart || activateMutation.isPending) return;
-                if (
-                  window.confirm(
-                    `Activate "${campaign.name}"? This freezes the sequence, senders and ` +
-                      "audience and creates a durable message plan. No email is sent by " +
-                      "this action, and configuration becomes restricted from editing." +
-                      (isHyper
-                        ? " Each personalized email is written shortly before it is due to send."
-                        : ""),
-                  )
-                ) {
-                  activateMutation.mutate();
-                }
+                setPendingAction("activate");
               }}
             >
               {activateMutation.isPending ? (
@@ -428,11 +418,7 @@ export default function CampaignReviewPage() {
                   variant="outline"
                   size="sm"
                   disabled={pauseMutation.isPending}
-                  onClick={() => {
-                    if (window.confirm(`Pause "${campaign.name}"?`)) {
-                      pauseMutation.mutate();
-                    }
-                  }}
+                  onClick={() => setPendingAction("pause")}
                 >
                   {pauseMutation.isPending && (
                     <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -444,11 +430,7 @@ export default function CampaignReviewPage() {
               <Button
                 size="sm"
                 disabled={resumeMutation.isPending}
-                onClick={() => {
-                  if (window.confirm(`Resume "${campaign.name}"?`)) {
-                    resumeMutation.mutate();
-                  }
-                }}
+                onClick={() => setPendingAction("resume")}
               >
                 {resumeMutation.isPending && (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -462,6 +444,44 @@ export default function CampaignReviewPage() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={pendingAction !== null}
+        title={
+          pendingAction === "activate"
+            ? `Activate "${campaign.name}"?`
+            : pendingAction === "pause"
+              ? `Pause "${campaign.name}"?`
+              : `Resume "${campaign.name}"?`
+        }
+        description={
+          pendingAction === "activate"
+            ? "This freezes the sequence, senders and audience and creates a durable message plan. No email is sent by this action, and configuration becomes restricted from editing." +
+              (isHyper
+                ? " Each personalized email is written shortly before it is due to send."
+                : "")
+            : undefined
+        }
+        confirmLabel={
+          pendingAction === "activate"
+            ? "Activate campaign"
+            : pendingAction === "pause"
+              ? "Pause campaign"
+              : "Resume campaign"
+        }
+        loading={
+          activateMutation.isPending || pauseMutation.isPending || resumeMutation.isPending
+        }
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => {
+          const mutation =
+            pendingAction === "activate"
+              ? activateMutation
+              : pendingAction === "pause"
+                ? pauseMutation
+                : resumeMutation;
+          mutation.mutate(undefined, { onSettled: () => setPendingAction(null) });
+        }}
+      />
     </div>
   );
 }

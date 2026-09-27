@@ -3,7 +3,6 @@
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 
 import { computeTimings } from "@/components/campaigns/sequence/duration";
 import { EmailStepDialog } from "@/components/campaigns/sequence/email-step-dialog";
@@ -24,6 +23,7 @@ import {
 import { canDraftCampaign, canExecuteCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignSequence, CampaignSettings, SequenceStep } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 // Wait inserted before a newly added email; two days is the common cadence.
 const DEFAULT_WAIT_MINUTES = 2 * 24 * 60;
@@ -273,9 +273,7 @@ export default function CampaignSequencePage() {
       ) : null}
 
       {sequenceQuery.isLoading ? (
-        <div className="flex min-h-[150px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" aria-label="Loading" />
-        </div>
+        <LoadingBlock />
       ) : steps.length === 0 ? (
         <div className="flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
           <p>No steps yet. Start with an email.</p>

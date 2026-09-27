@@ -49,7 +49,7 @@ export default function ForgotPasswordPage() {
           password.
         </Alert>
         <p className="mt-6 text-center text-sm text-slate-500">
-          <Link href="/auth/login" className="font-medium text-teal-700 hover:underline">
+          <Link href="/auth/login" className="font-medium text-brand-700 hover:underline">
             Back to sign in
           </Link>
         </p>
@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
         </Button>
       </form>
       <p className="mt-6 text-center text-sm text-slate-500">
-        <Link href="/auth/login" className="font-medium text-teal-700 hover:underline">
+        <Link href="/auth/login" className="font-medium text-brand-700 hover:underline">
           Back to sign in
         </Link>
       </p>

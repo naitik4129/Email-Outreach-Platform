@@ -20,6 +20,7 @@ import {
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api-client";
@@ -33,6 +34,7 @@ import {
   updateTemplate,
 } from "@/lib/templates-api";
 import { useWorkspace } from "@/lib/workspace-context";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function canManageTemplates(role?: string) {
   return (
@@ -211,6 +213,7 @@ export default function TemplateDetailPage() {
     },
   });
 
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const archiveMutation = useMutation({
     mutationFn: () => {
       if (!activeWorkspaceId || !templateQuery.data) {
@@ -281,9 +284,7 @@ export default function TemplateDetailPage() {
 
   if (templateQuery.isLoading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-      </div>
+      <LoadingBlock size="lg" />
     );
   }
 
@@ -326,7 +327,7 @@ export default function TemplateDetailPage() {
           </Button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
                 {tmpl.name}
               </h1>
               <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
@@ -361,15 +362,7 @@ export default function TemplateDetailPage() {
                 variant="outline"
                 size="sm"
                 className="text-red-600 hover:text-red-700"
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Are you sure you want to archive "${tmpl.name}"?`
-                    )
-                  ) {
-                    archiveMutation.mutate();
-                  }
-                }}
+                onClick={() => setConfirmArchive(true)}
                 disabled={archiveMutation.isPending}
               >
                 <Trash2 className="mr-1.5 h-4 w-4" />
@@ -440,7 +433,7 @@ export default function TemplateDetailPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Editor */}
         <div className="space-y-5 lg:col-span-7">
-          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card space-y-4">
             <Field label="Template Name" required>
               <Input
                 value={name}
@@ -467,7 +460,7 @@ export default function TemplateDetailPage() {
             {mayManage && !isArchived && (
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-600 flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                  <Sparkles className="h-3.5 w-3.5 text-brand-600" />
                   Insert Variable (targets {activeField === "subject" ? "Subject" : "Body"})
                 </label>
                 <div className="flex flex-wrap gap-1.5">
@@ -476,7 +469,7 @@ export default function TemplateDetailPage() {
                       key={v.label}
                       type="button"
                       onClick={() => insertVariable(v.code)}
-                      className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition"
+                      className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-700 hover:bg-brand-50 hover:border-brand-300 hover:text-brand-700 transition"
                     >
                       + {v.code}
                     </button>
@@ -489,7 +482,7 @@ export default function TemplateDetailPage() {
               <textarea
                 ref={bodyRef}
                 rows={12}
-                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-50"
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-50"
                 value={bodyHtml}
                 onChange={(e) => setBodyHtml(e.target.value)}
                 onFocus={() => setActiveField("body")}
@@ -500,7 +493,7 @@ export default function TemplateDetailPage() {
           </div>
 
           {/* Version History Drawer/Section */}
-          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card space-y-3">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
               <History className="h-4 w-4 text-slate-500" />
               <h3 className="text-sm font-semibold text-slate-800">
@@ -536,10 +529,10 @@ export default function TemplateDetailPage() {
 
         {/* Preview */}
         <div className="space-y-4 lg:col-span-5">
-          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <Eye className="h-4 w-4 text-indigo-600" />
+                <Eye className="h-4 w-4 text-brand-600" />
                 <h2 className="text-sm font-semibold text-slate-900">
                   Live Preview
                 </h2>
@@ -612,6 +605,16 @@ export default function TemplateDetailPage() {
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmArchive}
+        title={`Archive "${tmpl?.name ?? ""}"?`}
+        description="Archived templates can no longer be used in new sequences."
+        confirmLabel="Archive template"
+        tone="danger"
+        loading={archiveMutation.isPending}
+        onCancel={() => setConfirmArchive(false)}
+        onConfirm={() => archiveMutation.mutate(undefined, { onSettled: () => setConfirmArchive(false) })}
+      />
     </div>
   );
 }

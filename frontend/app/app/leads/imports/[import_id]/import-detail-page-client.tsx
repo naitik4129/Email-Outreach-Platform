@@ -8,6 +8,7 @@ import { ChevronLeft, Loader2, RefreshCw } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ImportStatusBadge, StatusBadge } from "@/components/ui/status-badge";
 import { ApiError } from "@/lib/api-client";
 import { getImport, listImportRowResults } from "@/lib/imports-api";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -75,7 +76,7 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
           </Link>
         </Button>
         <div>
-          <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Import Details
           </h1>
           {job && (
@@ -91,24 +92,12 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
       ) : null}
 
       {job && (
-        <section className="rounded-md border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div>
               <dt className="text-sm font-medium text-slate-500">Status</dt>
               <dd className="mt-1">
-                <span
-                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                    job.status === "COMPLETED"
-                      ? "bg-green-100 text-green-800"
-                      : job.status === "FAILED"
-                        ? "bg-red-100 text-red-800"
-                        : job.status === "COMPLETED_WITH_ERRORS"
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-blue-100 text-blue-800"
-                  }`}
-                >
-                  {job.status}
-                </span>
+                <ImportStatusBadge status={job.status} />
                 {(job.status === "PENDING" || job.status === "PROCESSING") && (
                   <Loader2 className="ml-2 inline h-4 w-4 animate-spin text-slate-400" />
                 )}
@@ -141,7 +130,7 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
         </section>
       )}
 
-      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 flex justify-between items-center">
           <h2 className="text-sm font-medium text-slate-900">Row Results</h2>
           <Button variant="ghost" size="icon" onClick={() => resultsQuery.refetch()}>
@@ -165,7 +154,7 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Row</th>
                     <th className="px-4 py-3">Status</th>
@@ -179,17 +168,11 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
                         {row.row_number}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            row.status === "ACCEPTED"
-                              ? "bg-green-100 text-green-800"
-                              : row.status === "REJECTED"
-                                ? "bg-red-100 text-red-800"
-                                : "bg-slate-100 text-slate-800"
-                          }`}
+                        <StatusBadge
+                          tone={row.status === "ACCEPTED" ? "success" : row.status === "REJECTED" ? "danger" : "neutral"}
                         >
                           {row.status}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {row.validation_reason || "-"}

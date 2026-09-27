@@ -62,7 +62,7 @@ export function ImapSettingsFields({
           autoComplete="off"
         />
       </Field>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor={`${idPrefix}-imap-port`}>IMAP encryption</Label>
           <select
@@ -70,7 +70,7 @@ export function ImapSettingsFields({
             value={value.port === 143 ? 143 : 993}
             onChange={(e) => set({ port: Number(e.target.value) })}
             disabled={disabled}
-            className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
           >
             <option value={993}>Implicit TLS (993)</option>
             <option value={143}>STARTTLS (143)</option>

@@ -5,19 +5,21 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
-  Loader2,
   Mail,
   Plus,
   ShieldAlert,
+  Unplug,
 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { ProviderBadge } from "@/components/mailboxes/provider-badge";
 import { ApiError } from "@/lib/api-client";
 import { listMailboxes } from "@/lib/mailboxes-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { MailboxListItem } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function canManageMailboxes(role?: string) {
   return role === "OWNER" || role === "ADMIN" || role === "MANAGER";
@@ -30,13 +32,12 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function StatusBadge({ mailbox }: { mailbox: MailboxListItem }) {
+function MailboxStatusBadge({ mailbox }: { mailbox: MailboxListItem }) {
   if (mailbox.connection_state === "DISCONNECTED") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+      <StatusBadge tone="muted" icon={<Unplug aria-hidden="true" />}>
         Disconnected
-      </span>
+      </StatusBadge>
     );
   }
 
@@ -45,27 +46,21 @@ function StatusBadge({ mailbox }: { mailbox: MailboxListItem }) {
     mailbox.health_state === "DEGRADED"
   ) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
-        <AlertTriangle className="h-3 w-3" />
+      <StatusBadge tone="warning" icon={<AlertTriangle aria-hidden="true" />}>
         Needs Reconnect
-      </span>
+      </StatusBadge>
     );
   }
 
   if (mailbox.connection_state === "CONNECTED" && mailbox.health_state === "HEALTHY") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
-        <CheckCircle2 className="h-3 w-3" />
+      <StatusBadge tone="success" icon={<CheckCircle2 aria-hidden="true" />}>
         Connected
-      </span>
+      </StatusBadge>
     );
   }
 
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-      {mailbox.connection_state}
-    </span>
-  );
+  return <StatusBadge tone="neutral">{mailbox.connection_state}</StatusBadge>;
 }
 
 export function MailboxesPageClient() {
@@ -87,7 +82,7 @@ export function MailboxesPageClient() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Mailboxes
           </h1>
           <p className="mt-1 text-sm text-slate-500">
@@ -113,9 +108,7 @@ export function MailboxesPageClient() {
       ) : null}
 
       {mailboxesQuery.isLoading ? (
-        <div className="flex min-h-[300px] items-center justify-center rounded-xl border border-slate-200 bg-white p-12">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-        </div>
+        <LoadingBlock size="lg" />
       ) : mailboxes.length === 0 ? (
         <div className="flex min-h-[360px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
           <div className="rounded-full bg-slate-100 p-3 text-slate-600">
@@ -139,24 +132,24 @@ export function MailboxesPageClient() {
           ) : null}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th scope="col" className="px-6 py-3.5">
+                  <th scope="col" className="px-4 py-3">
                     Account
                   </th>
-                  <th scope="col" className="px-6 py-3.5">
+                  <th scope="col" className="px-4 py-3">
                     Provider
                   </th>
-                  <th scope="col" className="px-6 py-3.5">
+                  <th scope="col" className="px-4 py-3">
                     Status
                   </th>
-                  <th scope="col" className="px-6 py-3.5">
+                  <th scope="col" className="px-4 py-3">
                     Policy
                   </th>
-                  <th scope="col" className="px-6 py-3.5">
+                  <th scope="col" className="px-4 py-3">
                     Connected At
                   </th>
                   <th scope="col" className="px-6 py-3.5 text-right">
@@ -170,7 +163,7 @@ export function MailboxesPageClient() {
                     key={mailbox.id}
                     className="hover:bg-slate-50/75 transition-colors"
                   >
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3.5">
                       <div className="font-medium text-slate-900">
                         {mailbox.email_address}
                       </div>
@@ -180,15 +173,15 @@ export function MailboxesPageClient() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3.5">
                       <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-800">
                         <ProviderBadge provider={mailbox.provider} />
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <StatusBadge mailbox={mailbox} />
+                    <td className="px-4 py-3.5">
+                      <MailboxStatusBadge mailbox={mailbox} />
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3.5">
                       {mailbox.policy_state === "ENABLED" ? (
                         <span className="text-xs text-slate-600">Normal</span>
                       ) : (
@@ -198,10 +191,10 @@ export function MailboxesPageClient() {
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-xs text-slate-500">
+                    <td className="px-4 py-3.5 text-xs text-slate-500">
                       {formatDate(mailbox.created_at)}
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-4 py-3.5 text-right">
                       <Button variant="outline" size="sm" asChild>
                         <Link href={`/app/mailboxes/${mailbox.id}`}>
                           Manage

@@ -21,6 +21,36 @@ body {
   margin: 0;
   background: rgb(var(--background));
   color: rgb(var(--foreground));
+  font-family: theme("fontFamily.sans");
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgb(199 210 254);
+  color: rgb(15 23 42);
+}
+
+/* One consistent, visible keyboard focus treatment for anything that doesn't
+   set its own ring (links, summary, custom controls). */
+:focus-visible {
+  outline: 2px solid rgb(79 70 229);
+  outline-offset: 2px;
+}
+
+/* Skeleton shimmer is opt-in via .animate-pulse; honour reduced motion for
+   every animation this design system introduces. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 button,
@@ -67,7 +97,7 @@ select {
   border-top: 1px solid rgb(203 213 225);
 }
 .email-editor .ProseMirror a {
-  color: rgb(37 99 235);
+  color: rgb(79 70 229);
   text-decoration: underline;
 }
 .email-editor .ProseMirror h1,

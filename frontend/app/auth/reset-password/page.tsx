@@ -72,7 +72,7 @@ export default function ResetPasswordPage() {
         <p className="mt-6 text-center text-sm text-slate-500">
           <Link
             href="/auth/forgot-password"
-            className="font-medium text-teal-700 hover:underline"
+            className="font-medium text-brand-700 hover:underline"
           >
             Request a new link
           </Link>

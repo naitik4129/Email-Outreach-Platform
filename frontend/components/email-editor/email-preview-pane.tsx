@@ -70,7 +70,7 @@ export function EmailPreviewPane({
         {fromOptions.length === 0 ? (
           <p className="text-slate-500" id="preview-from">
             No email account connected.{" "}
-            <Link href={sendersHref} className="font-medium text-indigo-600 hover:underline">
+            <Link href={sendersHref} className="font-medium text-brand-600 hover:underline">
               Assign a sender
             </Link>
           </p>

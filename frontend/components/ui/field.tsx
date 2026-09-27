@@ -27,7 +27,7 @@ export function Field({ id: explicitId, label, required, error, children, classN
     <div className={cn("space-y-1.5", className)}>
       <Label htmlFor={id}>
         {label}
-        {required && <span className="text-red-500 ml-0.5" aria-hidden="true">*</span>}
+        {required && <span className="ml-0.5 text-red-500" aria-hidden="true">*</span>}
       </Label>
       {child}
       {error ? (

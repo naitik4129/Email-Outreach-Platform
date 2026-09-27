@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
+import { ListChecks, Loader2, Plus } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -78,7 +79,7 @@ export function LeadListsPageClient() {
           <Button asChild variant="ghost">
             <Link href="/app/leads">Back to leads</Link>
           </Button>
-          <h1 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-3">
             Lead Lists
           </h1>
           <p className="mt-2 text-sm text-slate-500">
@@ -94,8 +95,8 @@ export function LeadListsPageClient() {
       </div>
 
       {formOpen && mayManage ? (
-        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
             Create list
           </h2>
           {formError ? (
@@ -129,7 +130,7 @@ export function LeadListsPageClient() {
         </section>
       ) : null}
 
-      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {listsQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
@@ -139,17 +140,17 @@ export function LeadListsPageClient() {
             <Alert>{errorMessage(listsQuery.error)}</Alert>
           </div>
         ) : listsQuery.data?.items.length === 0 ? (
-          <div className="p-8 text-center">
-            <h2 className="text-lg font-semibold text-slate-950">No lists yet</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Create a list to organize leads for later campaign selection.
-            </p>
-          </div>
+          <EmptyState
+            className="rounded-none border-0"
+            icon={<ListChecks />}
+            title="No lists yet"
+            description="Create a list to organize leads for later campaign selection."
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Name</th>
                     <th className="px-4 py-3">Members</th>
@@ -159,7 +160,7 @@ export function LeadListsPageClient() {
                 <tbody className="divide-y divide-slate-100">
                   {listsQuery.data?.items.map((list) => (
                     <tr key={list.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
+                      <td className="px-4 py-3 font-medium text-slate-900">
                         <Link href={`/app/leads/lists/${list.id}`}>
                           {list.name}
                         </Link>

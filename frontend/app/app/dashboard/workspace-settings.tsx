@@ -67,10 +67,10 @@ export function WorkspaceSettings() {
   if (!workspace) return null;
 
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+          <h2 className="text-base font-semibold text-slate-900">
             Workspace settings
           </h2>
           <p className="mt-1 text-sm text-slate-500">
@@ -113,7 +113,7 @@ export function WorkspaceSettings() {
             </Button>
           </form>
         ) : (
-          <p className="text-base font-medium text-slate-950">{workspace.name}</p>
+          <p className="text-base font-medium text-slate-900">{workspace.name}</p>
         )}
       </div>
     </section>

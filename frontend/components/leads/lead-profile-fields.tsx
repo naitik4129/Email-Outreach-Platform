@@ -84,7 +84,7 @@ function DetailValue({ value, isUrl }: { value: string; isUrl: boolean }) {
         href={value}
         target="_blank"
         rel="noopener noreferrer"
-        className="break-all text-teal-700 hover:underline"
+        className="break-all text-brand-700 hover:underline"
       >
         {value}
       </a>
@@ -120,7 +120,7 @@ export function LeadProfileDetails({ lead }: { lead: LeadProfile }) {
             {fields.map((field) => (
               <div key={field.key}>
                 <dt className="font-medium text-slate-500">{field.label}</dt>
-                <dd className="mt-1 text-slate-950">
+                <dd className="mt-1 text-slate-900">
                   <DetailValue
                     value={String(lead[field.key])}
                     isUrl={field.input === "url"}

@@ -4,15 +4,23 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Megaphone, Plus, Search } from "lucide-react";
+import { Megaphone, Plus, Search } from "lucide-react";
 
-import { CampaignTypeBadge } from "@/components/campaigns/campaign-type-badge";
+import {
+  CampaignCard,
+  CampaignCardSkeleton,
+} from "@/components/campaigns/campaign-card";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api-client";
+import { CursorPagination } from "@/components/ui/pagination";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { PageHeader } from "@/components/ui/page-header";
 import { listCampaigns } from "@/lib/campaigns-api";
+import { errorMessage } from "@/lib/errors";
 import { canDraftCampaign } from "@/lib/permissions";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignStatus } from "@/types/domain";
 
@@ -27,45 +35,10 @@ const STATUS_FILTERS: (CampaignStatus | "ALL")[] = [
   "ARCHIVED",
 ];
 
-function useDebouncedValue(value: string, delayMs: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(handle);
-  }, [value, delayMs]);
-  return debounced;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
-}
-
-function StatusBadge({ status }: { status: CampaignStatus }) {
-  const styles: Record<CampaignStatus, string> = {
-    DRAFT: "bg-slate-100 text-slate-700",
-    SCHEDULED: "bg-blue-100 text-blue-700",
-    RUNNING: "bg-emerald-100 text-emerald-700",
-    PAUSED: "bg-amber-100 text-amber-700",
-    ERROR: "bg-red-100 text-red-700",
-    COMPLETED: "bg-indigo-100 text-indigo-700",
-    ARCHIVED: "bg-slate-100 text-slate-500",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[status]}`}
-    >
-      {status}
-    </span>
-  );
-}
+const STATUS_OPTIONS = STATUS_FILTERS.map((s) => ({
+  value: s,
+  label: s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase(),
+}));
 
 export function CampaignsPageClient() {
   const router = useRouter();
@@ -111,166 +84,144 @@ export function CampaignsPageClient() {
 
   const campaigns = campaignsQuery.data?.items ?? [];
   const nextCursor = campaignsQuery.data?.next_cursor ?? null;
+  const isFiltered = Boolean(debouncedSearch) || status !== "ALL";
+
+  const createButton = mayDraft ? (
+    <Button asChild>
+      <Link href="/app/campaigns/new">
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        Create Campaign
+      </Link>
+    </Button>
+  ) : null;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Campaigns</h1>
-          <p className="text-sm text-slate-500">
-            Build and configure outreach campaigns. Nothing sends until activation.
-          </p>
-        </div>
-        {mayDraft && (
-          <Button asChild>
-            <Link href="/app/campaigns/new">
-              <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              Create Campaign
-            </Link>
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Campaigns"
+        description="Build and configure outreach campaigns, then track how they perform. Nothing sends until activation."
+        actions={createButton}
+      />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full lg:max-w-sm">
+          <Search
+            className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400"
+            aria-hidden="true"
+          />
           <Input
+            type="search"
+            aria-label="Search campaigns by name"
             placeholder="Search by name..."
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             className="pl-9"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-0.5 text-xs font-medium text-slate-600">
-          {STATUS_FILTERS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => {
-                const next = new URLSearchParams(params.toString());
-                next.set("status", s);
-                next.delete("cursor");
-                router.push(`${pathname}?${next.toString()}`);
-              }}
-              className={`rounded px-2.5 py-1 ${
-                status === s
-                  ? "bg-white font-semibold text-slate-900 shadow-sm"
-                  : "hover:text-slate-900"
-              }`}
-            >
-              {s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase()}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="Filter by status"
+          options={STATUS_OPTIONS}
+          value={status}
+          onChange={(s) => {
+            const next = new URLSearchParams(params.toString());
+            next.set("status", s);
+            next.delete("cursor");
+            router.push(`${pathname}?${next.toString()}`);
+          }}
+        />
       </div>
 
       {campaignsQuery.isLoading ? (
-        <div className="flex min-h-[250px] items-center justify-center rounded-lg border border-slate-200 bg-white">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        <div
+          aria-busy="true"
+          className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <CampaignCardSkeleton key={i} />
+          ))}
         </div>
       ) : campaignsQuery.isError ? (
-        <Alert variant="error">{errorMessage(campaignsQuery.error)}</Alert>
+        <div className="space-y-3">
+          <Alert variant="error">{errorMessage(campaignsQuery.error)}</Alert>
+          <Button variant="outline" size="sm" onClick={() => campaignsQuery.refetch()}>
+            Try again
+          </Button>
+        </div>
       ) : campaigns.length === 0 ? (
-        <div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-            <Megaphone className="h-6 w-6" />
-          </div>
-          <h2 className="mt-3 text-base font-semibold text-slate-900">
-            No campaigns yet
-          </h2>
-          <p className="mt-1 max-w-sm text-sm text-slate-500">
-            {debouncedSearch || status !== "ALL"
-              ? "No campaigns match your filters."
-              : "Create a campaign to start configuring an audience, sequence, and schedule."}
-          </p>
-          {mayDraft && !debouncedSearch && status === "ALL" && (
-            <div className="mt-5">
-              <Button asChild>
-                <Link href="/app/campaigns/new">
-                  <Plus className="mr-1.5 h-4 w-4" />
-                  Create Campaign
-                </Link>
+        <EmptyState
+          icon={<Megaphone />}
+          title={isFiltered ? "No campaigns match your filters" : "No campaigns yet"}
+          description={
+            isFiltered
+              ? "Try a different search or status, or clear the filters to see every campaign."
+              : "A campaign pairs an audience with an email sequence, sender mailboxes and a schedule. Nothing sends until you activate it."
+          }
+          action={
+            !isFiltered ? (
+              createButton
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSearchText("");
+                  router.push(pathname);
+                }}
+              >
+                Clear filters
               </Button>
-            </div>
-          )}
-        </div>
+            )
+          }
+        />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <tr>
-                <th className="px-6 py-3">Campaign</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3">Updated</th>
-                <th className="px-6 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {campaigns.map((c) => (
-                <tr key={c.id} className="hover:bg-slate-50/50">
-                  <td className="px-6 py-4 font-medium text-slate-900">
-                    <Link
-                      href={`/app/campaigns/${c.id}/overview`}
-                      className="text-indigo-600 hover:text-indigo-800 hover:underline"
-                    >
-                      {c.name}
-                    </Link>
-                    <span className="ml-2 align-middle">
-                      <CampaignTypeBadge type={c.campaign_type} />
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <StatusBadge status={c.status} />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-slate-500">
-                    {formatDate(c.updated_at)}
-                  </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap">
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/app/campaigns/${c.id}/overview`}>
-                        {mayDraft ? "Configure" : "View"}
-                      </Link>
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-3">
-            <div className="text-xs text-slate-500">
-              Showing {campaigns.length} campaign{campaigns.length === 1 ? "" : "s"}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!cursor}
-                onClick={() => {
-                  const next = new URLSearchParams(params.toString());
-                  next.delete("cursor");
-                  router.push(`${pathname}?${next.toString()}`);
-                }}
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {activeWorkspaceId
+              ? campaigns.map((c) => (
+                  <CampaignCard
+                    key={c.id}
+                    campaign={c}
+                    workspaceId={activeWorkspaceId}
+                    mayDraft={mayDraft}
+                  />
+                ))
+              : null}
+            {mayDraft && !isFiltered && cursor === null ? (
+              <Link
+                href="/app/campaigns/new"
+                className="group flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white/60 p-6 text-center transition-colors hover:border-brand-400 hover:bg-brand-50/40"
               >
-                First page
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!nextCursor}
-                onClick={() => {
-                  if (nextCursor) {
-                    const next = new URLSearchParams(params.toString());
-                    next.set("cursor", nextCursor);
-                    router.push(`${pathname}?${next.toString()}`);
-                  }
-                }}
-              >
-                Next
-              </Button>
-            </div>
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-50 text-brand-600 transition-colors group-hover:bg-brand-100">
+                  <Plus className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span className="text-sm font-semibold text-slate-900">
+                  Create Campaign
+                </span>
+                <span className="max-w-[16rem] text-xs text-slate-500">
+                  Pick an audience, write the sequence and choose your senders.
+                </span>
+              </Link>
+            ) : null}
           </div>
-        </div>
+
+          <CursorPagination
+            className="rounded-xl border bg-white shadow-card"
+            summary={`Showing ${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`}
+            canGoFirst={Boolean(cursor)}
+            canGoNext={Boolean(nextCursor)}
+            onFirst={() => {
+              const next = new URLSearchParams(params.toString());
+              next.delete("cursor");
+              router.push(`${pathname}?${next.toString()}`);
+            }}
+            onNext={() => {
+              if (nextCursor) {
+                const next = new URLSearchParams(params.toString());
+                next.set("cursor", nextCursor);
+                router.push(`${pathname}?${next.toString()}`);
+              }
+            }}
+          />
+        </>
       )}
     </div>
   );

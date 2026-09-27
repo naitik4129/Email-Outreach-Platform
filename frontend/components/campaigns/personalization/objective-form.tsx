@@ -165,7 +165,7 @@ function PhraseList({
 }
 
 const textareaClass =
-  "min-h-[84px] w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:bg-slate-50 disabled:text-slate-600";
+  "min-h-[84px] w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:bg-slate-50 disabled:text-slate-600";
 
 type Props = {
   initial: PersonalizationConfig | null;
@@ -219,7 +219,7 @@ export function ObjectiveForm({ initial, readOnly, saving, error, onSave }: Prop
   return (
     <form
       onSubmit={submit}
-      className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+      className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-card"
       aria-label="Campaign objective"
     >
       <div>

@@ -16,6 +16,9 @@ type DialogProps = {
   footer?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  // "stretch" fills the viewport height (editors); "center" sizes to content
+  // (confirmations, short forms).
+  align?: "stretch" | "center";
 };
 
 const FOCUSABLE =
@@ -29,6 +32,7 @@ export function Dialog({
   footer,
   children,
   className,
+  align = "stretch",
 }: DialogProps) {
   const panelRef = React.useRef<HTMLDivElement>(null);
   const titleId = React.useId();
@@ -78,7 +82,10 @@ export function Dialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-slate-900/50 p-0 sm:p-4"
+      className={cn(
+        "fixed inset-0 z-50 flex justify-center bg-slate-900/50 backdrop-blur-[1px] animate-fade-in",
+        align === "center" ? "items-center p-4" : "items-stretch p-0 sm:p-4",
+      )}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) closeRef.current();
       }}
@@ -91,7 +98,7 @@ export function Dialog({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={cn(
-          "flex w-full max-w-6xl flex-col overflow-hidden bg-white shadow-xl outline-none sm:rounded-lg",
+          "flex w-full max-w-6xl flex-col overflow-hidden bg-white shadow-overlay outline-none animate-slide-up sm:rounded-xl",
           className,
         )}
       >
@@ -106,7 +113,7 @@ export function Dialog({
             type="button"
             onClick={() => closeRef.current()}
             aria-label="Close"
-            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+            className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           >
             <X className="h-5 w-5" aria-hidden="true" />
           </button>

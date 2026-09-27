@@ -7,7 +7,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Copy,
   FileText,
-  Loader2,
   Plus,
   Search,
   Trash2,
@@ -15,6 +14,7 @@ import {
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api-client";
 import {
@@ -23,6 +23,7 @@ import {
   listTemplates,
 } from "@/lib/templates-api";
 import { useWorkspace } from "@/lib/workspace-context";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 const PAGE_SIZE = 25;
 
@@ -115,6 +116,11 @@ export function TemplatesPageClient() {
     onError: (err) => setActionError(errorMessage(err)),
   });
 
+  const [archiveTarget, setArchiveTarget] = useState<{
+    templateId: string;
+    version: number;
+    name: string;
+  } | null>(null);
   const archiveMutation = useMutation({
     mutationFn: ({
       templateId,
@@ -143,7 +149,7 @@ export function TemplatesPageClient() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Templates
           </h1>
           <p className="text-sm text-slate-500">
@@ -242,9 +248,7 @@ export function TemplatesPageClient() {
 
       {/* Content states */}
       {templatesQuery.isLoading ? (
-        <div className="flex min-h-[250px] items-center justify-center rounded-lg border border-slate-200 bg-white">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-        </div>
+        <LoadingBlock size="lg" />
       ) : templatesQuery.isError ? (
         <Alert variant="error">
           {errorMessage(templatesQuery.error)}
@@ -274,24 +278,25 @@ export function TemplatesPageClient() {
           )}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
+          <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-6 py-3">Template</th>
-                <th className="px-6 py-3">Subject</th>
-                <th className="px-6 py-3">Revision</th>
-                <th className="px-6 py-3">Updated</th>
-                <th className="px-6 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">Template</th>
+                <th className="hidden px-4 py-3 sm:table-cell">Subject</th>
+                <th className="hidden px-4 py-3 md:table-cell">Revision</th>
+                <th className="hidden px-4 py-3 md:table-cell">Updated</th>
+                <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {templates.map((tmpl) => (
                 <tr key={tmpl.id} className="hover:bg-slate-50/50">
-                  <td className="px-6 py-4 font-medium text-slate-900">
+                  <td className="px-4 py-3.5 font-medium text-slate-900">
                     <Link
                       href={`/app/templates/${tmpl.id}`}
-                      className="text-indigo-600 hover:text-indigo-800 hover:underline"
+                      className="text-brand-600 hover:text-brand-800 hover:underline"
                     >
                       {tmpl.name}
                     </Link>
@@ -301,18 +306,18 @@ export function TemplatesPageClient() {
                       </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-slate-600 max-w-xs truncate">
+                  <td className="hidden max-w-xs truncate px-4 py-3.5 text-slate-600 sm:table-cell">
                     {tmpl.subject || <span className="italic text-slate-400">No subject</span>}
                   </td>
-                  <td className="px-6 py-4 text-slate-500">
+                  <td className="hidden px-4 py-3.5 text-slate-500 md:table-cell">
                     <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
                       v{tmpl.current_revision ?? 1}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-slate-500 whitespace-nowrap">
+                  <td className="hidden whitespace-nowrap px-4 py-3.5 text-slate-500 md:table-cell">
                     {formatDate(tmpl.updated_at)}
                   </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap">
+                  <td className="px-4 py-3.5 text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-1.5">
                       <Button variant="ghost" size="sm" asChild>
                         <Link href={`/app/templates/${tmpl.id}`}>
@@ -335,18 +340,13 @@ export function TemplatesPageClient() {
                             size="sm"
                             className="text-red-600 hover:text-red-700"
                             title="Archive"
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `Are you sure you want to archive "${tmpl.name}"?`
-                                )
-                              ) {
-                                archiveMutation.mutate({
-                                  templateId: tmpl.id,
-                                  version: tmpl.version,
-                                });
-                              }
-                            }}
+                            onClick={() =>
+                              setArchiveTarget({
+                                templateId: tmpl.id,
+                                version: tmpl.version,
+                                name: tmpl.name,
+                              })
+                            }
                             disabled={archiveMutation.isPending}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -359,6 +359,7 @@ export function TemplatesPageClient() {
               ))}
             </tbody>
           </table>
+          </div>
 
           {/* Pagination */}
           <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-6 py-3">
@@ -396,6 +397,23 @@ export function TemplatesPageClient() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={archiveTarget !== null}
+        title={`Archive "${archiveTarget?.name ?? ""}"?`}
+        description="Archived templates can no longer be used in new sequences."
+        confirmLabel="Archive template"
+        tone="danger"
+        loading={archiveMutation.isPending}
+        onCancel={() => setArchiveTarget(null)}
+        onConfirm={() => {
+          if (archiveTarget) {
+            archiveMutation.mutate(
+              { templateId: archiveTarget.templateId, version: archiveTarget.version },
+              { onSettled: () => setArchiveTarget(null) },
+            );
+          }
+        }}
+      />
     </div>
   );
 }

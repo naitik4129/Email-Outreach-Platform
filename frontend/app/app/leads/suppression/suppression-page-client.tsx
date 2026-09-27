@@ -3,10 +3,13 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { Loader2, Plus, Search, ShieldOff, Trash2 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api-client";
@@ -100,6 +103,7 @@ export function SuppressionPageClient() {
     onError: (error) => setFormError(errorMessage(error)),
   });
 
+  const [releaseTarget, setReleaseTarget] = useState<string | null>(null);
   const releaseMutation = useMutation({
     mutationFn: (suppressionId: string) =>
       releaseManualSuppression(activeWorkspaceId!, suppressionId, {
@@ -124,7 +128,7 @@ export function SuppressionPageClient() {
     <main className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Suppression List
           </h1>
           <p className="mt-2 text-sm text-slate-500">
@@ -142,8 +146,8 @@ export function SuppressionPageClient() {
       </div>
 
       {formOpen && mayManage ? (
-        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
             Manually Suppress Email
           </h2>
           {formError ? (
@@ -190,7 +194,7 @@ export function SuppressionPageClient() {
         </section>
       ) : null}
 
-      <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <div className="grid gap-3 md:grid-cols-[1fr]">
           <div className="relative max-w-sm">
             <Search
@@ -207,7 +211,7 @@ export function SuppressionPageClient() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {suppressionQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
@@ -217,17 +221,17 @@ export function SuppressionPageClient() {
             <Alert>{errorMessage(suppressionQuery.error)}</Alert>
           </div>
         ) : suppressionQuery.data?.items.length === 0 ? (
-          <div className="p-8 text-center">
-            <h2 className="text-lg font-semibold text-slate-950">No suppressions</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              There are no suppressed emails matching your criteria.
-            </p>
-          </div>
+          <EmptyState
+            className="rounded-none border-0"
+            icon={<ShieldOff />}
+            title="No suppressions"
+            description="There are no suppressed emails matching your criteria. Suppressed addresses are never emailed."
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Status</th>
@@ -239,19 +243,13 @@ export function SuppressionPageClient() {
                 <tbody className="divide-y divide-slate-100">
                   {suppressionQuery.data?.items.map((suppression) => (
                     <tr key={suppression.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
+                      <td className="px-4 py-3 font-medium text-slate-900">
                         {suppression.email}
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                         <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            suppression.status === "ACTIVE"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-slate-100 text-slate-800"
-                          }`}
-                        >
+                         <StatusBadge tone={suppression.status === "ACTIVE" ? "danger" : "neutral"}>
                           {suppression.status}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {suppression.reason}
@@ -264,13 +262,10 @@ export function SuppressionPageClient() {
                           <Button 
                             variant="ghost" 
                             size="icon"
-                            onClick={() => {
-                              if (confirm("Are you sure you want to release this manual suppression?")) {
-                                releaseMutation.mutate(suppression.id);
-                              }
-                            }}
+                            onClick={() => setReleaseTarget(suppression.id)}
                             disabled={releaseMutation.isPending}
                             title="Release Suppression"
+                            aria-label={`Release suppression for ${suppression.email}`}
                           >
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>
@@ -302,6 +297,20 @@ export function SuppressionPageClient() {
           </>
         )}
       </section>
+      <ConfirmDialog
+        open={releaseTarget !== null}
+        title="Release this suppression?"
+        description="This manual suppression will be released and the address may receive email again."
+        confirmLabel="Release suppression"
+        tone="danger"
+        loading={releaseMutation.isPending}
+        onCancel={() => setReleaseTarget(null)}
+        onConfirm={() => {
+          if (releaseTarget) {
+            releaseMutation.mutate(releaseTarget, { onSettled: () => setReleaseTarget(null) });
+          }
+        }}
+      />
     </main>
   );
 }

@@ -202,7 +202,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
           <Button asChild variant="ghost">
             <Link href="/app/leads/lists">Back to lists</Link>
           </Button>
-          <h1 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-3">
             {list.name}
           </h1>
           <p className="mt-2 text-sm text-slate-500">
@@ -231,7 +231,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
       {error ? <Alert>{error}</Alert> : null}
 
       {editing && mayManage ? (
-        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
           <form
             className="flex max-w-lg items-start gap-2"
             onSubmit={(event) => {
@@ -262,8 +262,8 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
       ) : null}
 
       {mayManage && !list.archived_at ? (
-        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
             Add member
           </h2>
           <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
@@ -283,7 +283,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
               aria-label="Lead to add"
               value={selectedLeadId}
               onChange={(event) => setSelectedLeadId(event.target.value)}
-              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+              className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
             >
               <option value="">Select lead</option>
               {(searchQuery.data?.items ?? []).map((lead) => (
@@ -304,7 +304,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
         </section>
       ) : null}
 
-      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {membersQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
@@ -315,7 +315,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
           </div>
         ) : membersQuery.data?.items.length === 0 ? (
           <div className="p-8 text-center">
-            <h2 className="text-lg font-semibold text-slate-950">
+            <h2 className="text-lg font-semibold text-slate-900">
               No leads in this list
             </h2>
           </div>
@@ -323,7 +323,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Lead</th>
                     <th className="px-4 py-3">Email</th>
@@ -334,7 +334,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
                 <tbody className="divide-y divide-slate-100">
                   {membersQuery.data?.items.map((member) => (
                     <tr key={member.lead.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
+                      <td className="px-4 py-3 font-medium text-slate-900">
                         <Link href={`/app/leads/${member.lead.id}`}>
                           {fullName(member.lead.first_name, member.lead.last_name)}
                         </Link>

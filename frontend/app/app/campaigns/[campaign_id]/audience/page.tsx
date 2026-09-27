@@ -19,6 +19,7 @@ import { listLeadLists, listLeads } from "@/lib/leads-api";
 import { canDraftCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignAudience } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -212,9 +213,7 @@ export default function CampaignAudiencePage() {
       {actionError && <Alert variant="error">{actionError}</Alert>}
 
       {audienceQuery.isLoading ? (
-        <div className="flex min-h-[100px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-        </div>
+        <LoadingBlock />
       ) : audience ? (
         <AudienceStatusPanel
           audience={audience}
@@ -232,7 +231,7 @@ export default function CampaignAudiencePage() {
       )}
 
       {canSelectNew && (
-        <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
           <h3 className="text-sm font-semibold text-slate-900">
             {audience ? "Select a new audience" : "Select audience"}
           </h3>

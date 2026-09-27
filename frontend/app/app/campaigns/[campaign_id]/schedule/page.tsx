@@ -139,7 +139,7 @@ export default function CampaignSchedulePage() {
 
       {mayDraft && (
         <form
-          className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+          className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-card"
           onSubmit={(e) => {
             e.preventDefault();
             if (weekdays.size === 0) {
@@ -156,7 +156,7 @@ export default function CampaignSchedulePage() {
 
           <Field label="Timezone" required>
             <select
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
             >
@@ -174,15 +174,16 @@ export default function CampaignSchedulePage() {
                 <button
                   key={d.value}
                   type="button"
+                  aria-pressed={weekdays.has(d.value)}
                   onClick={() => {
                     const next = new Set(weekdays);
                     if (next.has(d.value)) next.delete(d.value);
                     else next.add(d.value);
                     setWeekdays(next);
                   }}
-                  className={`rounded-md border px-3 py-1.5 text-sm font-medium ${
+                  className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
                     weekdays.has(d.value)
-                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      ? "border-brand-500 bg-brand-50 text-brand-700"
                       : "border-slate-200 text-slate-600 hover:bg-slate-50"
                   }`}
                 >

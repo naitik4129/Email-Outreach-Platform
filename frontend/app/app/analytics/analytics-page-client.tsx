@@ -12,7 +12,6 @@ import {
   Calendar,
   HelpCircle,
   Info,
-  Loader2,
   Mail,
   MessageSquare,
   Send,
@@ -25,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { getWorkspaceOverview } from "@/lib/analytics-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { TimeSeriesBucket, WorkspaceOverviewAnalytics } from "@/types/analytics";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 type DatePreset = "today" | "yesterday" | "last_7_days" | "last_30_days";
 
@@ -72,15 +72,15 @@ function StatCard({
   tooltip?: string;
 }) {
   const bgStyles = {
-    indigo: "bg-indigo-50 text-indigo-700",
+    indigo: "bg-brand-50 text-brand-700",
     emerald: "bg-emerald-50 text-emerald-700",
     amber: "bg-amber-50 text-amber-700",
-    rose: "bg-rose-50 text-rose-700",
+    rose: "bg-red-50 text-red-700",
     slate: "bg-slate-100 text-slate-700",
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md">
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card transition hover:shadow-card-hover">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-1.5">
@@ -113,7 +113,7 @@ function StatCard({
   );
 }
 
-function TrendChart({ trend }: { trend: TimeSeriesBucket[] }) {
+export function TrendChart({ trend }: { trend: TimeSeriesBucket[] }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   if (!trend || trend.length === 0) {
@@ -132,7 +132,7 @@ function TrendChart({ trend }: { trend: TimeSeriesBucket[] }) {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-6 text-xs">
           <div className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-sm bg-indigo-600" />
+            <span className="h-3 w-3 rounded-sm bg-brand-600" />
             <span className="font-medium text-slate-700">Emails Sent</span>
           </div>
           <div className="flex items-center gap-2">
@@ -140,7 +140,7 @@ function TrendChart({ trend }: { trend: TimeSeriesBucket[] }) {
             <span className="font-medium text-slate-700">Replies</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="h-3 w-3 rounded-sm bg-rose-500" />
+            <span className="h-3 w-3 rounded-sm bg-red-500" />
             <span className="font-medium text-slate-700">Bounces</span>
           </div>
         </div>
@@ -181,7 +181,7 @@ function TrendChart({ trend }: { trend: TimeSeriesBucket[] }) {
                   <div
                     style={{ height: `${sentHeight}px` }}
                     className={`w-full rounded-t transition-all ${
-                      isHovered ? "bg-indigo-700 ring-2 ring-indigo-400" : "bg-indigo-500/90"
+                      isHovered ? "bg-brand-700 ring-2 ring-brand-400" : "bg-brand-500/90"
                     }`}
                   />
                 </div>
@@ -230,9 +230,7 @@ export function AnalyticsPageClient() {
 
   if (query.isLoading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-      </div>
+      <LoadingBlock size="lg" />
     );
   }
 
@@ -259,20 +257,20 @@ export function AnalyticsPageClient() {
       {/* Header and Filter Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Outreach Analytics</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Outreach Analytics</h1>
           <p className="mt-1 text-sm text-slate-500">
             Trustworthy metrics derived directly from authoritative message and response events.
           </p>
         </div>
 
         {/* Date presets */}
-        <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+        <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-card">
           <button
             type="button"
             onClick={() => setPreset("today")}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
               preset === "today"
-                ? "bg-indigo-600 text-white shadow-sm"
+                ? "bg-brand-600 text-white shadow-sm"
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
@@ -283,7 +281,7 @@ export function AnalyticsPageClient() {
             onClick={() => setPreset("yesterday")}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
               preset === "yesterday"
-                ? "bg-indigo-600 text-white shadow-sm"
+                ? "bg-brand-600 text-white shadow-sm"
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
@@ -294,7 +292,7 @@ export function AnalyticsPageClient() {
             onClick={() => setPreset("last_7_days")}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
               preset === "last_7_days"
-                ? "bg-indigo-600 text-white shadow-sm"
+                ? "bg-brand-600 text-white shadow-sm"
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
@@ -305,7 +303,7 @@ export function AnalyticsPageClient() {
             onClick={() => setPreset("last_30_days")}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
               preset === "last_30_days"
-                ? "bg-indigo-600 text-white shadow-sm"
+                ? "bg-brand-600 text-white shadow-sm"
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
@@ -417,7 +415,7 @@ export function AnalyticsPageClient() {
       </div>
 
       {/* Trend Chart Card */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Activity Over Time</h2>
@@ -437,12 +435,12 @@ export function AnalyticsPageClient() {
       {/* Performance Tables Grid */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Top Campaigns Table */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
           <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
             <h2 className="text-base font-semibold text-slate-900">Top Campaigns</h2>
             <Link
               href="/app/campaigns"
-              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+              className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800"
             >
               All campaigns <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -469,7 +467,7 @@ export function AnalyticsPageClient() {
                       <td className="py-2.5 font-medium text-slate-900">
                         <Link
                           href={`/app/campaigns/${camp.campaign_id}/analytics`}
-                          className="hover:text-indigo-600 hover:underline"
+                          className="hover:text-brand-600 hover:underline"
                         >
                           {camp.name}
                         </Link>
@@ -480,7 +478,7 @@ export function AnalyticsPageClient() {
                       <td className="py-2.5 text-right font-medium text-emerald-600">
                         {camp.replies} ({camp.reply_rate}%)
                       </td>
-                      <td className="py-2.5 text-right font-medium text-rose-600">
+                      <td className="py-2.5 text-right font-medium text-red-600">
                         {camp.bounces} ({camp.bounce_rate}%)
                       </td>
                     </tr>
@@ -492,12 +490,12 @@ export function AnalyticsPageClient() {
         </div>
 
         {/* Top Mailboxes Table */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
           <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
             <h2 className="text-base font-semibold text-slate-900">Top Mailboxes</h2>
             <Link
               href="/app/mailboxes"
-              className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+              className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800"
             >
               All mailboxes <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -533,7 +531,7 @@ export function AnalyticsPageClient() {
                       <td className="py-2.5 text-right font-medium text-emerald-600">
                         {mb.replies} ({mb.reply_rate}%)
                       </td>
-                      <td className="py-2.5 text-right font-medium text-rose-600">
+                      <td className="py-2.5 text-right font-medium text-red-600">
                         {mb.bounces} ({mb.bounce_rate}%)
                       </td>
                     </tr>

@@ -8,7 +8,6 @@ import {
   ArrowRight,
   CheckCircle2,
   Info,
-  Loader2,
   Mail,
   RefreshCw,
   ShieldAlert,
@@ -21,12 +20,13 @@ import { Button } from "@/components/ui/button";
 import { getDeliverabilityOverview } from "@/lib/analytics-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { DeliverabilityOverview, DeliverabilityWarning } from "@/types/analytics";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function HealthStatusBadge({ status }: { status: "HEALTHY" | "WARNING" | "CRITICAL" | "DISCONNECTED" }) {
   const styles = {
     HEALTHY: "bg-emerald-50 text-emerald-700 border-emerald-200",
     WARNING: "bg-amber-50 text-amber-700 border-amber-200",
-    CRITICAL: "bg-rose-50 text-rose-700 border-rose-200",
+    CRITICAL: "bg-red-50 text-red-700 border-red-200",
     DISCONNECTED: "bg-slate-100 text-slate-700 border-slate-300",
   };
 
@@ -62,13 +62,13 @@ function WarningCard({ warning }: { warning: DeliverabilityWarning }) {
     <div
       className={`rounded-xl border p-4 shadow-sm ${
         isCritical
-          ? "border-rose-200 bg-rose-50/60 text-rose-900"
+          ? "border-red-200 bg-red-50/60 text-red-900"
           : "border-amber-200 bg-amber-50/60 text-amber-900"
       }`}
     >
       <div className="flex items-start gap-3">
         {isCritical ? (
-          <ShieldAlert className="mt-0.5 h-5 w-5 text-rose-600" />
+          <ShieldAlert className="mt-0.5 h-5 w-5 text-red-600" />
         ) : (
           <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />
         )}
@@ -77,7 +77,7 @@ function WarningCard({ warning }: { warning: DeliverabilityWarning }) {
             <h3 className="text-sm font-semibold">{warning.title}</h3>
             <span
               className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                isCritical ? "bg-rose-200 text-rose-800" : "bg-amber-200 text-amber-800"
+                isCritical ? "bg-red-200 text-red-800" : "bg-amber-200 text-amber-800"
               }`}
             >
               {warning.level}
@@ -109,9 +109,7 @@ export function DeliverabilityPageClient() {
 
   if (query.isLoading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-      </div>
+      <LoadingBlock size="lg" />
     );
   }
 
@@ -137,7 +135,7 @@ export function DeliverabilityPageClient() {
       {/* Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Deliverability Center
           </h1>
           <p className="text-sm text-slate-500">
@@ -156,7 +154,7 @@ export function DeliverabilityPageClient() {
       </div>
 
       {/* Deliverability Status Banner */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
@@ -189,7 +187,7 @@ export function DeliverabilityPageClient() {
               <p
                 className={`text-lg font-bold ${
                   data.bounce_rate > 5.0
-                    ? "text-rose-600"
+                    ? "text-red-600"
                     : data.bounce_rate > 2.0
                       ? "text-amber-600"
                       : "text-slate-900"
@@ -204,7 +202,7 @@ export function DeliverabilityPageClient() {
               <p className="text-[11px] font-medium text-slate-400">Complaint Rate</p>
               <p
                 className={`text-lg font-bold ${
-                  data.complaint_rate > 0.1 ? "text-rose-600" : "text-slate-900"
+                  data.complaint_rate > 0.1 ? "text-red-600" : "text-slate-900"
                 }`}
               >
                 {data.complaint_rate}%
@@ -222,7 +220,7 @@ export function DeliverabilityPageClient() {
               <p className="text-[11px] font-medium text-slate-400">Active Safety Holds</p>
               <p
                 className={`text-lg font-bold ${
-                  data.active_safety_holds > 0 ? "text-rose-600" : "text-emerald-600"
+                  data.active_safety_holds > 0 ? "text-red-600" : "text-emerald-600"
                 }`}
               >
                 {data.active_safety_holds}
@@ -248,7 +246,7 @@ export function DeliverabilityPageClient() {
       )}
 
       {/* Mailbox Deliverability Table */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Sender Mailbox Health</h2>
@@ -258,7 +256,7 @@ export function DeliverabilityPageClient() {
           </div>
           <Link
             href="/app/mailboxes"
-            className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+            className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-800"
           >
             Manage mailboxes <ArrowRight className="h-3.5 w-3.5" />
           </Link>
@@ -307,7 +305,7 @@ export function DeliverabilityPageClient() {
                       <span
                         className={
                           mb.bounce_rate > 5.0
-                            ? "text-rose-600 font-bold"
+                            ? "text-red-600 font-bold"
                             : mb.bounce_rate > 2.0
                               ? "text-amber-600"
                               : "text-slate-700"
@@ -320,7 +318,7 @@ export function DeliverabilityPageClient() {
                       <span
                         className={
                           mb.complaint_rate > 0.1
-                            ? "text-rose-600 font-bold"
+                            ? "text-red-600 font-bold"
                             : "text-slate-700"
                         }
                       >
@@ -330,7 +328,7 @@ export function DeliverabilityPageClient() {
                     <td className="py-3 text-right text-slate-700">{mb.failure_count}</td>
                     <td className="py-3 text-center">
                       {mb.active_safety_holds_count > 0 ? (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
                           {mb.active_safety_holds_count} hold(s)
                         </span>
                       ) : (
@@ -346,7 +344,7 @@ export function DeliverabilityPageClient() {
       </div>
 
       {/* Operational Send Failure Diagnostics */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="mb-4 border-b border-slate-100 pb-3">
           <h2 className="text-base font-semibold text-slate-900">
             Operational Send Failure Breakdown
@@ -368,7 +366,7 @@ export function DeliverabilityPageClient() {
                 className="rounded-lg border border-slate-100 bg-slate-50/50 p-4"
               >
                 <div className="flex items-center justify-between">
-                  <span className="rounded bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-800">
+                  <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">
                     {f.category}
                   </span>
                   <span className="text-base font-bold text-slate-900">{f.count}</span>

@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Search } from "lucide-react";
+import { Loader2, Plus, Search, Users } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -169,7 +170,7 @@ export function LeadsPageClient() {
     <main className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Leads
           </h1>
           <p className="mt-2 text-sm text-slate-500">
@@ -190,8 +191,8 @@ export function LeadsPageClient() {
       </div>
 
       {formOpen && mayManage ? (
-        <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
             Add lead
           </h2>
           {formError ? (
@@ -268,7 +269,7 @@ export function LeadsPageClient() {
                 value={form.list_id}
                 onChange={(event) => setForm({ ...form, list_id: event.target.value })}
                 disabled={createMutation.isPending}
-                className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
               >
                 <option value="">No list</option>
                 {(listsQuery.data?.items ?? []).map((list) => (
@@ -298,7 +299,7 @@ export function LeadsPageClient() {
         </section>
       ) : null}
 
-      <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <div className="grid gap-3 md:grid-cols-[1fr_180px_220px]">
           <div className="relative">
             <Search
@@ -316,7 +317,7 @@ export function LeadsPageClient() {
             aria-label="Lead status"
             value={status}
             onChange={(event) => updateParam("status", event.target.value)}
-            className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+            className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
           >
             <option value="ACTIVE">Active</option>
             <option value="ARCHIVED">Archived</option>
@@ -326,7 +327,7 @@ export function LeadsPageClient() {
             aria-label="Lead list filter"
             value={listId ?? ""}
             onChange={(event) => updateParam("list_id", event.target.value)}
-            className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+            className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
           >
             <option value="">All lists</option>
             {(listsQuery.data?.items ?? []).map((list) => (
@@ -338,7 +339,7 @@ export function LeadsPageClient() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {leadsQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
@@ -348,17 +349,30 @@ export function LeadsPageClient() {
             <Alert>{errorMessage(leadsQuery.error)}</Alert>
           </div>
         ) : leadsQuery.data?.items.length === 0 ? (
-          <div className="p-8 text-center">
-            <h2 className="text-lg font-semibold text-slate-950">No leads yet</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Add a lead to start building this workspace&apos;s contact database.
-            </p>
-          </div>
+          <EmptyState
+            className="rounded-none border-0"
+            icon={<Users />}
+            title="No leads yet"
+            description="Add a lead to start building this workspace's contact database, or import a CSV to bring in many at once."
+            action={
+              mayManage ? (
+                <>
+                  <Button onClick={() => setFormOpen(true)}>
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    Add lead
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/app/leads/imports/new">Import from CSV</Link>
+                  </Button>
+                </>
+              ) : null
+            }
+          />
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-4 py-3">Lead</th>
                     <th className="px-4 py-3">Email</th>
@@ -372,7 +386,7 @@ export function LeadsPageClient() {
                 <tbody className="divide-y divide-slate-100">
                   {leadsQuery.data?.items.map((lead) => (
                     <tr key={lead.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-medium text-slate-950">
+                      <td className="px-4 py-3 font-medium text-slate-900">
                         <Link href={`/app/leads/${lead.id}`}>
                           {fullName(lead.first_name, lead.last_name)}
                         </Link>

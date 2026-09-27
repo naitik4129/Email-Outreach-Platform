@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Building2, Loader2 } from "lucide-react";
 import { z } from "zod";
 
+import { AuthCard } from "@/app/auth/auth-card";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -86,42 +87,32 @@ export default function WorkspaceOnboardingPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-slate-50 px-4">
-      <section className="w-full max-w-xl rounded-md border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="grid h-10 w-10 place-items-center rounded-md bg-teal-50 text-teal-700">
-          <Building2 className="h-5 w-5" aria-hidden="true" />
-        </div>
-        <h1 className="mt-5 text-2xl font-semibold tracking-normal text-slate-950">
-          Create your workspace
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          A workspace is where your team, leads, and campaigns will live.
-        </p>
-        <form
-          className="mt-6 space-y-4"
-          onSubmit={handleSubmit(onSubmit)}
-          noValidate
-        >
-          {formError ? <Alert>{formError}</Alert> : null}
-          <Field id="name" label="Workspace name" error={errors.name?.message}>
-            <Input
-              placeholder="Acme Outreach"
-              disabled={isSubmitting}
-              {...register("name")}
-            />
-          </Field>
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <>
-                Create workspace
-                <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              </>
-            )}
-          </Button>
-        </form>
-      </section>
-    </main>
+    <AuthCard
+      icon={Building2}
+      title="Create your workspace"
+      subtitle="A workspace is where your team, leads, and campaigns will live."
+      width="lg"
+    >
+      <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+        {formError ? <Alert>{formError}</Alert> : null}
+        <Field id="name" label="Workspace name" error={errors.name?.message}>
+          <Input
+            placeholder="Acme Outreach"
+            disabled={isSubmitting}
+            {...register("name")}
+          />
+        </Field>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <>
+              Create workspace
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </>
+          )}
+        </Button>
+      </form>
+    </AuthCard>
   );
 }

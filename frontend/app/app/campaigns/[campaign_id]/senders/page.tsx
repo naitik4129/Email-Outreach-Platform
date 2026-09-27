@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Loader2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, X } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
 import { listMailboxes } from "@/lib/mailboxes-api";
 import { canDraftCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -119,15 +120,13 @@ export default function CampaignSendersPage() {
       {actionError && <Alert variant="error">{actionError}</Alert>}
 
       {assignedQuery.isLoading ? (
-        <div className="flex min-h-[100px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-        </div>
+        <LoadingBlock />
       ) : assigned.length === 0 ? (
         <div className="flex min-h-[100px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
           No mailboxes assigned yet.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white shadow-sm">
+        <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white shadow-card">
           {assigned.map((mb, i) => (
             <li key={mb.mailbox_id} className="flex items-center justify-between px-4 py-3">
               <div>
@@ -146,6 +145,7 @@ export default function CampaignSendersPage() {
                     size="sm"
                     disabled={i === 0 || reorderMutation.isPending}
                     onClick={() => move(i, -1)}
+                    aria-label={`Move ${mb.email_address} up`}
                   >
                     <ArrowUp className="h-3.5 w-3.5" />
                   </Button>
@@ -154,6 +154,7 @@ export default function CampaignSendersPage() {
                     size="sm"
                     disabled={i === assigned.length - 1 || reorderMutation.isPending}
                     onClick={() => move(i, 1)}
+                    aria-label={`Move ${mb.email_address} down`}
                   >
                     <ArrowDown className="h-3.5 w-3.5" />
                   </Button>
@@ -163,6 +164,7 @@ export default function CampaignSendersPage() {
                     className="text-red-600 hover:text-red-700"
                     disabled={unassignMutation.isPending}
                     onClick={() => unassignMutation.mutate(mb.mailbox_id)}
+                    aria-label={`Remove ${mb.email_address} from this campaign`}
                   >
                     <X className="h-3.5 w-3.5" />
                   </Button>
@@ -174,14 +176,14 @@ export default function CampaignSendersPage() {
       )}
 
       {mayDraft && (
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
           <h3 className="text-sm font-semibold text-slate-900">Available mailboxes</h3>
           {available.length === 0 ? (
             <p className="mt-2 text-sm text-slate-500">
               {allMailboxesQuery.data?.length
                 ? "All connected mailboxes are already assigned."
                 : "No mailboxes connected yet."}{" "}
-              <Link href="/app/mailboxes" className="text-indigo-600 hover:underline">
+              <Link href="/app/mailboxes" className="text-brand-600 hover:underline">
                 Connect a mailbox
               </Link>
             </p>

@@ -42,7 +42,7 @@ export function VariablePicker({ onInsert, label = "Insert variable", disabled, 
           title={label}
           {...ariaProps}
           className={cn(
-            "inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:pointer-events-none disabled:opacity-50",
+            "inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:pointer-events-none disabled:opacity-50",
             className,
           )}
         >
@@ -77,7 +77,7 @@ export function VariablePicker({ onInsert, label = "Insert variable", disabled, 
                       key={variable.code}
                       type="button"
                       onClick={() => insert(withFallback(variable.code, fallback))}
-                      className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                      className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
                     >
                       {variable.label}
                     </button>

@@ -68,7 +68,7 @@ export default function WorkspaceUsagePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center gap-2 p-16 text-sm text-slate-500">
-        <Loader2 className="h-5 w-5 animate-spin text-teal-600" />
+        <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
         Calculating workspace usage&hellip;
       </div>
     );
@@ -89,8 +89,8 @@ export default function WorkspaceUsagePage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-teal-700">Billing &amp; Limits</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
+          <p className="text-sm font-medium text-brand-700">Billing &amp; Limits</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-1">
             Usage &amp; Quotas
           </h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -98,7 +98,7 @@ export default function WorkspaceUsagePage() {
           </p>
         </div>
 
-        <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3.5 py-1 text-xs font-semibold text-teal-800">
+        <div className="inline-flex items-center gap-2 rounded-full border border-brand-200 bg-brand-50 px-3.5 py-1 text-xs font-semibold text-brand-800">
           <Sparkles className="h-3.5 w-3.5" />
           Plan: {usage.plan_name}
         </div>
@@ -125,12 +125,12 @@ export default function WorkspaceUsagePage() {
             ? "bg-red-500"
             : isNearLimit
             ? "bg-amber-500"
-            : "bg-teal-600";
+            : "bg-brand-600";
 
           return (
             <div
               key={key}
-              className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-3"
+              className="rounded-xl border border-slate-200 bg-white p-5 shadow-card space-y-3"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -178,7 +178,7 @@ export default function WorkspaceUsagePage() {
       </div>
 
       {/* Plan & Entitlement Details */}
-      <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-4">
         <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
           <CreditCard className="h-5 w-5 text-slate-600" />
           <h2 className="text-base font-semibold text-slate-900">

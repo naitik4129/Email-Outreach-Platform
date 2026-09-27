@@ -39,6 +39,7 @@ import {
 } from "@/lib/mailboxes-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { MailboxTestSendResult, SmtpSecurityMode } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function canManageMailboxes(role?: string) {
   return role === "OWNER" || role === "ADMIN" || role === "MANAGER";
@@ -245,9 +246,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
 
   if (mailboxQuery.isLoading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-      </div>
+      <LoadingBlock size="lg" />
     );
   }
 
@@ -288,7 +287,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
                 {mailbox.email_address}
               </h1>
               <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-800">
@@ -381,7 +380,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
 
       {/* SMTP configuration update form */}
       {showSmtpEditForm && mailbox.provider === "SMTP" ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-5">
           <div>
             <h2 className="text-base font-bold text-slate-900">
               Update SMTP Configuration
@@ -400,7 +399,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="smtp-edit-security-mode">Security Mode</Label>
               <select
@@ -408,7 +407,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
                 value={smtpSecurityMode}
                 onChange={(e) => setSmtpSecurityMode(e.target.value as SmtpSecurityMode)}
                 disabled={updateSmtpConfigMutation.isPending}
-                className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
               >
                 <option value="STARTTLS">STARTTLS (587)</option>
                 <option value="IMPLICIT_TLS">Implicit TLS (465)</option>
@@ -478,7 +477,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
 
       {/* Safe, read-only SMTP configuration summary (never the password) */}
       {mailbox.provider === "SMTP" && mailbox.smtp_config && !showSmtpEditForm ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
             SMTP Configuration
           </h3>
@@ -518,7 +517,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
       {/* Reply detection status: replies stop sequences, so it must be visible when it is not working */}
       {mailbox.reply_sync_status && mailbox.reply_sync_status !== "UNSUPPORTED" ? (
         <div
-          className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          className="rounded-xl border border-slate-200 bg-white p-5 shadow-card"
           data-testid="reply-sync-status"
         >
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -546,7 +545,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
 
       {/* Status & Diagnostics grid */}
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Connection
@@ -565,7 +564,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Health State
@@ -586,7 +585,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Policy & Safety
@@ -603,10 +602,10 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
       </div>
 
       {/* Controlled Test Email Section */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-5">
         <div>
           <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Send className="h-4 w-4 text-teal-600" />
+            <Send className="h-4 w-4 text-brand-600" />
             Send Controlled Test Email
           </h2>
           <p className="text-sm text-slate-500 mt-1">
@@ -651,7 +650,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
               testSendMutation.isPending ||
               !mayManage
             }
-            className="bg-teal-600 hover:bg-teal-700 text-white shrink-0"
+            className="bg-brand-600 hover:bg-brand-700 text-white shrink-0"
           >
             {testSendMutation.isPending ? (
               <>
@@ -669,7 +668,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
       </div>
 
       {/* Sender Settings Form */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-6">
         <div>
           <h2 className="text-base font-bold text-slate-900">
             Sender Settings
@@ -697,7 +696,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
               onChange={(e) => setSignatureHtml(e.target.value || null)}
               placeholder="<p>Best regards,<br/>Alex Smith</p>"
               disabled={!mayManage || updateMutation.isPending}
-              className="w-full rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-900 shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:opacity-50 font-mono"
+              className="w-full rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-900 shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:opacity-50 font-mono"
             />
           </Field>
         </div>

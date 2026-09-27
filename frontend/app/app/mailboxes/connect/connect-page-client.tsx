@@ -60,7 +60,7 @@ export function ConnectPageClient() {
             Back to Mailboxes
           </Link>
         </Button>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
           Connect a Mailbox
         </h1>
         <p className="mt-1 text-sm text-slate-500">
@@ -72,7 +72,7 @@ export function ConnectPageClient() {
 
       <div className="grid gap-4">
         {/* Google / Gmail - ACTIVE */}
-        <div className="group relative flex flex-col justify-between rounded-xl border-2 border-teal-600 bg-white p-6 shadow-sm transition hover:shadow-md">
+        <div className="group relative flex flex-col justify-between rounded-xl border-2 border-brand-600 bg-white p-6 shadow-sm transition hover:shadow-card-hover">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-red-50 border border-red-100">
               <svg className="h-6 w-6" viewBox="0 0 24 24">
@@ -97,7 +97,7 @@ export function ConnectPageClient() {
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold text-slate-900">Google / Gmail</h3>
-                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 border border-teal-200">
+                <span className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700 border border-brand-200">
                   Recommended
                 </span>
               </div>
@@ -106,15 +106,15 @@ export function ConnectPageClient() {
               </p>
               <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
                 <li className="flex items-center gap-1">
-                  <Check className="h-3.5 w-3.5 text-teal-600" />
+                  <Check className="h-3.5 w-3.5 text-brand-600" />
                   AES-256 encrypted tokens
                 </li>
                 <li className="flex items-center gap-1">
-                  <Check className="h-3.5 w-3.5 text-teal-600" />
+                  <Check className="h-3.5 w-3.5 text-brand-600" />
                   Full SPF/DKIM alignment
                 </li>
                 <li className="flex items-center gap-1">
-                  <Check className="h-3.5 w-3.5 text-teal-600" />
+                  <Check className="h-3.5 w-3.5 text-brand-600" />
                   Controlled test sending
                 </li>
               </ul>
@@ -124,7 +124,7 @@ export function ConnectPageClient() {
             <Button
               onClick={handleConnectGmail}
               disabled={isConnecting}
-              className="bg-teal-600 hover:bg-teal-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {isConnecting ? (
                 <>
@@ -142,7 +142,7 @@ export function ConnectPageClient() {
         </div>
 
         {/* Microsoft 365 / Outlook - ACTIVE */}
-        <div className="group relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+        <div className="group relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-card transition hover:shadow-card-hover">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-50 border border-blue-100">
               <svg className="h-6 w-6" viewBox="0 0 24 24">
@@ -177,7 +177,7 @@ export function ConnectPageClient() {
         </div>
 
         {/* Custom SMTP - ACTIVE, links to the configuration form */}
-        <div className="group relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+        <div className="group relative flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-card transition hover:shadow-card-hover">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-600">
               <Server className="h-6 w-6" />

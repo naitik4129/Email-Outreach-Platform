@@ -90,7 +90,7 @@ export function TemplatePicker({ workspaceId, disabled, onPick }: Props) {
           onClick={toggle}
           disabled={disabled}
           {...ariaProps}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:pointer-events-none disabled:opacity-40"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:pointer-events-none disabled:opacity-40"
         >
           <FileText className="h-4 w-4" aria-hidden="true" />
           Template

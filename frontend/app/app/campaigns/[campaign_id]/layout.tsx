@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
 
 import { CampaignTypeBadge } from "@/components/campaigns/campaign-type-badge";
 import { Alert } from "@/components/ui/alert";
-import { ApiError } from "@/lib/api-client";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CampaignStatusBadge } from "@/components/ui/status-badge";
 import { getCampaign, getPreflight } from "@/lib/campaigns-api";
+import { errorMessage } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
-import type { CampaignStatus } from "@/types/domain";
 
 const TABS: { href: string; label: string }[] = [
   { href: "overview", label: "Overview" },
@@ -21,31 +23,6 @@ const TABS: { href: string; label: string }[] = [
   { href: "schedule", label: "Schedule" },
   { href: "review", label: "Review" },
 ];
-
-
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't load this campaign. Please try again.";
-}
-
-function StatusBadge({ status }: { status: CampaignStatus }) {
-  const styles: Record<CampaignStatus, string> = {
-    DRAFT: "bg-slate-100 text-slate-700",
-    SCHEDULED: "bg-blue-100 text-blue-700",
-    RUNNING: "bg-emerald-100 text-emerald-700",
-    PAUSED: "bg-amber-100 text-amber-700",
-    ERROR: "bg-red-100 text-red-700",
-    COMPLETED: "bg-indigo-100 text-indigo-700",
-    ARCHIVED: "bg-slate-100 text-slate-500",
-  };
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[status]}`}
-    >
-      {status}
-    </span>
-  );
-}
 
 export default function CampaignLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -77,8 +54,14 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
 
   if (campaignQuery.isLoading) {
     return (
-      <div className="flex min-h-[300px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+      <div aria-busy="true" className="space-y-6">
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-8 w-72" />
+          <Skeleton className="h-4 w-96 max-w-full" />
+        </div>
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
   }
@@ -86,12 +69,14 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
   if (campaignQuery.isError || !campaignQuery.data) {
     return (
       <div className="space-y-4">
-        <Alert variant="error">{errorMessage(campaignQuery.error)}</Alert>
+        <Alert variant="error">
+          {errorMessage(campaignQuery.error, "We couldn't load this campaign. Please try again.")}
+        </Alert>
         <Link
           href="/app/campaigns"
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+          className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900"
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
           Back to Campaigns
         </Link>
       </div>
@@ -116,32 +101,32 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
       <div>
         <Link
           href="/app/campaigns"
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+          className="inline-flex items-center gap-1 rounded text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
           Campaigns
         </Link>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 min-w-0 break-words">
             {campaign.name}
           </h1>
-          <StatusBadge status={campaign.status} />
+          <CampaignStatusBadge status={campaign.status} />
           <CampaignTypeBadge type={campaign.campaign_type} />
           {campaign.status === "DRAFT" && errorCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
-              <AlertTriangle className="h-3 w-3" />
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-600/25">
+              <AlertTriangle className="h-3 w-3" aria-hidden="true" />
               {errorCount} item{errorCount === 1 ? "" : "s"} left before this
               campaign is ready
             </span>
           )}
         </div>
         {campaign.description && (
-          <p className="mt-1 text-sm text-slate-500">{campaign.description}</p>
+          <p className="mt-1.5 max-w-3xl text-sm text-slate-500">{campaign.description}</p>
         )}
       </div>
 
-      <div className="border-b border-slate-200">
-        <nav className="-mb-px flex gap-6 overflow-x-auto">
+      <div className="-mx-4 border-b border-slate-200 px-4 sm:mx-0 sm:px-0">
+        <nav className="-mb-px flex gap-1 overflow-x-auto sm:gap-2">
           {tabs.map((tab) => {
             const href = `/app/campaigns/${campaignId}/${tab.href}`;
             const isActive = pathname?.startsWith(href);
@@ -149,11 +134,13 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
               <Link
                 key={tab.href}
                 href={href}
-                className={`whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium ${
+                aria-current={isActive ? "page" : undefined}
+                className={cn(
+                  "shrink-0 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
                   isActive
-                    ? "border-indigo-600 text-indigo-600"
-                    : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700"
-                }`}
+                    ? "border-brand-600 text-brand-700"
+                    : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800",
+                )}
               >
                 {tab.label}
               </Link>
@@ -162,7 +149,7 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
         </nav>
       </div>
 
-      {children}
+      <div className="animate-fade-in">{children}</div>
     </div>
   );
 }

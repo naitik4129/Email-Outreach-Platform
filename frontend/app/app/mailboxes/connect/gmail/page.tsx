@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
 import { completeGmailOAuth } from "@/lib/mailboxes-api";
 import { useWorkspace } from "@/lib/workspace-context";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function GmailCallbackInner() {
   const router = useRouter();
@@ -83,7 +84,7 @@ function GmailCallbackInner() {
     <div className="mx-auto flex min-h-[400px] max-w-md flex-col items-center justify-center p-6 text-center">
       {status === "loading" && (
         <div className="space-y-4">
-          <Loader2 className="mx-auto h-10 w-10 animate-spin text-teal-600" />
+          <Loader2 className="mx-auto h-10 w-10 animate-spin text-brand-600" />
           <h2 className="text-lg font-semibold text-slate-900">
             Completing Google Authentication
           </h2>
@@ -134,9 +135,7 @@ export default function GmailCallbackPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-[400px] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-        </div>
+        <LoadingBlock size="lg" />
       }
     >
       <GmailCallbackInner />

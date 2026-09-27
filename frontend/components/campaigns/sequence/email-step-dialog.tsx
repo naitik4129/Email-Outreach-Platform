@@ -409,7 +409,7 @@ export function EmailStepDialog({
       onRequestClose={requestClose}
       title={`Step ${stepNumber}`}
       headerContent={
-        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-indigo-700">
+        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700">
           <Mail className="h-4 w-4" aria-hidden="true" />
           {referenceMode ? "Reference email" : "Email"}
         </span>
@@ -503,7 +503,7 @@ export function EmailStepDialog({
             <label htmlFor="step-subject" className="sr-only">
               Subject
             </label>
-            <div className="flex items-center rounded-md border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-teal-600">
+            <div className="flex items-center rounded-md border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-brand-600">
               <span className="border-r border-slate-200 px-3 text-sm font-semibold text-slate-700">
                 Subject
               </span>
@@ -529,14 +529,14 @@ export function EmailStepDialog({
               <button
                 type="button"
                 onClick={() => setShowPreheader((value) => !value)}
-                className="text-xs font-medium text-indigo-600 hover:underline"
+                className="text-xs font-medium text-brand-600 hover:underline"
                 aria-expanded={showPreheader}
               >
                 {showPreheader ? "Hide pre-header" : "Set pre-header"}
               </button>
             </div>
             {showPreheader ? (
-              <div className="mt-1 flex items-center rounded-md border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-teal-600">
+              <div className="mt-1 flex items-center rounded-md border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-brand-600">
                 <label
                   htmlFor="step-preheader"
                   className="border-r border-slate-200 px-3 text-sm font-semibold text-slate-700"

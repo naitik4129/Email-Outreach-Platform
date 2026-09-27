@@ -273,18 +273,18 @@ export function InboxPageClient() {
   }, [selectedConversationId, conversationList, handleSelectConversation]);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] bg-slate-50">
+    <div className="flex h-[calc(100vh-7rem)] min-h-[34rem] flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-card">
       {/* Top Header / Status bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-6 py-3 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
             <Inbox className="h-5 w-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold text-slate-900">Unified Inbox</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Unified Inbox</h1>
               {unreadCount > 0 && (
-                <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                <span className="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">
                   {unreadCount} unread
                 </span>
               )}
@@ -387,7 +387,7 @@ export function InboxPageClient() {
                 value={selectedMailboxId}
                 onChange={(e) => handleMailboxChange(e.target.value)}
                 aria-label="Filter by mailbox"
-                className="w-full text-xs h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-slate-700 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                className="w-full text-xs h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-slate-700 focus:outline-hidden focus:ring-1 focus:ring-brand-500"
               >
                 <option value="">All Mailboxes</option>
                 {syncStatusQuery.data.mailboxes.map((mb) => (
@@ -448,7 +448,7 @@ export function InboxPageClient() {
                     onClick={() => handleSelectConversation(item.id)}
                     className={`w-full text-left p-3.5 transition-colors relative flex items-start gap-3 hover:bg-slate-50 ${
                       isSelected
-                        ? "bg-indigo-50/70 border-l-4 border-indigo-600"
+                        ? "bg-brand-50/70 border-l-4 border-brand-600"
                         : item.is_read
                         ? "bg-white"
                         : "bg-blue-50/40"
@@ -457,7 +457,7 @@ export function InboxPageClient() {
                     {/* Unread dot */}
                     <div className="mt-1 shrink-0">
                       {!item.is_read ? (
-                        <span className="block h-2.5 w-2.5 rounded-full bg-indigo-600 ring-2 ring-white" />
+                        <span className="block h-2.5 w-2.5 rounded-full bg-brand-600 ring-2 ring-white" />
                       ) : (
                         <span className="block h-2.5 w-2.5 rounded-full bg-transparent" />
                       )}
@@ -592,7 +592,7 @@ export function InboxPageClient() {
                       {currentDetail.campaign_name && (
                         <>
                           <span>•</span>
-                          <span className="inline-flex items-center gap-1 font-medium text-indigo-600">
+                          <span className="inline-flex items-center gap-1 font-medium text-brand-600">
                             <Tag className="h-3 w-3" />
                             {currentDetail.campaign_name}
                           </span>
@@ -625,7 +625,7 @@ export function InboxPageClient() {
                       disabled={markReadMutation.isPending}
                       className="text-xs"
                     >
-                      <CheckCheck className="h-3.5 w-3.5 mr-1 text-indigo-600" />
+                      <CheckCheck className="h-3.5 w-3.5 mr-1 text-brand-600" />
                       Mark Read
                     </Button>
                   )}
@@ -685,7 +685,7 @@ export function InboxPageClient() {
                               className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${
                                 isInbound
                                   ? "bg-emerald-100 text-emerald-700"
-                                  : "bg-indigo-100 text-indigo-700"
+                                  : "bg-brand-100 text-brand-700"
                               }`}
                             >
                               {isInbound ? (
@@ -714,7 +714,7 @@ export function InboxPageClient() {
                                   </span>
                                 )}
                                 {msg.sequence_step_position ? (
-                                  <span className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700">
+                                  <span className="inline-flex items-center rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700">
                                     Step {msg.sequence_step_position}
                                   </span>
                                 ) : null}

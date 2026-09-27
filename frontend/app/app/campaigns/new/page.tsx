@@ -80,7 +80,7 @@ export default function NewCampaignPage() {
           <ArrowLeft className="h-3.5 w-3.5" />
           Campaigns
         </Link>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-2">
           Create Campaign
         </h1>
         <p className="mt-1 text-sm text-slate-500">
@@ -92,7 +92,7 @@ export default function NewCampaignPage() {
       {formError && <Alert variant="error">{formError}</Alert>}
 
       <form
-        className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+        className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-card"
         onSubmit={(e) => {
           e.preventDefault();
           if (!name.trim()) {
@@ -134,7 +134,7 @@ export default function NewCampaignPage() {
               key={option.value}
               className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
                 campaignType === option.value
-                  ? "border-indigo-500 bg-indigo-50"
+                  ? "border-brand-500 bg-brand-50"
                   : "border-slate-200 bg-white"
               } ${option.available ? "" : "cursor-not-allowed opacity-60"}`}
             >

@@ -170,7 +170,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           <Button asChild variant="ghost">
             <Link href="/app/leads">Back to leads</Link>
           </Button>
-          <h1 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-3">
             {fullName(lead)}
           </h1>
           <p className="mt-2 text-sm text-slate-500">{lead.email}</p>
@@ -196,8 +196,8 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
 
       {error ? <Alert>{error}</Alert> : null}
 
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+        <h2 className="text-lg font-semibold tracking-normal text-slate-900">
           Profile
         </h2>
         {editing && mayManage ? (
@@ -278,7 +278,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
                 }
                 disabled={saveMutation.isPending}
                 rows={6}
-                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
               />
             </div>
             <div className="flex items-center gap-2 md:col-span-2">
@@ -304,27 +304,27 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           <dl className="mt-4 grid gap-4 text-sm md:grid-cols-2">
             <div>
               <dt className="font-medium text-slate-500">Email</dt>
-              <dd className="mt-1 text-slate-950">{lead.email}</dd>
+              <dd className="mt-1 text-slate-900">{lead.email}</dd>
             </div>
             <div>
               <dt className="font-medium text-slate-500">Status</dt>
-              <dd className="mt-1 text-slate-950">{lead.status}</dd>
+              <dd className="mt-1 text-slate-900">{lead.status}</dd>
             </div>
             <div>
               <dt className="font-medium text-slate-500">Company</dt>
-              <dd className="mt-1 text-slate-950">{lead.company ?? "No company"}</dd>
+              <dd className="mt-1 text-slate-900">{lead.company ?? "No company"}</dd>
             </div>
             <div>
               <dt className="font-medium text-slate-500">Job title</dt>
-              <dd className="mt-1 text-slate-950">{lead.title ?? "No title"}</dd>
+              <dd className="mt-1 text-slate-900">{lead.title ?? "No title"}</dd>
             </div>
           </dl>
         )}
         {editing && mayManage ? null : <LeadProfileDetails lead={lead} />}
       </section>
 
-      <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold tracking-normal text-slate-950">
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+        <h2 className="text-lg font-semibold tracking-normal text-slate-900">
           Lists
         </h2>
         {lead.lists.length === 0 ? (

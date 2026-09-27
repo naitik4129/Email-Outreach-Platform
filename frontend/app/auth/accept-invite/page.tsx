@@ -78,7 +78,7 @@ function AcceptInviteContent() {
         subtitle="Please wait while we verify your workspace invitation..."
       >
         <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
-          <Loader2 className="h-5 w-5 animate-spin text-teal-600" />
+          <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
           Checking token validity&hellip;
         </div>
       </AuthCard>
@@ -118,7 +118,7 @@ function AcceptInviteContent() {
 
         {success ? (
           <div className="space-y-3 py-2 text-center">
-            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-teal-50 text-teal-600">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-50 text-brand-600">
               <CheckCircle2 className="h-6 w-6" />
             </div>
             <h3 className="text-base font-semibold text-slate-900">
@@ -143,7 +143,7 @@ function AcceptInviteContent() {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-500">Assigned Role:</span>
-                <span className="inline-flex rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-semibold text-teal-800">
+                <span className="inline-flex rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-800">
                   {invite.role_code}
                 </span>
               </div>
@@ -178,7 +178,7 @@ function AcceptInviteContent() {
 
             <p className="text-center text-xs text-slate-500">
               Need to sign in with a different account?{" "}
-              <Link href="/auth/login" className="text-teal-600 hover:underline">
+              <Link href="/auth/login" className="text-brand-600 hover:underline">
                 Sign in
               </Link>
             </p>

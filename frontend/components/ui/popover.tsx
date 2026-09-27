@@ -63,7 +63,7 @@ export function Popover({ trigger, children, align = "start", className, label }
           role="dialog"
           aria-label={label}
           className={cn(
-            "absolute z-30 mt-1 min-w-[14rem] rounded-md border border-slate-200 bg-white p-2 shadow-lg",
+            "absolute z-30 mt-1 min-w-[14rem] rounded-lg border border-slate-200 bg-white p-2 shadow-overlay animate-pop-in",
             align === "end" ? "right-0" : "left-0",
             className,
           )}

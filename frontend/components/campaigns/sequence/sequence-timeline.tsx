@@ -100,14 +100,14 @@ export function SequenceTimeline({
               <li key={step.id} className="list-none">
                 <article
                   aria-label={`Step ${number}: Email`}
-                  className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+                  className="rounded-xl border border-slate-200 bg-white p-4 shadow-card"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">
                         {number}
                       </span>
-                      <Mail className="h-4 w-4 shrink-0 text-indigo-500" aria-hidden="true" />
+                      <Mail className="h-4 w-4 shrink-0 text-brand-500" aria-hidden="true" />
                       <span className="text-sm font-semibold text-slate-900">Email</span>
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
                         {index === 0 ? "Day 1 · at start" : `Day ${timing?.day ?? 1}`}
@@ -171,7 +171,7 @@ export function SequenceTimeline({
                   <button
                     type="button"
                     onClick={() => onOpenEmail(step)}
-                    className="mt-3 block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                    className="mt-3 block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
                   >
                     <p className="truncate text-sm font-medium text-slate-900">
                       {step.email_subject?.trim() || (
@@ -247,7 +247,7 @@ export function SequenceTimeline({
                           {...ariaProps}
                           aria-label={`Edit wait: ${formatDuration(minutes)}`}
                           className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600",
+                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-medium hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600",
                             isOrphan
                               ? "border-amber-300 bg-amber-50 text-amber-800"
                               : "border-slate-200 bg-slate-50 text-slate-700",

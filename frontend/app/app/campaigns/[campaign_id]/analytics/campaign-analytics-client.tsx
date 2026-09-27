@@ -9,7 +9,6 @@ import {
   Clock,
   HelpCircle,
   Info,
-  Loader2,
   Eye,
   MessageSquare,
   Send,
@@ -24,6 +23,7 @@ import {
   getCampaignSequenceAnalytics,
 } from "@/lib/analytics-api";
 import { useWorkspace } from "@/lib/workspace-context";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function MetricCard({
   title,
@@ -45,15 +45,15 @@ function MetricCard({
   tooltip?: string;
 }) {
   const bgStyles = {
-    indigo: "bg-indigo-50 text-indigo-700",
+    indigo: "bg-brand-50 text-brand-700",
     emerald: "bg-emerald-50 text-emerald-700",
     amber: "bg-amber-50 text-amber-700",
-    rose: "bg-rose-50 text-rose-700",
+    rose: "bg-red-50 text-red-700",
     slate: "bg-slate-100 text-slate-700",
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-1.5">
@@ -111,9 +111,7 @@ export function CampaignAnalyticsClient() {
 
   if (campaignQuery.isLoading || sequenceQuery.isLoading) {
     return (
-      <div className="flex min-h-[300px] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-      </div>
+      <LoadingBlock size="lg" />
     );
   }
 
@@ -237,7 +235,7 @@ export function CampaignAnalyticsClient() {
       {/* Recipient vs Message Metrics Info Card */}
       <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-5">
         <div className="flex items-start gap-3">
-          <Info className="mt-0.5 h-5 w-5 text-indigo-600" />
+          <Info className="mt-0.5 h-5 w-5 text-brand-600" />
           <div className="space-y-1 text-xs text-slate-600">
             <p className="font-semibold text-slate-900">
               Message Metrics vs. Recipient Metrics
@@ -256,7 +254,7 @@ export function CampaignAnalyticsClient() {
       </div>
 
       {/* Sequence Step Breakdown */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
@@ -286,7 +284,7 @@ export function CampaignAnalyticsClient() {
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
                         {step.position}
                       </span>
                       <div>
@@ -316,7 +314,7 @@ export function CampaignAnalyticsClient() {
                       </div>
                       <div>
                         <p className="text-slate-400">Opens</p>
-                        <p className="font-semibold text-indigo-600">
+                        <p className="font-semibold text-brand-600">
                           {(step.opened ?? 0).toLocaleString()}{" "}
                           <span className="text-[11px] font-normal text-slate-500">
                             ({step.open_rate ?? 0}%)
@@ -325,7 +323,7 @@ export function CampaignAnalyticsClient() {
                       </div>
                       <div>
                         <p className="text-slate-400">Bounces</p>
-                        <p className="font-semibold text-rose-600">
+                        <p className="font-semibold text-red-600">
                           {step.bounced.toLocaleString()}{" "}
                           <span className="text-[11px] font-normal text-slate-500">
                             ({step.bounce_rate ?? 0}%)

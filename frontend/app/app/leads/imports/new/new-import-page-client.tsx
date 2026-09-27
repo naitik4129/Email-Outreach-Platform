@@ -114,7 +114,7 @@ export function NewImportPageClient() {
   return (
     <main className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-3xl font-semibold tracking-normal text-slate-950">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
           New Import
         </h1>
         <p className="mt-2 text-sm text-slate-500">
@@ -125,7 +125,7 @@ export function NewImportPageClient() {
       {error ? <Alert>{error}</Alert> : null}
 
       {step === "UPLOAD" && (
-        <section className="rounded-md border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
           <form onSubmit={handleUpload} className="space-y-6">
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -136,7 +136,7 @@ export function NewImportPageClient() {
                       type="radio"
                       checked={importKind === "LEADS"}
                       onChange={() => setImportKind("LEADS")}
-                      className="text-teal-600 focus:ring-teal-600"
+                      className="text-brand-600 focus:ring-brand-600"
                     />
                     Leads
                   </label>
@@ -145,7 +145,7 @@ export function NewImportPageClient() {
                       type="radio"
                       checked={importKind === "SUPPRESSION"}
                       onChange={() => setImportKind("SUPPRESSION")}
-                      className="text-teal-600 focus:ring-teal-600"
+                      className="text-brand-600 focus:ring-brand-600"
                     />
                     Suppressions
                   </label>
@@ -161,7 +161,7 @@ export function NewImportPageClient() {
                     id="list-select"
                     value={listId}
                     onChange={(e) => setListId(e.target.value)}
-                    className="block w-full rounded-md border-slate-200 text-sm focus:border-teal-600 focus:ring-teal-600"
+                    className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
                   >
                     <option value="">No List</option>
                     {(listsQuery.data?.items ?? []).map((l) => (
@@ -179,7 +179,7 @@ export function NewImportPageClient() {
                     <div className="mt-4 flex text-sm leading-6 text-slate-600">
                       <label
                         htmlFor="file-upload"
-                        className="relative cursor-pointer rounded-md bg-white font-semibold text-teal-600 focus-within:outline-none focus-within:ring-2 focus-within:ring-teal-600 focus-within:ring-offset-2 hover:text-teal-500"
+                        className="relative cursor-pointer rounded-md bg-white font-semibold text-brand-600 focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-600 focus-within:ring-offset-2 hover:text-brand-500"
                       >
                         <span>Upload a file</span>
                         <input
@@ -212,7 +212,7 @@ export function NewImportPageClient() {
       )}
 
       {step === "MAP" && uploadResult && (
-        <section className="rounded-md border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-6">
           <div>
             <h2 className="text-lg font-medium text-slate-900">Map Columns</h2>
             <p className="text-sm text-slate-500">
@@ -223,7 +223,7 @@ export function NewImportPageClient() {
           <form onSubmit={handleMappingSubmit} className="space-y-6">
             <div className="divide-y divide-slate-100 border-t border-b border-slate-100">
               {uploadResult.headers.map((header) => (
-                <div key={header} className="grid grid-cols-3 items-center gap-4 py-4">
+                <div key={header} className="grid gap-2 py-4 sm:grid-cols-3 sm:items-center sm:gap-4">
                   <div className="col-span-1 text-sm font-medium text-slate-900">
                     {header}
                   </div>
@@ -239,7 +239,7 @@ export function NewImportPageClient() {
                           return next;
                         });
                       }}
-                      className="block w-full rounded-md border-slate-200 text-sm focus:border-teal-600 focus:ring-teal-600"
+                      className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
                     >
                       <option value="">-- Ignore --</option>
                       {mappableFields.map((field) => (
@@ -266,7 +266,7 @@ export function NewImportPageClient() {
       )}
 
       {step === "CONFIRM" && uploadResult && (
-        <section className="rounded-md border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-6">
           <div>
             <h2 className="text-lg font-medium text-slate-900">Confirm Import</h2>
             <p className="text-sm text-slate-500">

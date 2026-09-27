@@ -79,7 +79,7 @@ export default function NotificationSettingsPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center gap-2 p-16 text-sm text-slate-500">
-        <Loader2 className="h-5 w-5 animate-spin text-teal-600" />
+        <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
         Loading notification settings&hellip;
       </div>
     );
@@ -98,8 +98,8 @@ export default function NotificationSettingsPage() {
   return (
     <main className="space-y-6 max-w-2xl pb-16">
       <div>
-        <p className="text-sm font-medium text-teal-700">Account Preferences</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
+        <p className="text-sm font-medium text-brand-700">Account Preferences</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-1">
           Notification Preferences
         </h1>
         <p className="mt-1 text-sm text-slate-600">
@@ -109,7 +109,7 @@ export default function NotificationSettingsPage() {
 
       {savedSuccess && (
         <Alert variant="info" className="flex items-center gap-2">
-          <Check className="h-4 w-4 text-teal-700" />
+          <Check className="h-4 w-4 text-brand-700" />
           <span>Your notification preferences have been saved successfully.</span>
         </Alert>
       )}
@@ -122,7 +122,7 @@ export default function NotificationSettingsPage() {
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Delivery Channels */}
-        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-5">
           <h2 className="text-base font-semibold text-slate-900 border-b border-slate-100 pb-3">
             Delivery Channels
           </h2>
@@ -145,7 +145,7 @@ export default function NotificationSettingsPage() {
               type="checkbox"
               checked={inAppEnabled}
               onChange={(e) => setInAppEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
             />
           </div>
 
@@ -167,13 +167,13 @@ export default function NotificationSettingsPage() {
               type="checkbox"
               checked={emailEnabled}
               onChange={(e) => setEmailEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
             />
           </div>
         </section>
 
         {/* Categories */}
-        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-5">
           <h2 className="text-base font-semibold text-slate-900 border-b border-slate-100 pb-3">
             Notification Categories
           </h2>
@@ -193,14 +193,14 @@ export default function NotificationSettingsPage() {
                 type="checkbox"
                 checked={categories.safety ?? true}
                 onChange={() => toggleCategory("safety")}
-                className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
               />
             </div>
 
             <div className="flex items-start justify-between gap-4 pt-3 border-t border-slate-100">
               <div className="space-y-0.5">
                 <p className="text-sm font-medium text-slate-900 flex items-center gap-2">
-                  <Mail className="h-4 w-4 text-teal-600" />
+                  <Mail className="h-4 w-4 text-brand-600" />
                   Campaign Lifecycle
                 </p>
                 <p className="text-xs text-slate-500">
@@ -211,14 +211,14 @@ export default function NotificationSettingsPage() {
                 type="checkbox"
                 checked={categories.campaign ?? true}
                 onChange={() => toggleCategory("campaign")}
-                className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
               />
             </div>
 
             <div className="flex items-start justify-between gap-4 pt-3 border-t border-slate-100">
               <div className="space-y-0.5">
                 <p className="text-sm font-medium text-slate-900 flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-indigo-600" />
+                  <Sparkles className="h-4 w-4 text-brand-600" />
                   Team &amp; Workspace Updates
                 </p>
                 <p className="text-xs text-slate-500">
@@ -229,7 +229,7 @@ export default function NotificationSettingsPage() {
                 type="checkbox"
                 checked={categories.team ?? true}
                 onChange={() => toggleCategory("team")}
-                className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
               />
             </div>
           </div>

@@ -2,7 +2,6 @@
 
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { ApprovalBar } from "@/components/campaigns/personalization/approval-bar";
@@ -25,6 +24,7 @@ import {
 } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { PersonalizationConfig } from "@/types/domain";
+import { LoadingBlock } from "@/components/ui/skeleton";
 
 function errorMessage(error: unknown) {
   if (error instanceof ApiError) return error.message;
@@ -116,9 +116,7 @@ export default function CampaignPersonalizationPage() {
 
   if (campaignQuery.isLoading) {
     return (
-      <div className="flex min-h-[200px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" aria-label="Loading" />
-      </div>
+      <LoadingBlock />
     );
   }
   if (campaignQuery.isError || !campaignQuery.data) {
@@ -170,9 +168,7 @@ export default function CampaignPersonalizationPage() {
       {stateQuery.isError ? <Alert variant="error">{errorMessage(stateQuery.error)}</Alert> : null}
 
       {stateQuery.isLoading ? (
-        <div className="flex min-h-[120px] items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-slate-400" aria-label="Loading" />
-        </div>
+        <LoadingBlock />
       ) : state ? (
         <>
           <ObjectiveForm

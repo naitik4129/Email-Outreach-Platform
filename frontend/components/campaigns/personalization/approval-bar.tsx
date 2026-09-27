@@ -52,7 +52,7 @@ export function ApprovalBar({
   return (
     <section
       aria-label="Sample approval"
-      className="space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+      className="space-y-3 rounded-xl border border-slate-200 bg-white p-5 shadow-card"
     >
       <div className="flex items-start gap-3">
         {approval.status === "APPROVED" ? (

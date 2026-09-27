@@ -1,39 +1,51 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Archive, ArrowRight, Copy, Pencil } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api-client";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
 import {
   archiveCampaign,
   duplicateCampaign,
   getCampaign,
   updateCampaign,
 } from "@/lib/campaigns-api";
+import { errorMessage } from "@/lib/errors";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { canDraftCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
+import type { CampaignStatus } from "@/types/domain";
 
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
-}
+const STATUS_HINT: Partial<Record<CampaignStatus, string>> = {
+  DRAFT:
+    "Finish the audience, sequence, senders and schedule, then start the campaign from the Review tab.",
+  SCHEDULED: "This campaign is scheduled. You can pause it from the Review tab.",
+  RUNNING: "This campaign is running. You can pause it from the Review tab.",
+  PAUSED: "This campaign is paused. You can resume it from the Review tab.",
+};
 
 export default function CampaignOverviewPage() {
   const router = useRouter();
   const params = useParams<{ campaign_id: string }>();
   const campaignId = params.campaign_id;
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const mayDraft = canDraftCampaign(activeWorkspace?.role_code);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
 
@@ -64,6 +76,7 @@ export default function CampaignOverviewPage() {
     onSuccess: () => {
       invalidate();
       setIsEditing(false);
+      toast("Campaign details saved.");
     },
     onError: (err) => setActionError(errorMessage(err)),
   });
@@ -81,8 +94,13 @@ export default function CampaignOverviewPage() {
       queryClient.invalidateQueries({
         queryKey: ["workspace", activeWorkspaceId, "campaigns"],
       });
+      setConfirmArchive(false);
+      toast("Campaign archived.");
     },
-    onError: (err) => setActionError(errorMessage(err)),
+    onError: (err) => {
+      setConfirmArchive(false);
+      setActionError(errorMessage(err));
+    },
   });
 
   const duplicateMutation = useMutation({
@@ -94,6 +112,7 @@ export default function CampaignOverviewPage() {
       queryClient.invalidateQueries({
         queryKey: ["workspace", activeWorkspaceId, "campaigns"],
       });
+      toast("Campaign duplicated.");
       router.push(`/app/campaigns/${dup.id}/overview`);
     },
     onError: (err) => setActionError(errorMessage(err)),
@@ -101,20 +120,35 @@ export default function CampaignOverviewPage() {
 
   if (campaignQuery.isLoading) {
     return (
-      <div className="flex min-h-[200px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+      <div aria-busy="true" className="max-w-3xl space-y-4">
+        <Skeleton className="h-40 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
       </div>
     );
   }
   if (!campaignQuery.data) return null;
   const campaign = campaignQuery.data;
   const isDraft = campaign.status === "DRAFT";
+  const hint = STATUS_HINT[campaign.status];
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-5">
       {actionError && <Alert variant="error">{actionError}</Alert>}
 
-      <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+      {hint ? (
+        <div className="flex flex-col gap-2 rounded-xl border border-brand-200 bg-brand-50/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-brand-900">{hint}</p>
+          <Link
+            href={`/app/campaigns/${campaignId}/review`}
+            className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-brand-700 hover:text-brand-900"
+          >
+            Go to Review
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
+      ) : null}
+
+      <Card>
         {isEditing ? (
           <div className="space-y-4">
             <Field label="Campaign name" required>
@@ -132,98 +166,105 @@ export default function CampaignOverviewPage() {
               </Button>
               <Button
                 size="sm"
-                disabled={!draftName.trim() || updateMutation.isPending}
+                disabled={!draftName.trim()}
+                loading={updateMutation.isPending}
                 onClick={() => updateMutation.mutate()}
               >
-                {updateMutation.isPending && (
-                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                )}
                 Save
               </Button>
             </div>
           </div>
         ) : (
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">Basics</h2>
-              <dl className="mt-3 space-y-2 text-sm">
-                <div className="flex gap-2">
-                  <dt className="w-28 shrink-0 text-slate-500">Name</dt>
-                  <dd className="text-slate-900">{campaign.name}</dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="w-28 shrink-0 text-slate-500">Description</dt>
-                  <dd className="text-slate-900">
-                    {campaign.description || (
-                      <span className="italic text-slate-400">None</span>
-                    )}
-                  </dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="w-28 shrink-0 text-slate-500">Created</dt>
-                  <dd className="text-slate-900">
-                    {new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
-                      new Date(campaign.created_at),
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-            {mayDraft && isDraft && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setDraftName(campaign.name);
-                  setDraftDescription(campaign.description ?? "");
-                  setIsEditing(true);
-                }}
-              >
-                Edit
-              </Button>
-            )}
-          </div>
+          <>
+            <CardHeader
+              title="Basics"
+              action={
+                mayDraft && isDraft ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setDraftName(campaign.name);
+                      setDraftDescription(campaign.description ?? "");
+                      setIsEditing(true);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    Edit
+                  </Button>
+                ) : null
+              }
+            />
+            <dl className="mt-4 divide-y divide-slate-100 text-sm">
+              <div className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:gap-4">
+                <dt className="w-32 shrink-0 text-slate-500">Name</dt>
+                <dd className="min-w-0 break-words font-medium text-slate-900">
+                  {campaign.name}
+                </dd>
+              </div>
+              <div className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:gap-4">
+                <dt className="w-32 shrink-0 text-slate-500">Description</dt>
+                <dd className="min-w-0 break-words text-slate-900">
+                  {campaign.description || (
+                    <span className="italic text-slate-400">None</span>
+                  )}
+                </dd>
+              </div>
+              <div className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:gap-4">
+                <dt className="w-32 shrink-0 text-slate-500">Created</dt>
+                <dd className="text-slate-900">{formatDate(campaign.created_at)}</dd>
+              </div>
+              <div className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:gap-4">
+                <dt className="w-32 shrink-0 text-slate-500">Last updated</dt>
+                <dd className="text-slate-900">{formatDateTime(campaign.updated_at)}</dd>
+              </div>
+            </dl>
+          </>
         )}
-      </div>
+      </Card>
 
       {mayDraft && (
-        <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Lifecycle</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Draft campaigns can be duplicated or archived. Activation isn&apos;t
-            available yet in this phase.
-          </p>
-          <div className="mt-4 flex gap-2">
+        <Card>
+          <CardHeader
+            title="Lifecycle"
+            description="Duplicate this campaign to reuse its setup. Draft campaigns can also be archived."
+          />
+          <div className="mt-4 flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
               disabled={duplicateMutation.isPending}
               onClick={() => duplicateMutation.mutate()}
             >
+              <Copy className="h-3.5 w-3.5" aria-hidden="true" />
               Duplicate
             </Button>
             {isDraft && (
               <Button
                 variant="outline"
                 size="sm"
-                className="text-red-600 hover:text-red-700"
+                className="border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
                 disabled={archiveMutation.isPending}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Archive "${campaign.name}"? It will no longer be editable.`,
-                    )
-                  ) {
-                    archiveMutation.mutate();
-                  }
-                }}
+                onClick={() => setConfirmArchive(true)}
               >
+                <Archive className="h-3.5 w-3.5" aria-hidden="true" />
                 Archive
               </Button>
             )}
           </div>
-        </div>
+        </Card>
       )}
+
+      <ConfirmDialog
+        open={confirmArchive}
+        title={`Archive "${campaign.name}"?`}
+        description="It will no longer be editable."
+        confirmLabel="Archive campaign"
+        tone="danger"
+        loading={archiveMutation.isPending}
+        onConfirm={() => archiveMutation.mutate()}
+        onCancel={() => setConfirmArchive(false)}
+      />
     </div>
   );
 }

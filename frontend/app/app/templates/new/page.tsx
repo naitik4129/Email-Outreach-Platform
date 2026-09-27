@@ -183,10 +183,10 @@ export default function NewTemplatePage() {
           </Button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
                 New Email Template
               </h1>
-              <span className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+              <span className="inline-flex items-center rounded-md bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700">
                 Standard Template
               </span>
             </div>
@@ -226,7 +226,7 @@ export default function NewTemplatePage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Editor Column */}
         <div className="space-y-5 lg:col-span-7">
-          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card space-y-4">
             <Field label="Template Name" required>
               <Input
                 placeholder="e.g. Cold Outreach Sequence - Step 1"
@@ -252,7 +252,7 @@ export default function NewTemplatePage() {
             {/* Variable Pills Toolbar */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-600 flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                <Sparkles className="h-3.5 w-3.5 text-brand-600" />
                 Insert Variable (targets {activeField === "subject" ? "Subject" : "Body"})
               </label>
               <div className="flex flex-wrap gap-1.5">
@@ -261,7 +261,7 @@ export default function NewTemplatePage() {
                     key={v.label}
                     type="button"
                     onClick={() => insertVariable(v.code)}
-                    className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition"
+                    className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-mono text-slate-700 hover:bg-brand-50 hover:border-brand-300 hover:text-brand-700 transition"
                   >
                     + {v.code}
                   </button>
@@ -273,7 +273,7 @@ export default function NewTemplatePage() {
               <textarea
                 ref={bodyRef}
                 rows={12}
-                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 placeholder="<p>Hi {{first_name}},</p><p>...</p>"
                 value={bodyHtml}
                 onChange={(e) => setBodyHtml(e.target.value)}
@@ -286,10 +286,10 @@ export default function NewTemplatePage() {
 
         {/* Preview Column */}
         <div className="space-y-4 lg:col-span-5">
-          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <Eye className="h-4 w-4 text-indigo-600" />
+                <Eye className="h-4 w-4 text-brand-600" />
                 <h2 className="text-sm font-semibold text-slate-900">
                   Live Preview (Sample Lead)
                 </h2>

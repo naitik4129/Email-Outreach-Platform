@@ -20,6 +20,8 @@ import { useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api-client";
@@ -242,8 +244,8 @@ export default function TeamPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-teal-700">Workspace Management</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
+          <p className="text-sm font-medium text-brand-700">Workspace Management</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-1">
             Team &amp; Access
           </h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -263,7 +265,7 @@ export default function TeamPage() {
                 }
                 setTransferModalOpen(true);
               }}
-              className="gap-2 text-slate-700 hover:text-slate-950"
+              className="gap-2 text-slate-700 hover:text-slate-900"
             >
               <ArrowRightLeft className="h-4 w-4" />
               Transfer Ownership
@@ -308,7 +310,7 @@ export default function TeamPage() {
           <button
             type="button"
             onClick={() => setSuccessMessage(null)}
-            className="text-teal-700 hover:text-teal-900"
+            className="text-brand-700 hover:text-brand-900"
           >
             <X className="h-4 w-4" />
           </button>
@@ -316,7 +318,7 @@ export default function TeamPage() {
       )}
 
       {/* Members Directory */}
-      <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <section className="rounded-xl border border-slate-200 bg-white shadow-card overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Users className="h-5 w-5 text-slate-600" />
@@ -348,13 +350,13 @@ export default function TeamPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-6 py-3.5">User</th>
-                  <th className="px-6 py-3.5">Email</th>
-                  <th className="px-6 py-3.5">Role</th>
-                  <th className="px-6 py-3.5">Joined</th>
-                  {isOwner && <th className="px-6 py-3.5 text-right">Actions</th>}
+                  <th className="px-4 py-3">User</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Role</th>
+                  <th className="px-4 py-3">Joined</th>
+                  {isOwner && <th className="px-4 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -365,9 +367,9 @@ export default function TeamPage() {
                       key={member.membership_id}
                       className="hover:bg-slate-50/60 transition-colors"
                     >
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3.5">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-teal-100 text-teal-800 font-semibold text-sm">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-100 text-brand-800 font-semibold text-sm">
                             {(member.display_name?.[0] ?? member.email?.[0] ?? "U").toUpperCase()}
                           </div>
                           <div>
@@ -380,10 +382,10 @@ export default function TeamPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-slate-600">
+                      <td className="px-4 py-3.5 text-slate-600">
                         {member.email ?? "—"}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3.5">
                         {isOwner && !isCurrentMemberOwner ? (
                           <select
                             value={member.role_code}
@@ -395,7 +397,7 @@ export default function TeamPage() {
                                 expectedVersion: member.version,
                               })
                             }
-                            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
+                            className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-8 px-2 text-xs w-auto"
                           >
                             {AVAILABLE_ROLES.map((role) => (
                               <option key={role} value={role}>
@@ -418,7 +420,7 @@ export default function TeamPage() {
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-xs text-slate-500">
+                      <td className="px-4 py-3.5 text-xs text-slate-500">
                         {new Date(member.joined_at).toLocaleDateString(undefined, {
                           month: "short",
                           day: "numeric",
@@ -426,7 +428,7 @@ export default function TeamPage() {
                         })}
                       </td>
                       {isOwner && (
-                        <td className="px-6 py-4 text-right">
+                        <td className="px-4 py-3.5 text-right">
                           {!isCurrentMemberOwner && (
                             <Button
                               variant="ghost"
@@ -451,7 +453,7 @@ export default function TeamPage() {
 
       {/* Pending Invitations Section */}
       {canInvite && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <section className="rounded-xl border border-slate-200 bg-white shadow-card overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Mail className="h-5 w-5 text-slate-600" />
@@ -478,13 +480,13 @@ export default function TeamPage() {
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
-                    <th className="px-6 py-3.5">Invited Email</th>
-                    <th className="px-6 py-3.5">Role</th>
-                    <th className="px-6 py-3.5">Status</th>
-                    <th className="px-6 py-3.5">Expires</th>
-                    <th className="px-6 py-3.5 text-right">Actions</th>
+                    <th className="px-4 py-3">Invited Email</th>
+                    <th className="px-4 py-3">Role</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Expires</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -493,21 +495,21 @@ export default function TeamPage() {
                       key={inv.id}
                       className="hover:bg-slate-50/60 transition-colors"
                     >
-                      <td className="px-6 py-4 font-medium text-slate-900">
+                      <td className="px-4 py-3.5 font-medium text-slate-900">
                         {inv.email}
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3.5">
                         <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
                           {inv.role_code}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3.5">
                         <span
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             inv.status === "PENDING"
                               ? "bg-amber-50 text-amber-700"
                               : inv.status === "ACCEPTED"
-                              ? "bg-green-50 text-green-700"
+                              ? "bg-emerald-50 text-emerald-700"
                               : "bg-slate-100 text-slate-600"
                           }`}
                         >
@@ -515,7 +517,7 @@ export default function TeamPage() {
                           {inv.status}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-xs text-slate-500">
+                      <td className="px-4 py-3.5 text-xs text-slate-500">
                         {new Date(inv.expires_at).toLocaleDateString(undefined, {
                           month: "short",
                           day: "numeric",
@@ -523,7 +525,7 @@ export default function TeamPage() {
                           minute: "2-digit",
                         })}
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-4 py-3.5 text-right">
                         {inv.status === "PENDING" && (
                           <div className="flex items-center justify-end gap-2">
                             <Button
@@ -531,7 +533,7 @@ export default function TeamPage() {
                               size="sm"
                               disabled={resendInviteMutation.isPending}
                               onClick={() => resendInviteMutation.mutate(inv.id)}
-                              className="text-slate-600 hover:text-slate-950 h-8 px-2"
+                              className="text-slate-600 hover:text-slate-900 h-8 px-2"
                               title="Resend invitation"
                             >
                               <RefreshCw className="h-3.5 w-3.5" />
@@ -566,26 +568,20 @@ export default function TeamPage() {
 
       {/* Modal: Invite Teammate */}
       {inviteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-semibold text-slate-950">
-                Invite Teammate
-              </h3>
-              <button
-                type="button"
-                onClick={() => setInviteModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        <Dialog
+          open
+          onRequestClose={() => setInviteModalOpen(false)}
+          title="Invite Teammate"
+          align="center"
+          className="max-w-md rounded-xl"
+        >
+          <div className="space-y-4 p-4">
 
             {lastInviteLink ? (
               <div className="space-y-4 py-2">
-                <div className="rounded-md bg-teal-50 border border-teal-200 p-3 text-sm text-teal-800">
+                <div className="rounded-md bg-brand-50 border border-brand-200 p-3 text-sm text-brand-800">
                   <p className="font-medium">Invitation link generated!</p>
-                  <p className="text-xs mt-1 text-teal-700">
+                  <p className="text-xs mt-1 text-brand-700">
                     A transactional email has been queued. You can also share the direct link below:
                   </p>
                 </div>
@@ -604,7 +600,7 @@ export default function TeamPage() {
                   >
                     {copiedLink ? (
                       <>
-                        <Check className="h-4 w-4 text-teal-600" />
+                        <Check className="h-4 w-4 text-brand-600" />
                         Copied
                       </>
                     ) : (
@@ -653,7 +649,7 @@ export default function TeamPage() {
                     id="invite-role"
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value as RoleCode)}
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3 mt-1"
                   >
                     <option value="MEMBER">MEMBER (View &amp; draft campaigns)</option>
                     <option value="MANAGER">MANAGER (Execute campaigns &amp; mailboxes)</option>
@@ -688,26 +684,20 @@ export default function TeamPage() {
               </form>
             )}
           </div>
-        </div>
+        </Dialog>
       )}
 
       {/* Modal: Transfer Ownership */}
       {transferModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-lg font-semibold text-slate-950 flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-600" />
-                Transfer Ownership
-              </h3>
-              <button
-                type="button"
-                onClick={() => setTransferModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        <Dialog
+          open
+          onRequestClose={() => setTransferModalOpen(false)}
+          title="Transfer Ownership"
+          headerContent={<AlertTriangle className="h-5 w-5 text-amber-600" aria-hidden="true" />}
+          align="center"
+          className="max-w-md rounded-xl"
+        >
+          <div className="space-y-4 p-4">
 
             <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1">
               <p className="font-semibold">Irreversible Administrative Action</p>
@@ -729,7 +719,7 @@ export default function TeamPage() {
                   id="new-owner"
                   value={newOwnerUserId}
                   onChange={(e) => setNewOwnerUserId(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3 mt-1"
                 >
                   {members
                     ?.filter((m) => m.role_code !== "OWNER")
@@ -747,7 +737,7 @@ export default function TeamPage() {
                   id="retain-role"
                   value={retainRole}
                   onChange={(e) => setRetainRole(e.target.value as RoleCode)}
-                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3 mt-1"
                 >
                   <option value="ADMIN">ADMIN</option>
                   <option value="MANAGER">MANAGER</option>
@@ -781,45 +771,32 @@ export default function TeamPage() {
               </div>
             </form>
           </div>
-        </div>
+        </Dialog>
       )}
 
       {/* Modal: Remove Member Confirmation */}
-      {memberToRemove && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl space-y-4">
-            <h3 className="text-base font-semibold text-slate-950">
-              Remove Team Member?
-            </h3>
-            <p className="text-sm text-slate-600">
+      <ConfirmDialog
+        open={memberToRemove !== null}
+        title="Remove Team Member?"
+        description={
+          memberToRemove ? (
+            <>
               Are you sure you want to remove{" "}
               <strong className="text-slate-900">
                 {memberToRemove.display_name ?? memberToRemove.email}
               </strong>{" "}
               from this workspace? They will immediately lose access to all campaigns and data.
-            </p>
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setMemberToRemove(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={removeMemberMutation.isPending}
-                onClick={() =>
-                  removeMemberMutation.mutate(memberToRemove.membership_id)
-                }
-              >
-                {removeMemberMutation.isPending ? "Removing..." : "Remove"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </>
+          ) : null
+        }
+        confirmLabel="Remove"
+        tone="danger"
+        loading={removeMemberMutation.isPending}
+        onCancel={() => setMemberToRemove(null)}
+        onConfirm={() => {
+          if (memberToRemove) removeMemberMutation.mutate(memberToRemove.membership_id);
+        }}
+      />
     </main>
   );
 }

@@ -30,13 +30,13 @@ function getCategoryIcon(category: string) {
     case "compliance":
       return <ShieldAlert className="h-5 w-5 text-amber-500" />;
     case "campaign":
-      return <Mail className="h-5 w-5 text-teal-600" />;
+      return <Mail className="h-5 w-5 text-brand-600" />;
     case "team":
-      return <Users className="h-5 w-5 text-indigo-500" />;
+      return <Users className="h-5 w-5 text-brand-500" />;
     case "system":
       return <AlertCircle className="h-5 w-5 text-slate-600" />;
     default:
-      return <Info className="h-5 w-5 text-teal-600" />;
+      return <Info className="h-5 w-5 text-brand-600" />;
   }
 }
 
@@ -87,8 +87,8 @@ export default function NotificationsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-teal-700">Workspace Updates</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
+          <p className="text-sm font-medium text-brand-700">Workspace Updates</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-1">
             Notifications
           </h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -137,8 +137,8 @@ export default function NotificationsPage() {
             <span
               className={`rounded-full px-2 py-0.2 text-xs font-semibold ${
                 filterUnread
-                  ? "bg-teal-500 text-white"
-                  : "bg-teal-100 text-teal-800"
+                  ? "bg-brand-500 text-white"
+                  : "bg-brand-100 text-brand-800"
               }`}
             >
               {unreadCount}
@@ -151,7 +151,7 @@ export default function NotificationsPage() {
       <section className="space-y-3">
         {isLoading ? (
           <div className="flex items-center justify-center gap-2 p-12 text-sm text-slate-500 rounded-lg border border-slate-200 bg-white">
-            <Loader2 className="h-5 w-5 animate-spin text-teal-600" />
+            <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
             Loading notifications&hellip;
           </div>
         ) : isError ? (
@@ -159,7 +159,7 @@ export default function NotificationsPage() {
             Failed to load notifications. Please try again.
           </div>
         ) : !notifications || notifications.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 p-12 text-center text-sm text-slate-500 rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col items-center gap-2 p-12 text-center text-sm text-slate-500 rounded-xl border border-slate-200 bg-white shadow-card">
             <Bell className="h-8 w-8 text-slate-300" aria-hidden="true" />
             <p className="font-medium text-slate-700">No notifications</p>
             <p className="text-xs text-slate-500">
@@ -175,7 +175,7 @@ export default function NotificationsPage() {
               className={`flex items-start gap-4 rounded-lg border p-4 transition-all shadow-sm ${
                 item.is_read
                   ? "border-slate-200 bg-white"
-                  : "border-teal-200 bg-teal-50/30"
+                  : "border-brand-200 bg-brand-50/30"
               }`}
             >
               <div className="mt-0.5 flex-shrink-0">
@@ -189,7 +189,7 @@ export default function NotificationsPage() {
                       {item.title}
                     </h3>
                     {!item.is_read && (
-                      <span className="h-2 w-2 rounded-full bg-teal-600" />
+                      <span className="h-2 w-2 rounded-full bg-brand-600" />
                     )}
                   </div>
                   <span className="text-xs text-slate-400 whitespace-nowrap">
@@ -211,7 +211,7 @@ export default function NotificationsPage() {
                     {Boolean(item.data.action_url) && (
                       <a
                         href={String(item.data.action_url)}
-                        className="text-xs font-medium text-teal-700 hover:underline"
+                        className="text-xs font-medium text-brand-700 hover:underline"
                       >
                         View details &rarr;
                       </a>
@@ -226,7 +226,7 @@ export default function NotificationsPage() {
                   size="sm"
                   disabled={markReadMutation.isPending}
                   onClick={() => markReadMutation.mutate(item.id)}
-                  className="h-8 text-xs text-slate-500 hover:text-teal-700 gap-1"
+                  className="h-8 text-xs text-slate-500 hover:text-brand-700 gap-1"
                   title="Mark as read"
                 >
                   <Check className="h-3.5 w-3.5" />

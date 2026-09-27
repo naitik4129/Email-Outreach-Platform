@@ -44,7 +44,7 @@ export function UploadButtons({
   }
 
   const buttonClass =
-    "inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 disabled:pointer-events-none disabled:opacity-40";
+    "inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:pointer-events-none disabled:opacity-40";
 
   return (
     <>
@@ -126,7 +126,7 @@ export function AttachmentsBar({ attachments, readOnly, removingId, onRemove }: 
             )}
           >
             {attachment.disposition === "INLINE" ? (
-              <ImageIcon className="h-3.5 w-3.5 shrink-0 text-indigo-500" aria-hidden="true" />
+              <ImageIcon className="h-3.5 w-3.5 shrink-0 text-brand-500" aria-hidden="true" />
             ) : (
               <Paperclip className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
             )}
