@@ -4,25 +4,28 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, Copy, Pencil } from "lucide-react";
+import { Archive, ArrowRight, Copy, Eraser, Pencil, Trash2 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import { canArchiveCampaign } from "@/components/campaigns/campaign-card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import {
   archiveCampaign,
   duplicateCampaign,
   getCampaign,
   updateCampaign,
 } from "@/lib/campaigns-api";
+import { eraseCampaign, purgeCampaign } from "@/lib/erasure-api";
 import { errorMessage } from "@/lib/errors";
 import { formatDate, formatDateTime } from "@/lib/format";
-import { canDraftCampaign } from "@/lib/permissions";
+import { canDraftCampaign, canEraseData, canExecuteCampaign } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignStatus } from "@/types/domain";
 
@@ -42,10 +45,14 @@ export default function CampaignOverviewPage() {
   const { toast } = useToast();
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const mayDraft = canDraftCampaign(activeWorkspace?.role_code);
+  const mayExecute = canExecuteCampaign(activeWorkspace?.role_code);
+  const mayErase = canEraseData(activeWorkspace?.role_code);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [removalError, setRemovalError] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
 
@@ -103,6 +110,30 @@ export default function CampaignOverviewPage() {
     },
   });
 
+  const removalMutation = useMutation({
+    mutationFn: (phrase: string) => {
+      if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
+      return campaignQuery.data?.is_activated === false
+        ? purgeCampaign(activeWorkspaceId, campaignId, phrase)
+        : eraseCampaign(activeWorkspaceId, campaignId, phrase);
+    },
+    onSuccess: () => {
+      const deleted = campaignQuery.data?.is_activated === false;
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "campaigns"],
+      });
+      setConfirmRemoval(false);
+      if (deleted) {
+        toast("Campaign deleted.");
+        router.push("/app/campaigns");
+      } else {
+        invalidate();
+        toast("Recipient data erased.");
+      }
+    },
+    onError: (err) => setRemovalError(errorMessage(err)),
+  });
+
   const duplicateMutation = useMutation({
     mutationFn: () => {
       if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
@@ -130,6 +161,13 @@ export default function CampaignOverviewPage() {
   const campaign = campaignQuery.data;
   const isDraft = campaign.status === "DRAFT";
   const hint = STATUS_HINT[campaign.status];
+  const mayArchive = canArchiveCampaign(campaign.status, mayDraft, mayExecute);
+  const neverActivated = campaign.is_activated === false;
+  const canRemove =
+    mayErase &&
+    campaign.status === "ARCHIVED" &&
+    campaign.is_activated !== undefined &&
+    !campaign.erased_at;
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -227,7 +265,7 @@ export default function CampaignOverviewPage() {
         <Card>
           <CardHeader
             title="Lifecycle"
-            description="Duplicate this campaign to reuse its setup. Draft campaigns can also be archived."
+            description="Duplicate this campaign to reuse its setup. Archive it when it is finished; a running campaign has to be paused first."
           />
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
@@ -239,7 +277,7 @@ export default function CampaignOverviewPage() {
               <Copy className="h-3.5 w-3.5" aria-hidden="true" />
               Duplicate
             </Button>
-            {isDraft && (
+            {mayArchive && (
               <Button
                 variant="outline"
                 size="sm"
@@ -255,10 +293,68 @@ export default function CampaignOverviewPage() {
         </Card>
       )}
 
+      {canRemove && (
+        <Card className="border-red-200">
+          <CardHeader
+            title={neverActivated ? "Delete permanently" : "Erase personal data"}
+            description={
+              neverActivated
+                ? "This campaign never sent anything. Deleting it removes it and its steps, audience and settings for good."
+                : "Erase the recipients' names, addresses, email content and replies from this campaign. The campaign, its counts and the fact that emails were sent are kept."
+            }
+          />
+          <div className="mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+              onClick={() => {
+                setRemovalError(null);
+                setConfirmRemoval(true);
+              }}
+            >
+              {neverActivated ? (
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {neverActivated ? "Delete campaign…" : "Erase data…"}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {campaign.erased_at ? (
+        <Alert variant="info">
+          The recipients&apos; personal data in this campaign was erased on{" "}
+          {formatDate(campaign.erased_at)}.
+        </Alert>
+      ) : null}
+
+      <TypeToConfirmDialog
+        open={confirmRemoval}
+        title={neverActivated ? `Delete "${campaign.name}"?` : `Erase data in "${campaign.name}"?`}
+        description={
+          neverActivated
+            ? "This can't be undone. Your leads and mailboxes are not affected."
+            : "This can't be undone. Sent emails stay counted, but their content and recipients are no longer recoverable."
+        }
+        phrase={campaign.name}
+        confirmLabel={neverActivated ? "Delete permanently" : "Erase data"}
+        loading={removalMutation.isPending}
+        error={removalError}
+        onConfirm={() => removalMutation.mutate(campaign.name)}
+        onCancel={() => setConfirmRemoval(false)}
+      />
+
       <ConfirmDialog
         open={confirmArchive}
         title={`Archive "${campaign.name}"?`}
-        description="It will no longer be editable."
+        description={
+          isDraft
+            ? "It will no longer be editable."
+            : "It will stop for good and can't be resumed or edited. Its history and results are kept, and you can duplicate it to run it again."
+        }
         confirmLabel="Archive campaign"
         tone="danger"
         loading={archiveMutation.isPending}

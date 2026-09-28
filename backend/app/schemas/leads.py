@@ -91,6 +91,8 @@ class LeadOut(BaseModel):
     validated_at: datetime | None
     contact_revision: int
     archived_at: datetime | None
+    # Set once the person's data was erased (ADR-0015); the row stays as a shell.
+    erased_at: datetime | None = None
     version: int
     created_at: datetime
     updated_at: datetime

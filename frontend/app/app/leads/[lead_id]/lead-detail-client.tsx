@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Loader2, Pencil } from "lucide-react";
+import { Archive, Eraser, Loader2, Pencil, RotateCcw } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import {
   LeadProfileDetails,
   LeadProfileFields,
@@ -21,7 +22,9 @@ import {
   profileValuesFromLead,
   type LeadProfileFormValues,
 } from "@/lib/lead-fields";
-import { archiveLead, getLead, updateLead } from "@/lib/leads-api";
+import { eraseLead } from "@/lib/erasure-api";
+import { archiveLead, getLead, unarchiveLead, updateLead } from "@/lib/leads-api";
+import { canEraseData } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { LeadDetail } from "@/types/domain";
 
@@ -68,6 +71,9 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
   const [form, setForm] = useState<EditState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mayManage = canManageContacts(activeWorkspace?.role_code);
+  const mayErase = canEraseData(activeWorkspace?.role_code);
+  const [confirmErase, setConfirmErase] = useState(false);
+  const [eraseError, setEraseError] = useState<string | null>(null);
 
   const leadQuery = useQuery({
     queryKey: ["workspace", activeWorkspaceId, "lead", leadId],
@@ -141,6 +147,37 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
     onError: (err) => setError(errorMessage(err)),
   });
 
+  const restoreMutation = useMutation({
+    mutationFn: () => unarchiveLead(activeWorkspaceId!, leadId, leadQuery.data!.version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "lead", leadId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "leads"],
+      });
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+
+  const eraseMutation = useMutation({
+    mutationFn: (phrase: string) => eraseLead(activeWorkspaceId!, leadId, phrase),
+    onSuccess: () => {
+      setConfirmErase(false);
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "lead", leadId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "leads"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "lead-lists"],
+      });
+      router.push("/app/leads");
+    },
+    onError: (err) => setEraseError(errorMessage(err)),
+  });
+
   if (leadQuery.isLoading) {
     return (
       <main className="grid min-h-80 place-items-center">
@@ -192,9 +229,26 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             </Button>
           </div>
         ) : null}
+        {mayManage && lead.status === "ARCHIVED" && !lead.erased_at ? (
+          <Button
+            type="button"
+            variant="outline"
+            loading={restoreMutation.isPending}
+            onClick={() => restoreMutation.mutate()}
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            Restore
+          </Button>
+        ) : null}
       </div>
 
       {error ? <Alert>{error}</Alert> : null}
+      {lead.erased_at ? (
+        <Alert variant="info">
+          This person&apos;s data was erased. Only an empty record remains, so that their
+          past emails still count in campaign results.
+        </Alert>
+      ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
         <h2 className="text-lg font-semibold tracking-normal text-slate-900">
@@ -343,6 +397,44 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           </div>
         )}
       </section>
+
+      {mayErase && !lead.erased_at ? (
+        <section className="rounded-xl border border-red-200 bg-white p-5 shadow-card">
+          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
+            Erase personal data
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            Permanently erases this person&apos;s name, contact details, email content and
+            replies everywhere in the workspace, and stops any emails still planned for them.
+            If they unsubscribed or bounced, their address stays on the suppression list so
+            they are never emailed again. Counts in campaign results are kept.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4 border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+            onClick={() => {
+              setEraseError(null);
+              setConfirmErase(true);
+            }}
+          >
+            <Eraser className="h-4 w-4" aria-hidden="true" />
+            Erase data…
+          </Button>
+        </section>
+      ) : null}
+
+      <TypeToConfirmDialog
+        open={confirmErase}
+        title={`Erase ${lead.email}?`}
+        description="This can't be undone. Everything personal about this person is erased in every campaign, list and conversation."
+        phrase={lead.email}
+        confirmLabel="Erase data"
+        loading={eraseMutation.isPending}
+        error={eraseError}
+        onConfirm={() => eraseMutation.mutate(lead.email)}
+        onCancel={() => setConfirmErase(false)}
+      />
 
       {activeWorkspaceId ? (
         <LeadActivityTimeline workspaceId={activeWorkspaceId} leadId={lead.id} />

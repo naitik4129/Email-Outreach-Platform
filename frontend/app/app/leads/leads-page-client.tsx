@@ -4,13 +4,16 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Search, Users } from "lucide-react";
+import { Archive, Loader2, Plus, RotateCcw, Search, Users } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { SelectionBar } from "@/components/ui/selection-bar";
+import { useToast } from "@/components/ui/toast";
 import { LeadProfileFields } from "@/components/leads/lead-profile-fields";
 import { ApiError } from "@/lib/api-client";
 import {
@@ -19,7 +22,15 @@ import {
   profilePayload,
   type LeadProfileFormValues,
 } from "@/lib/lead-fields";
-import { createLead, listLeadLists, listLeads } from "@/lib/leads-api";
+import { summarizeBulk } from "@/lib/bulk-summary";
+import {
+  bulkArchiveLeads,
+  bulkUnarchiveLeads,
+  createLead,
+  listLeadLists,
+  listLeads,
+} from "@/lib/leads-api";
+import { useSelection } from "@/lib/use-selection";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 25;
@@ -88,6 +99,9 @@ export function LeadsPageClient() {
   const status = (params.get("status") as "ACTIVE" | "ARCHIVED" | "ALL" | null) ?? "ACTIVE";
   const listId = params.get("list_id");
   const mayManage = canManageContacts(activeWorkspace?.role_code);
+  const { toast } = useToast();
+  const selection = useSelection();
+  const [confirmBulkArchive, setConfirmBulkArchive] = useState(false);
 
   useEffect(() => {
     const next = new URLSearchParams(params.toString());
@@ -148,6 +162,50 @@ export function LeadsPageClient() {
       });
     },
     onError: (error) => setFormError(errorMessage(error)),
+  });
+
+  const leads = leadsQuery.data?.items ?? [];
+  const activeSelected = leads.filter(
+    (lead) => selection.selected.has(lead.id) && !lead.archived_at,
+  );
+  const archivedSelected = leads.filter(
+    (lead) => selection.selected.has(lead.id) && lead.archived_at,
+  );
+
+  // A different list (filter, search, page) must never leave hidden rows selected.
+  const paramsKey = params.toString();
+  const { clear: clearSelection } = selection;
+  useEffect(() => {
+    clearSelection();
+  }, [status, cursor, listId, paramsKey, clearSelection]);
+
+  const bulkMutation = useMutation({
+    mutationFn: ({ restore }: { restore: boolean }) => {
+      const source = restore ? archivedSelected : activeSelected;
+      const items = source.map((lead) => ({
+        id: lead.id,
+        expected_version: lead.version,
+      }));
+      return restore
+        ? bulkUnarchiveLeads(activeWorkspaceId!, items)
+        : bulkArchiveLeads(activeWorkspaceId!, items);
+    },
+    onSuccess: (result, { restore }) => {
+      queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "leads"] });
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "lead-lists"],
+      });
+      toast(
+        summarizeBulk(result, restore ? "Restored" : "Archived"),
+        result.failed > 0 ? "error" : undefined,
+      );
+      selection.clear();
+      setConfirmBulkArchive(false);
+    },
+    onError: (error) => {
+      setConfirmBulkArchive(false);
+      toast(errorMessage(error), "error");
+    },
   });
 
   function updateParam(key: string, value: string) {
@@ -339,6 +397,34 @@ export function LeadsPageClient() {
         </div>
       </section>
 
+      {mayManage ? (
+        <SelectionBar count={selection.count} onClear={selection.clear}>
+          {activeSelected.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmBulkArchive(true)}
+            >
+              <Archive className="h-4 w-4" aria-hidden="true" />
+              Archive selected
+            </Button>
+          ) : null}
+          {archivedSelected.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              loading={bulkMutation.isPending}
+              onClick={() => bulkMutation.mutate({ restore: true })}
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              Restore selected
+            </Button>
+          ) : null}
+        </SelectionBar>
+      ) : null}
+
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {leadsQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
@@ -374,6 +460,21 @@ export function LeadsPageClient() {
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   <tr>
+                    {mayManage ? (
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all leads on this page"
+                          checked={leads.length > 0 && selection.count === leads.length}
+                          onChange={(event) =>
+                            event.target.checked
+                              ? selection.setAll(leads.map((lead) => lead.id))
+                              : selection.clear()
+                          }
+                          className="h-4 w-4 rounded border-slate-300 text-brand-600"
+                        />
+                      </th>
+                    ) : null}
                     <th className="px-4 py-3">Lead</th>
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Company</th>
@@ -386,10 +487,28 @@ export function LeadsPageClient() {
                 <tbody className="divide-y divide-slate-100">
                   {leadsQuery.data?.items.map((lead) => (
                     <tr key={lead.id} className="hover:bg-slate-50">
+                      {mayManage ? (
+                        <td className="w-10 px-4 py-3">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${lead.email}`}
+                            checked={selection.selected.has(lead.id)}
+                            onChange={() => selection.toggle(lead.id)}
+                            className="h-4 w-4 rounded border-slate-300 text-brand-600"
+                          />
+                        </td>
+                      ) : null}
                       <td className="px-4 py-3 font-medium text-slate-900">
                         <Link href={`/app/leads/${lead.id}`}>
-                          {fullName(lead.first_name, lead.last_name)}
+                          {lead.erased_at
+                            ? "Erased lead"
+                            : fullName(lead.first_name, lead.last_name)}
                         </Link>
+                        {lead.archived_at ? (
+                          <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600">
+                            {lead.erased_at ? "Erased" : "Archived"}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 text-slate-700">{lead.email}</td>
                       <td className="px-4 py-3 text-slate-700">
@@ -429,6 +548,16 @@ export function LeadsPageClient() {
           </>
         )}
       </section>
+      <ConfirmDialog
+        open={confirmBulkArchive}
+        title={`Archive ${activeSelected.length} lead${activeSelected.length === 1 ? "" : "s"}?`}
+        description="Archived leads are left out of new campaigns and lists. You can restore them later. Their history is kept."
+        confirmLabel="Archive"
+        tone="danger"
+        loading={bulkMutation.isPending}
+        onCancel={() => setConfirmBulkArchive(false)}
+        onConfirm={() => bulkMutation.mutate({ restore: false })}
+      />
     </main>
   );
 }

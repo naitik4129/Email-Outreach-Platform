@@ -43,8 +43,8 @@ def _iso_or_none(value: datetime | None) -> str | None:
 class CampaignActivationService:
     """Owns every transition that moves a campaign off DRAFT: activate,
     pause, resume. No other service is permitted to write campaigns.status
-    outside DRAFT<->DRAFT/ARCHIVED (see CampaignService.archive_campaign,
-    which only ever touches DRAFT campaigns)."""
+    except archiving (CampaignService.archive_campaign), which the database
+    guard and the repository both refuse for RUNNING campaigns."""
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -429,6 +429,8 @@ class CampaignActivationService:
             planning_status=row["planning_status"],
             archived_at=row["archived_at"],
             error_reason=row["error_reason"],
+            is_activated=row.get("activation_id") is not None,
+            erased_at=row.get("erased_at"),
             version=row["version"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],

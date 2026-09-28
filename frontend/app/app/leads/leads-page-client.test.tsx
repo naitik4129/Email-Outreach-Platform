@@ -11,16 +11,21 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const { createLead, listLeadLists, listLeads } = vi.hoisted(() => ({
-  createLead: vi.fn(),
-  listLeadLists: vi.fn(),
-  listLeads: vi.fn(),
-}));
+const { createLead, listLeadLists, listLeads, bulkArchiveLeads, bulkUnarchiveLeads } =
+  vi.hoisted(() => ({
+    createLead: vi.fn(),
+    listLeadLists: vi.fn(),
+    listLeads: vi.fn(),
+    bulkArchiveLeads: vi.fn(),
+    bulkUnarchiveLeads: vi.fn(),
+  }));
 
 vi.mock("@/lib/leads-api", () => ({
   createLead,
   listLeadLists,
   listLeads,
+  bulkArchiveLeads,
+  bulkUnarchiveLeads,
 }));
 
 const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
@@ -220,5 +225,86 @@ describe("LeadsPageClient", () => {
     expect(screen.getByText("Founder")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Job title" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Location" })).toBeInTheDocument();
+  });
+
+  describe("bulk actions", () => {
+    function lead(id: string, email: string, archived = false, erased = false) {
+      return {
+        id,
+        workspace_id: "ws-1",
+        email,
+        canonical_address: email,
+        normalization_version: 1,
+        first_name: erased ? null : "Ada",
+        last_name: null,
+        company: null,
+        title: null,
+        ...emptyProfile,
+        custom_fields: {},
+        status: archived ? "ARCHIVED" : "ACTIVE",
+        validation_status: "UNKNOWN",
+        validated_at: null,
+        contact_revision: 1,
+        archived_at: archived ? "2026-02-01T00:00:00Z" : null,
+        erased_at: erased ? "2026-02-01T00:00:00Z" : null,
+        version: 5,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        list_count: 0,
+      };
+    }
+
+    it("archives the selected leads after confirmation", async () => {
+      mockWorkspace("MEMBER");
+      listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+      listLeads.mockResolvedValue({
+        items: [lead("l1", "a@x.test"), lead("l2", "b@x.test")],
+        next_cursor: null,
+      });
+      bulkArchiveLeads.mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const user = userEvent.setup();
+      renderWithClient(<LeadsPageClient />);
+
+      await user.click(await screen.findByRole("checkbox", { name: "Select b@x.test" }));
+      await user.click(screen.getByRole("button", { name: "Archive selected" }));
+      expect(bulkArchiveLeads).not.toHaveBeenCalled();
+      await user.click(await screen.findByRole("button", { name: "Archive" }));
+
+      await waitFor(() =>
+        expect(bulkArchiveLeads).toHaveBeenCalledWith("ws-1", [
+          { id: "l2", expected_version: 5 },
+        ]),
+      );
+    });
+
+    it("restores selected archived leads and labels erased ones", async () => {
+      mockWorkspace("MANAGER");
+      listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+      listLeads.mockResolvedValue({
+        items: [lead("l1", "a@x.test", true), lead("l2", "erased-1@erased.invalid", true, true)],
+        next_cursor: null,
+      });
+      bulkUnarchiveLeads.mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const user = userEvent.setup();
+      renderWithClient(<LeadsPageClient />);
+
+      expect(await screen.findByText("Erased lead")).toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: "Select a@x.test" }));
+      await user.click(screen.getByRole("button", { name: "Restore selected" }));
+      await waitFor(() =>
+        expect(bulkUnarchiveLeads).toHaveBeenCalledWith("ws-1", [
+          { id: "l1", expected_version: 5 },
+        ]),
+      );
+    });
+
+    it("shows no selection controls to a read-only role", async () => {
+      mockWorkspace("VIEWER");
+      listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+      listLeads.mockResolvedValue({ items: [lead("l1", "a@x.test")], next_cursor: null });
+      renderWithClient(<LeadsPageClient />);
+      await screen.findByText("a@x.test");
+      expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    });
   });
 });

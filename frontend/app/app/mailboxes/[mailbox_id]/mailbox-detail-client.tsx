@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import {
   IMAP_DEFAULTS,
   ImapSettingsFields,
@@ -37,6 +38,8 @@ import {
   updateMailbox,
   updateSmtpMailbox,
 } from "@/lib/mailboxes-api";
+import { purgeMailbox } from "@/lib/erasure-api";
+import { canEraseData } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { MailboxTestSendResult, SmtpSecurityMode } from "@/types/domain";
 import { LoadingBlock } from "@/components/ui/skeleton";
@@ -59,6 +62,10 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
   const queryClient = useQueryClient();
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const mayManage = canManageMailboxes(activeWorkspace?.role_code);
+  const mayErase = canEraseData(activeWorkspace?.role_code);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removed, setRemoved] = useState(false);
 
   const isNewlyConnected = searchParams.get("connected") === "true";
 
@@ -244,6 +251,36 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
     },
   });
 
+  const removeMutation = useMutation({
+    mutationFn: (phrase: string) => {
+      if (!activeWorkspaceId) throw new Error("No active workspace");
+      return purgeMailbox(activeWorkspaceId, mailboxId, phrase);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "mailboxes"],
+      });
+      setConfirmRemove(false);
+      setRemoved(true);
+    },
+    onError: (err) =>
+      setRemoveError(err instanceof ApiError ? err.message : "Failed to remove mailbox."),
+  });
+
+  if (removed) {
+    return (
+      <div className="mx-auto max-w-xl space-y-4 py-8 text-center">
+        <Alert variant="success">The mailbox was removed.</Alert>
+        <Button variant="outline" asChild>
+          <Link href="/app/mailboxes">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Return to Mailboxes
+          </Link>
+        </Button>
+      </div>
+    );
+  }
+
   if (mailboxQuery.isLoading) {
     return (
       <LoadingBlock size="lg" />
@@ -377,6 +414,40 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
           </div>
         </div>
       ) : null}
+
+      {mailbox.connection_state === "DISCONNECTED" && mayErase ? (
+        <div className="rounded-xl border border-red-200 bg-white p-6">
+          <h3 className="text-base font-semibold text-slate-900">Remove this mailbox</h3>
+          <p className="mt-1 text-sm text-slate-600">
+            Removes the mailbox from your workspace. Its credentials are already destroyed.
+            A mailbox that has sent email or is assigned to a campaign keeps its history and
+            cannot be removed; it stays disconnected.
+          </p>
+          <Button
+            className="mt-4 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+            variant="outline"
+            onClick={() => {
+              setRemoveError(null);
+              setConfirmRemove(true);
+            }}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Remove mailbox…
+          </Button>
+        </div>
+      ) : null}
+
+      <TypeToConfirmDialog
+        open={confirmRemove}
+        title={`Remove ${mailbox.email_address}?`}
+        description="This can't be undone. You can connect the same address again later."
+        phrase={mailbox.email_address}
+        confirmLabel="Remove mailbox"
+        loading={removeMutation.isPending}
+        error={removeError}
+        onConfirm={() => removeMutation.mutate(mailbox.email_address)}
+        onCancel={() => setConfirmRemove(false)}
+      />
 
       {/* SMTP configuration update form */}
       {showSmtpEditForm && mailbox.provider === "SMTP" ? (

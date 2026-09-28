@@ -17,13 +17,13 @@ This documentation phase specifies technical transitions; product choices flagge
 
 | State | Meaning and entry requirement | Allowed operations | Prohibited operations / exit behavior |
 |---|---|---|---|
-| DRAFT | Not activated; incomplete configuration is valid. | Read, edit, select/materialize audience, review, duplicate, activate, archive. | No send. Activation validates complete current revision. Hard delete is not enabled until deletion policy approved. |
+| DRAFT | Not activated; incomplete configuration is valid. | Read, edit, select/materialize audience, review, duplicate, activate, archive. | No send. Activation validates complete current revision. A never-activated campaign may be permanently deleted after archiving or while DRAFT ([ADR-0015](../adr/0015-archive-purge-and-erasure.md)). |
 | SCHEDULED | Activation committed with a future start; immutable activation exists. Planning may be pending. | Read, duplicate, pause, archive; system start at/after start time. | No send before RUNNING. No content/audience edits. No second activation. |
 | RUNNING | Execution permitted subject to all per-message gates and planning READY. | Read, metadata edit, pause, duplicate; system completion/failure. | No direct content/audience edit, direct archive, arbitrary status update, or bypass of holds. |
 | PAUSED | Explicit suspension preserving progress and original start lower bound. | Read, permitted settings edits, resume after revalidation, archive, duplicate. | No new send authorization. Existing attempts finish/reconcile. |
 | ERROR | Campaign-level invariant/planning failure requiring correction; failure reason and prior state retained. | Read, diagnose, authorized repair of allowed configuration, pause, recover, archive, duplicate. | No automatic blind restart. Transient mailbox/Redis outages alone do not imply ERROR. |
 | COMPLETED | Planning READY; all enrollments terminal and no in-flight/unknown work remains. | Read, duplicate, archive; receive late outcome events. | No resume, new recipients, content edit or new sends. Terminal for execution. |
-| ARCHIVED | Removed from ordinary active views; previous state/history retained. | Historical reads, duplicate, late event processing. | No restore-to-active or new sends. Terminal; not synonymous with hard deletion. |
+| ARCHIVED | Removed from ordinary active views; previous state/history retained. | Historical reads, duplicate, late event processing. | No restore-to-active or new sends. Terminal; not synonymous with deletion. An ARCHIVED campaign that was activated keeps its rows and counts and may have its recipients' personal data erased; one that never activated may be purged ([ADR-0015](../adr/0015-archive-purge-and-erasure.md)). Neither is a lifecycle transition. |
 
 ## Complete transition matrix
 
@@ -69,7 +69,7 @@ Record from/to state, version, actor kind/ID, command ID, campaign/workspace ID,
 
 ## Open Decisions
 
-Recommended product policy is: no reopening COMPLETED/ARCHIVED, no activated audience/content mutation, and pause-before-archive for RUNNING. The source flows explicitly leave these choices unresolved; owner approval is required before implementing those commands. Missing RBAC matrix must be restored before granting any U action. Hard delete and exact retention remain unapproved and are not represented as lifecycle transitions.
+Recommended product policy is: no reopening COMPLETED/ARCHIVED, no activated audience/content mutation, and pause-before-archive for RUNNING. The source flows explicitly leave these choices unresolved; owner approval is required before implementing those commands. Missing RBAC matrix must be restored before granting any U action. Permanent deletion and erasure are decided in [ADR-0015](../adr/0015-archive-purge-and-erasure.md): purge for never-activated campaigns, in-place redaction for activated ones, neither represented as a lifecycle transition. No automatic retention expiry is approved.
 
 ## Testing requirements and definition of done
 

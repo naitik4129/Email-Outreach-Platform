@@ -109,6 +109,7 @@ class CampaignRepository:
         after_id: UUID | None,
         status: str | None,
         query: str | None,
+        include_archived: bool = False,
     ) -> Sequence[RowMapping]:
         clauses = ["workspace_id = :workspace_id"]
         params: dict[str, Any] = {"workspace_id": str(workspace_id), "limit": limit}
@@ -118,6 +119,8 @@ class CampaignRepository:
         if status:
             clauses.append("status = :status")
             params["status"] = status
+        elif not include_archived:
+            clauses.append("status <> 'ARCHIVED'")
         if query:
             clauses.append("name ILIKE :query_pattern")
             params["query_pattern"] = f"%{query}%"
@@ -219,7 +222,21 @@ class CampaignRepository:
         campaign_id: UUID,
         expected_version: int,
         actor_id: UUID,
+        may_archive_activated: bool = False,
     ) -> RowMapping | None:
+        if not may_archive_activated:
+            # Row-level security hides non-DRAFT campaigns from FOR UPDATE for a
+            # role without campaigns.execute, which would surface as a 404.
+            # A plain read is allowed, so answer with the real reason instead.
+            peek = self.get_campaign(
+                workspace_id=workspace_id, campaign_id=campaign_id
+            )
+            if peek is not None and peek["status"] not in ("DRAFT", "ARCHIVED"):
+                raise AppError(
+                    "forbidden",
+                    "You do not have permission to archive an activated campaign",
+                    status_code=403,
+                )
         existing = self.get_campaign(
             workspace_id=workspace_id, campaign_id=campaign_id, for_update=True
         )
@@ -227,10 +244,12 @@ class CampaignRepository:
             return None
         if existing["status"] == "ARCHIVED":
             return existing
-        if existing["status"] != "DRAFT":
+        if existing["status"] == "RUNNING":
+            # The database guard forbids RUNNING -> ARCHIVED too; this is the
+            # readable version of the same rule (CAMPAIGN_STATE_MACHINE.md).
             raise AppError(
                 "state_conflict",
-                "Only DRAFT campaigns can be archived in this phase",
+                "Pause the campaign before archiving it",
                 status_code=409,
             )
         if existing["version"] != expected_version:
@@ -271,6 +290,7 @@ class CampaignRepository:
             actor_id=actor_id,
             action="campaign.archive",
             target_id=campaign_id,
+            before_state={"status": existing["status"]},
             after_state={"status": "ARCHIVED"},
         )
         return row

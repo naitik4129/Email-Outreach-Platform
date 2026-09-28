@@ -55,6 +55,10 @@ class CampaignListItem(BaseModel):
     draft_sequence_id: UUID | None = None
     draft_audience_id: UUID | None = None
     current_settings_id: UUID | None = None
+    # True once the campaign was activated (it then has send history and can only
+    # be erased, never purged); erased_at is set once its personal data was erased.
+    is_activated: bool = False
+    erased_at: datetime | None = None
     version: int
     created_at: datetime
     updated_at: datetime
@@ -80,6 +84,8 @@ class CampaignDetailOut(BaseModel):
     planning_status: str
     archived_at: datetime | None = None
     error_reason: str | None = None
+    is_activated: bool = False
+    erased_at: datetime | None = None
     version: int
     created_at: datetime
     updated_at: datetime

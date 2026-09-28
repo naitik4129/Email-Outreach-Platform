@@ -1,5 +1,7 @@
 import { apiRequest } from "@/lib/api-client";
 import type {
+  BulkActionResult,
+  BulkItem,
   TemplateDetail,
   TemplatePage,
   TemplatePreviewResult,
@@ -104,6 +106,40 @@ export async function archiveTemplate(
     await apiRequest<TemplateDetail>(path, {
       method: "POST",
       body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function unarchiveTemplate(
+  workspaceId: string,
+  templateId: string,
+  payload: { expected_version: number },
+) {
+  const path = workspacePath(workspaceId, `/templates/${templateId}/unarchive`);
+  return (
+    await apiRequest<TemplateDetail>(path, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function bulkArchiveTemplates(workspaceId: string, items: BulkItem[]) {
+  const path = workspacePath(workspaceId, "/templates/bulk-archive");
+  return (
+    await apiRequest<BulkActionResult>(path, {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    })
+  ).data;
+}
+
+export async function bulkUnarchiveTemplates(workspaceId: string, items: BulkItem[]) {
+  const path = workspacePath(workspaceId, "/templates/bulk-unarchive");
+  return (
+    await apiRequest<BulkActionResult>(path, {
+      method: "POST",
+      body: JSON.stringify({ items }),
     })
   ).data;
 }

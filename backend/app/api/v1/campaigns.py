@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext, get_db, get_workspace_context
 from app.core.permissions import require_permission
+from app.modules.bulk.runner import run_bulk
 from app.modules.campaigns.activation_service import CampaignActivationService
 from app.modules.campaigns.attachment_service import StepAttachmentService
 from app.modules.campaigns.attachments import MAX_FILE_BYTES
@@ -60,6 +61,7 @@ from app.modules.campaigns.settings_service import CampaignSettingsService
 from app.modules.campaigns.step_test_send_service import StepTestSendService
 from app.modules.leads.pagination import DEFAULT_LIMIT
 from app.modules.mailboxes.schemas import MailboxTestSendResult
+from app.schemas.bulk import BulkActionIn, BulkActionOut
 
 router = APIRouter()
 
@@ -125,6 +127,20 @@ def archive_campaign(
 ) -> CampaignDetailOut:
     return CampaignService(db).archive_campaign(
         context, campaign_id, payload.expected_version
+    )
+
+
+@router.post("/campaigns/bulk-archive", response_model=BulkActionOut)
+def bulk_archive_campaigns(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = CampaignService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.archive_campaign(context, item.id, item.expected_version),
     )
 
 

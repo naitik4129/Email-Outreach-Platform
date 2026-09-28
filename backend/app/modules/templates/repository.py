@@ -485,6 +485,80 @@ class TemplateRepository:
 
         return self.get_template(workspace_id=workspace_id, template_id=template_id)
 
+    def unarchive_template(
+        self,
+        *,
+        workspace_id: UUID,
+        template_id: UUID,
+        expected_version: int,
+        actor_id: UUID,
+    ) -> Mapping[str, Any] | None:
+        existing = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT id, version, archived_at
+                    FROM templates
+                    WHERE id = :template_id AND workspace_id = :workspace_id
+                    FOR UPDATE
+                    """
+                ),
+                {
+                    "template_id": str(template_id),
+                    "workspace_id": str(workspace_id),
+                },
+            )
+            .mappings()
+            .first()
+        )
+        if existing is None:
+            return None
+        if existing["archived_at"] is None:
+            # Already active: idempotent, like archiving an archived template.
+            return self.get_template(workspace_id=workspace_id, template_id=template_id)
+        if existing["version"] != expected_version:
+            raise AppError(
+                "conflict",
+                "Template has been modified by another user. "
+                "Please refresh and try again.",
+                status_code=409,
+            )
+        updated = (
+            self.session.execute(
+                text(
+                    """
+                    UPDATE templates
+                    SET archived_at = NULL
+                    WHERE id = :template_id AND workspace_id = :workspace_id
+                      AND version = :expected_version
+                    RETURNING *
+                    """
+                ),
+                {
+                    "template_id": str(template_id),
+                    "workspace_id": str(workspace_id),
+                    "expected_version": expected_version,
+                },
+            )
+            .mappings()
+            .first()
+        )
+        if updated is None:
+            raise AppError(
+                "conflict",
+                "Template was concurrently modified. Please refresh and try again.",
+                status_code=409,
+            )
+        self._record_audit_event(
+            workspace_id=workspace_id,
+            actor_id=actor_id,
+            action="template.unarchive",
+            target_id=template_id,
+            before_state={"archived": True, "version": existing["version"]},
+            after_state={"archived": False, "version": updated["version"]},
+        )
+        return self.get_template(workspace_id=workspace_id, template_id=template_id)
+
     def get_template_versions(
         self, *, workspace_id: UUID, template_id: UUID
     ) -> Sequence[Mapping[str, Any]]:

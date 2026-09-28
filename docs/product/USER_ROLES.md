@@ -19,6 +19,7 @@ JWT role claims, resource IDs and frontend visibility are not authorization.
 | Read safe workspace audit and invitation status | No | No | No | Yes | Yes |
 | Invite/revoke/change other memberships | No | No | No | No | Yes |
 | Transfer ownership / request workspace deletion | No | No | No | No | Yes |
+| Permanently delete or erase data (campaign, lead, template, list, import, mailbox) | No | No | No | Yes | Yes |
 
 All roles may edit their own profile preferences and mark their own notifications
 read. Notification access additionally requires current workspace membership.
@@ -38,8 +39,11 @@ Campaign execution still requires the campaign state machine. Members can edit
 only DRAFT campaigns. After activation audience/content are immutable, schedule
 and limit changes require PAUSED, and RUNNING must pause before archive.
 Completed/archived outreach is duplicated into a new draft, never reopened.
-Published content and sending history are retained. Hard deletion and retention
-jobs remain disabled until their workflows are approved and implemented.
+Published content and sending history are retained by archiving. Permanent
+deletion and privacy erasure follow [ADR-0015](../adr/0015-archive-purge-and-erasure.md):
+they require `workspace.manage` (ADMIN/OWNER), reuse that existing capability
+(no new database capability), never delete suppressions, and redact rather than
+remove sent history. Automatic retention jobs remain disabled.
 
 Hyper-personalized campaigns ([ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)) add no capability: editing the objective and generating sample previews use campaigns.draft, approving the previews that unlock activation uses campaigns.execute, and reading generation progress uses product.read.
 

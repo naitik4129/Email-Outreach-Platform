@@ -1,5 +1,7 @@
 import { apiRequest } from "@/lib/api-client";
 import type {
+  BulkActionResult,
+  BulkItem,
   Lead,
   LeadDetail,
   LeadList,
@@ -100,13 +102,63 @@ export async function archiveLead(
   ).data;
 }
 
+export async function unarchiveLead(
+  workspaceId: string,
+  leadId: string,
+  expectedVersion: number,
+) {
+  return (
+    await apiRequest<Lead>(workspacePath(workspaceId, `/leads/${leadId}/unarchive`), {
+      method: "POST",
+      body: JSON.stringify({ expected_version: expectedVersion }),
+    })
+  ).data;
+}
+
+function bulkPost(workspaceId: string, path: string, items: BulkItem[]) {
+  return apiRequest<BulkActionResult>(workspacePath(workspaceId, path), {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  }).then((res) => res.data);
+}
+
+export const bulkArchiveLeads = (workspaceId: string, items: BulkItem[]) =>
+  bulkPost(workspaceId, "/leads/bulk-archive", items);
+export const bulkUnarchiveLeads = (workspaceId: string, items: BulkItem[]) =>
+  bulkPost(workspaceId, "/leads/bulk-unarchive", items);
+export const bulkArchiveLeadLists = (workspaceId: string, items: BulkItem[]) =>
+  bulkPost(workspaceId, "/lead-lists/bulk-archive", items);
+export const bulkUnarchiveLeadLists = (workspaceId: string, items: BulkItem[]) =>
+  bulkPost(workspaceId, "/lead-lists/bulk-unarchive", items);
+
+export async function unarchiveLeadList(
+  workspaceId: string,
+  listId: string,
+  expectedVersion: number,
+) {
+  return (
+    await apiRequest<LeadList>(
+      workspacePath(workspaceId, `/lead-lists/${listId}/unarchive`),
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_version: expectedVersion }),
+      },
+    )
+  ).data;
+}
+
 export async function listLeadLists(
   workspaceId: string,
-  params: { limit?: number; cursor?: string | null } = {},
+  params: {
+    limit?: number;
+    cursor?: string | null;
+    status?: "ACTIVE" | "ARCHIVED" | "ALL";
+  } = {},
 ) {
   const path = appendSearch(workspacePath(workspaceId, "/lead-lists"), {
     limit: params.limit?.toString(),
     cursor: params.cursor ?? undefined,
+    status: params.status,
   });
   return (await apiRequest<LeadListPage>(path)).data;
 }

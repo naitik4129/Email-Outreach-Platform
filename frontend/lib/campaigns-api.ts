@@ -1,5 +1,7 @@
 import { apiRequest } from "@/lib/api-client";
 import type {
+  BulkActionResult,
+  BulkItem,
   CampaignAudience,
   CampaignDetail,
   CampaignType,
@@ -104,6 +106,16 @@ export async function archiveCampaign(
     await apiRequest<CampaignDetail>(path, {
       method: "POST",
       body: JSON.stringify(payload),
+    })
+  ).data;
+}
+
+export async function bulkArchiveCampaigns(workspaceId: string, items: BulkItem[]) {
+  const path = workspacePath(workspaceId, "/campaigns/bulk-archive");
+  return (
+    await apiRequest<BulkActionResult>(path, {
+      method: "POST",
+      body: JSON.stringify({ items }),
     })
   ).data;
 }

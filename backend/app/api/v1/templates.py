@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext, get_db, get_workspace_context
 from app.core.permissions import require_permission
+from app.modules.bulk.runner import run_bulk
 from app.modules.leads.pagination import DEFAULT_LIMIT
 from app.modules.templates.service import TemplateService
+from app.schemas.bulk import BulkActionIn, BulkActionOut
 from app.schemas.templates import (
     TemplateArchiveIn,
     TemplateCreateIn,
@@ -105,6 +107,48 @@ def archive_template(
     db: Session = Depends(get_db),
 ) -> TemplateDetailOut:
     return TemplateService(db).archive_template(context, template_id, payload)
+
+
+@router.post("/templates/bulk-archive", response_model=BulkActionOut)
+def bulk_archive_templates(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("templates.manage")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = TemplateService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.archive_template(
+            context, item.id, TemplateArchiveIn(expected_version=item.expected_version)
+        ),
+    )
+
+
+@router.post("/templates/bulk-unarchive", response_model=BulkActionOut)
+def bulk_unarchive_templates(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("templates.manage")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = TemplateService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.unarchive_template(
+            context, item.id, TemplateArchiveIn(expected_version=item.expected_version)
+        ),
+    )
+
+
+@router.post("/templates/{template_id}/unarchive", response_model=TemplateDetailOut)
+def unarchive_template(
+    template_id: UUID,
+    payload: TemplateArchiveIn,
+    context: WorkspaceContext = Depends(require_permission("templates.manage")),
+    db: Session = Depends(get_db),
+) -> TemplateDetailOut:
+    return TemplateService(db).unarchive_template(context, template_id, payload)
 
 
 @router.get(

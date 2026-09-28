@@ -7,9 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import WorkspaceContext, get_db, get_workspace_context
 from app.core.permissions import require_permission
+from app.modules.bulk.runner import run_bulk
 from app.modules.leads.activity import LeadActivityService
 from app.modules.leads.pagination import DEFAULT_LIMIT
 from app.modules.leads.service import LeadService
+from app.schemas.bulk import BulkActionIn, BulkActionOut
 from app.schemas.leads import (
     ExpectedVersionIn,
     LeadActivityOut,
@@ -98,14 +100,59 @@ def archive_lead(
     return LeadService(db).archive_lead(context, lead_id, payload)
 
 
+@router.post("/leads/bulk-archive", response_model=BulkActionOut)
+def bulk_archive_leads(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("contacts.manage")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = LeadService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.archive_lead(
+            context, item.id, ExpectedVersionIn(expected_version=item.expected_version)
+        ),
+    )
+
+
+@router.post("/leads/bulk-unarchive", response_model=BulkActionOut)
+def bulk_unarchive_leads(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("contacts.manage")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = LeadService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.unarchive_lead(
+            context, item.id, ExpectedVersionIn(expected_version=item.expected_version)
+        ),
+    )
+
+
+@router.post("/leads/{lead_id}/unarchive", response_model=LeadOut)
+def unarchive_lead(
+    lead_id: UUID,
+    payload: ExpectedVersionIn,
+    context: WorkspaceContext = Depends(require_permission("contacts.manage")),
+    db: Session = Depends(get_db),
+) -> LeadOut:
+    return LeadService(db).unarchive_lead(context, lead_id, payload)
+
+
 @router.get("/lead-lists", response_model=LeadListPage)
 def list_lead_lists(
     limit: int = Query(DEFAULT_LIMIT, ge=1),
     cursor: str | None = Query(default=None, max_length=512),
+    status_filter: str = Query("ACTIVE", alias="status"),
     context: WorkspaceContext = Depends(get_workspace_context),
     db: Session = Depends(get_db),
 ) -> LeadListPage:
-    return LeadService(db).list_lists(context, limit=limit, cursor=cursor)
+    return LeadService(db).list_lists(
+        context, limit=limit, cursor=cursor, status=status_filter
+    )
 
 
 @router.post(
@@ -148,6 +195,48 @@ def archive_lead_list(
     db: Session = Depends(get_db),
 ) -> LeadListOut:
     return LeadService(db).archive_list(context, list_id, payload)
+
+
+@router.post("/lead-lists/bulk-archive", response_model=BulkActionOut)
+def bulk_archive_lead_lists(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("contacts.manage")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = LeadService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.archive_list(
+            context, item.id, ExpectedVersionIn(expected_version=item.expected_version)
+        ),
+    )
+
+
+@router.post("/lead-lists/bulk-unarchive", response_model=BulkActionOut)
+def bulk_unarchive_lead_lists(
+    payload: BulkActionIn,
+    context: WorkspaceContext = Depends(require_permission("contacts.manage")),
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    service = LeadService(db)
+    return run_bulk(
+        db,
+        payload,
+        lambda item: service.unarchive_list(
+            context, item.id, ExpectedVersionIn(expected_version=item.expected_version)
+        ),
+    )
+
+
+@router.post("/lead-lists/{list_id}/unarchive", response_model=LeadListOut)
+def unarchive_lead_list(
+    list_id: UUID,
+    payload: ExpectedVersionIn,
+    context: WorkspaceContext = Depends(require_permission("contacts.manage")),
+    db: Session = Depends(get_db),
+) -> LeadListOut:
+    return LeadService(db).unarchive_list(context, list_id, payload)
 
 
 @router.get("/lead-lists/{list_id}/members", response_model=LeadListMemberPage)

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import WorkspaceContext
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.core.permissions import has_permission
 from app.modules.campaigns.repository import CampaignRepository
 from app.modules.campaigns.schemas import (
     CampaignCreateIn,
@@ -104,12 +105,15 @@ class CampaignService:
         clean_status = status if status in _ALLOWED_STATUS_FILTERS else None
         clean_query = query.strip() if query else None
 
+        # Archived campaigns leave the everyday list; they stay reachable by
+        # filtering on ARCHIVED, or with the explicit ALL value.
         rows = self.repo.list_campaigns(
             workspace_id=context.workspace_id,
             limit=effective_limit + 1,
             after_id=after_id,
             status=clean_status,
             query=clean_query,
+            include_archived=status == "ALL",
         )
         has_more = len(rows) > effective_limit
         page_rows = rows[:effective_limit]
@@ -145,6 +149,9 @@ class CampaignService:
             campaign_id=campaign_id,
             expected_version=expected_version,
             actor_id=context.user_id,
+            may_archive_activated=has_permission(
+                context.role_code, "campaigns.execute"
+            ),
         )
         if row is None:
             raise AppError("not_found", "Campaign not found", status_code=404)
@@ -269,6 +276,8 @@ class CampaignService:
             draft_sequence_id=row["draft_sequence_id"],
             draft_audience_id=row["draft_audience_id"],
             current_settings_id=row["current_settings_id"],
+            is_activated=row.get("activation_id") is not None,
+            erased_at=row.get("erased_at"),
             version=row["version"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -290,6 +299,8 @@ class CampaignService:
             planning_status=row["planning_status"],
             archived_at=row["archived_at"],
             error_reason=row["error_reason"],
+            is_activated=row.get("activation_id") is not None,
+            erased_at=row.get("erased_at"),
             version=row["version"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],

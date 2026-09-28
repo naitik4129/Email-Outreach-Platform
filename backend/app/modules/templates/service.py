@@ -192,6 +192,22 @@ class TemplateService:
             raise AppError("not_found", "Template not found", status_code=404)
         return self._to_detail_out(row)
 
+    def unarchive_template(
+        self,
+        context: WorkspaceContext,
+        template_id: UUID,
+        payload: TemplateArchiveIn,
+    ) -> TemplateDetailOut:
+        row = self.repo.unarchive_template(
+            workspace_id=context.workspace_id,
+            template_id=template_id,
+            expected_version=payload.expected_version,
+            actor_id=context.user_id,
+        )
+        if row is None:
+            raise AppError("not_found", "Template not found", status_code=404)
+        return self._to_detail_out(row)
+
     def preview_template(
         self, context: WorkspaceContext, payload: TemplatePreviewIn
     ) -> TemplatePreviewOut:

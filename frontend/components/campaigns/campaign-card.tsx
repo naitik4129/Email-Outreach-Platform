@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BarChart3, Copy, Eye, Send, Sparkles } from "lucide-react";
+import { Archive, BarChart3, Copy, Eraser, Eye, Send, Sparkles, Trash2 } from "lucide-react";
 
 import { CampaignTypeBadge } from "@/components/campaigns/campaign-type-badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DropdownMenu } from "@/components/ui/dropdown-menu";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   CampaignStatusBadge,
@@ -18,6 +19,7 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { getCampaignAnalytics } from "@/lib/analytics-api";
 import { archiveCampaign, duplicateCampaign } from "@/lib/campaigns-api";
+import { eraseCampaign, purgeCampaign } from "@/lib/erasure-api";
 import { errorMessage } from "@/lib/errors";
 import { formatNumber, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -118,19 +120,43 @@ function CampaignMetrics({
   );
 }
 
+// Which campaigns may be archived: drafts by editors, activated ones by roles that
+// may execute campaigns. A RUNNING campaign has to be paused first.
+export function canArchiveCampaign(
+  status: CampaignListItem["status"],
+  mayDraft: boolean,
+  mayExecute: boolean,
+): boolean {
+  if (status === "DRAFT") return mayDraft;
+  if (status === "RUNNING" || status === "ARCHIVED") return false;
+  return mayExecute;
+}
+
 export function CampaignCard({
   campaign,
   workspaceId,
   mayDraft,
+  mayExecute = false,
+  mayErase = false,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
 }: {
   campaign: CampaignListItem;
   workspaceId: string;
   mayDraft: boolean;
+  mayExecute?: boolean;
+  mayErase?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [removalError, setRemovalError] = useState<string | null>(null);
   const overviewHref = `/app/campaigns/${campaign.id}/overview`;
   const isHyper = campaign.campaign_type === "HYPER_PERSONALIZED";
 
@@ -161,6 +187,23 @@ export function CampaignCard({
     },
   });
 
+  // An archived campaign that was never activated has nothing to keep and is
+  // deleted; an activated one keeps its counts and only its recipients' data is erased.
+  const isArchived = campaign.status === "ARCHIVED";
+  const neverActivated = campaign.is_activated === false;
+  const removalMutation = useMutation({
+    mutationFn: (phrase: string) =>
+      neverActivated
+        ? purgeCampaign(workspaceId, campaign.id, phrase)
+        : eraseCampaign(workspaceId, campaign.id, phrase),
+    onSuccess: () => {
+      invalidateList();
+      setConfirmRemoval(false);
+      toast(neverActivated ? `Deleted “${campaign.name}”.` : `Erased the data in “${campaign.name}”.`);
+    },
+    onError: (err) => setRemovalError(errorMessage(err)),
+  });
+
   const menuItems = [
     { label: "Overview", href: overviewHref, icon: <Eye /> },
     {
@@ -178,13 +221,26 @@ export function CampaignCard({
           },
         ]
       : []),
-    ...(mayDraft && campaign.status === "DRAFT"
+    ...(canArchiveCampaign(campaign.status, mayDraft, mayExecute)
       ? [
           {
             label: "Archive",
             icon: <Archive />,
             tone: "danger" as const,
             onSelect: () => setConfirmArchive(true),
+          },
+        ]
+      : []),
+    ...(mayErase && isArchived && campaign.is_activated !== undefined && !campaign.erased_at
+      ? [
+          {
+            label: neverActivated ? "Delete permanently…" : "Erase data…",
+            icon: neverActivated ? <Trash2 /> : <Eraser />,
+            tone: "danger" as const,
+            onSelect: () => {
+              setRemovalError(null);
+              setConfirmRemoval(true);
+            },
           },
         ]
       : []),
@@ -201,6 +257,15 @@ export function CampaignCard({
       />
       <div className="flex flex-1 flex-col gap-3.5 p-4">
         <div className="flex items-start gap-3">
+          {selectable ? (
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={() => onToggleSelect?.(campaign.id)}
+              aria-label={`Select ${campaign.name}`}
+              className="relative z-10 mt-3 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus-visible:ring-2 focus-visible:ring-brand-500"
+            />
+          ) : null}
           <div
             aria-hidden="true"
             className={cn(
@@ -224,6 +289,11 @@ export function CampaignCard({
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               <CampaignStatusBadge status={campaign.status} />
               <CampaignTypeBadge type={campaign.campaign_type} />
+              {campaign.erased_at ? (
+                <span className="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600">
+                  Data erased
+                </span>
+              ) : null}
             </div>
           </div>
           <div className="relative z-10 -mr-1 -mt-1">
@@ -258,12 +328,32 @@ export function CampaignCard({
       <ConfirmDialog
         open={confirmArchive}
         title={`Archive "${campaign.name}"?`}
-        description="It will no longer be editable."
+        description={
+          campaign.status === "DRAFT"
+            ? "It will no longer be editable."
+            : "It will stop for good and can't be resumed or edited. Its history and results are kept, and you can duplicate it to run it again."
+        }
         confirmLabel="Archive campaign"
         tone="danger"
         loading={archiveMutation.isPending}
         onConfirm={() => archiveMutation.mutate()}
         onCancel={() => setConfirmArchive(false)}
+      />
+
+      <TypeToConfirmDialog
+        open={confirmRemoval}
+        title={neverActivated ? `Delete "${campaign.name}"?` : `Erase data in "${campaign.name}"?`}
+        description={
+          neverActivated
+            ? "This campaign never sent anything. It and its steps, audience and settings are deleted permanently. Your leads and mailboxes are not affected. This can't be undone."
+            : "The recipients' names, addresses, email content and replies in this campaign are permanently erased. The campaign, its counts and the fact that emails were sent are kept. This can't be undone."
+        }
+        phrase={campaign.name}
+        confirmLabel={neverActivated ? "Delete permanently" : "Erase data"}
+        loading={removalMutation.isPending}
+        error={removalError}
+        onConfirm={() => removalMutation.mutate(campaign.name)}
+        onCancel={() => setConfirmRemoval(false)}
       />
     </article>
   );

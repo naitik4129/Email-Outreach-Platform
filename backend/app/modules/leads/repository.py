@@ -270,9 +270,18 @@ class LeadRepository:
         )
 
     def list_lists(
-        self, *, workspace_id: UUID, limit: int, after_id: UUID | None
+        self,
+        *,
+        workspace_id: UUID,
+        limit: int,
+        after_id: UUID | None,
+        status: str = "ACTIVE",
     ) -> Sequence[Mapping[str, Any]]:
-        clauses = ["ll.workspace_id = :workspace_id", "ll.archived_at IS NULL"]
+        clauses = ["ll.workspace_id = :workspace_id"]
+        if status == "ACTIVE":
+            clauses.append("ll.archived_at IS NULL")
+        elif status == "ARCHIVED":
+            clauses.append("ll.archived_at IS NOT NULL")
         params: dict[str, Any] = {"workspace_id": str(workspace_id), "limit": limit}
         if after_id is not None:
             clauses.append("ll.id > :after_id")
@@ -334,6 +343,7 @@ class LeadRepository:
         expected_version: int,
         name: str | None = None,
         archive: bool = False,
+        unarchive: bool = False,
     ) -> Mapping[str, Any] | None:
         assignments: list[str] = []
         params: dict[str, Any] = {
@@ -346,6 +356,8 @@ class LeadRepository:
             params["name"] = name
         if archive:
             assignments.append("archived_at = pg_catalog.transaction_timestamp()")
+        if unarchive:
+            assignments.append("archived_at = NULL")
         return cast(
             Mapping[str, Any] | None,
             self.session.execute(

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,17 +11,33 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const { listTemplates, duplicateTemplate, archiveTemplate } = vi.hoisted(() => ({
+const {
+  listTemplates,
+  duplicateTemplate,
+  archiveTemplate,
+  unarchiveTemplate,
+  bulkArchiveTemplates,
+  bulkUnarchiveTemplates,
+} = vi.hoisted(() => ({
   listTemplates: vi.fn(),
   duplicateTemplate: vi.fn(),
   archiveTemplate: vi.fn(),
+  unarchiveTemplate: vi.fn(),
+  bulkArchiveTemplates: vi.fn(),
+  bulkUnarchiveTemplates: vi.fn(),
 }));
 
 vi.mock("@/lib/templates-api", () => ({
   listTemplates,
   duplicateTemplate,
   archiveTemplate,
+  unarchiveTemplate,
+  bulkArchiveTemplates,
+  bulkUnarchiveTemplates,
 }));
+
+const { purgeTemplate } = vi.hoisted(() => ({ purgeTemplate: vi.fn() }));
+vi.mock("@/lib/erasure-api", () => ({ purgeTemplate }));
 
 const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
 
@@ -119,6 +135,89 @@ describe("TemplatesPageClient", () => {
 
     await waitFor(() => {
       expect(duplicateTemplate).toHaveBeenCalledWith("ws-1", "tmpl-1");
+    });
+  });
+
+  describe("bulk actions, restore and permanent delete", () => {
+    function template(id: string, name: string, archived = false) {
+      return {
+        id,
+        workspace_id: "ws-1",
+        name,
+        current_version_id: "ver",
+        mode: "STANDARD",
+        archived_at: archived ? "2026-02-01T00:00:00Z" : null,
+        version: 3,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        current_revision: 1,
+        subject: "Hi",
+      };
+    }
+
+    it("archives the selected templates after confirmation", async () => {
+      mockWorkspace("MEMBER");
+      listTemplates.mockResolvedValue({
+        items: [template("t1", "One"), template("t2", "Two")],
+        next_cursor: null,
+      });
+      bulkArchiveTemplates.mockResolvedValue({ results: [], succeeded: 2, failed: 0 });
+      const user = userEvent.setup();
+      renderWithClient(<TemplatesPageClient />);
+
+      await user.click(await screen.findByRole("checkbox", { name: "Select One" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select Two" }));
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Archive selected" }));
+      expect(bulkArchiveTemplates).not.toHaveBeenCalled();
+      await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Archive" }));
+
+      await waitFor(() =>
+        expect(bulkArchiveTemplates).toHaveBeenCalledWith("ws-1", [
+          { id: "t1", expected_version: 3 },
+          { id: "t2", expected_version: 3 },
+        ]),
+      );
+    });
+
+    it("restores an archived template with its current version", async () => {
+      mockWorkspace("MEMBER");
+      listTemplates.mockResolvedValue({
+        items: [template("t1", "Old", true)],
+        next_cursor: null,
+      });
+      unarchiveTemplate.mockResolvedValue({});
+      const user = userEvent.setup();
+      renderWithClient(<TemplatesPageClient />);
+
+      await user.click(await screen.findByRole("button", { name: /restore/i }));
+      await waitFor(() =>
+        expect(unarchiveTemplate).toHaveBeenCalledWith("ws-1", "t1", { expected_version: 3 }),
+      );
+    });
+
+    it("offers permanent delete only to admins, and only after typing the name", async () => {
+      listTemplates.mockResolvedValue({
+        items: [template("t1", "Old", true)],
+        next_cursor: null,
+      });
+      purgeTemplate.mockResolvedValue({});
+
+      mockWorkspace("MEMBER");
+      const member = renderWithClient(<TemplatesPageClient />);
+      await screen.findByText("Old");
+      expect(screen.queryByRole("button", { name: /delete permanently/i })).not.toBeInTheDocument();
+      member.unmount();
+
+      mockWorkspace("ADMIN");
+      const user = userEvent.setup();
+      renderWithClient(<TemplatesPageClient />);
+      await user.click(await screen.findByRole("button", { name: /delete permanently/i }));
+      const confirm = within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete permanently" });
+      expect(confirm).toBeDisabled();
+      await user.type(screen.getByRole("textbox", { name: /type/i }), "Old");
+      await user.click(confirm);
+      await waitFor(() => expect(purgeTemplate).toHaveBeenCalledWith("ws-1", "t1", "Old"));
     });
   });
 });

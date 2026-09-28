@@ -96,6 +96,7 @@ def _lead_out(row: Mapping[str, Any]) -> LeadOut:
         validated_at=row["validated_at"],
         contact_revision=row["contact_revision"],
         archived_at=row["archived_at"],
+        erased_at=row.get("erased_at"),
         version=row["version"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -293,6 +294,19 @@ class LeadService:
             self._raise_not_found_or_stale(context.workspace_id, lead_id, "Lead")
         return _lead_out(row)
 
+    def unarchive_lead(
+        self, context: WorkspaceContext, lead_id: UUID, payload: ExpectedVersionIn
+    ) -> LeadOut:
+        row = self.repo.update_lead(
+            workspace_id=context.workspace_id,
+            lead_id=lead_id,
+            expected_version=payload.expected_version,
+            values={"status": "ACTIVE", "archived_at": None},
+        )
+        if row is None:
+            self._raise_not_found_or_stale(context.workspace_id, lead_id, "Lead")
+        return _lead_out(row)
+
     def create_list(
         self, context: WorkspaceContext, payload: LeadListCreateIn
     ) -> LeadListOut:
@@ -303,13 +317,19 @@ class LeadService:
         return _list_out({**row, "member_count": 0})
 
     def list_lists(
-        self, context: WorkspaceContext, *, limit: int, cursor: str | None
+        self,
+        context: WorkspaceContext,
+        *,
+        limit: int,
+        cursor: str | None,
+        status: str = "ACTIVE",
     ) -> LeadListPage:
         effective_limit = normalize_limit(limit)
         rows = self.repo.list_lists(
             workspace_id=context.workspace_id,
             limit=effective_limit + 1,
             after_id=decode_cursor(cursor),
+            status=status if status in {"ACTIVE", "ARCHIVED", "ALL"} else "ACTIVE",
         )
         page_rows = rows[:effective_limit]
         next_cursor = (
@@ -353,6 +373,19 @@ class LeadService:
             list_id=list_id,
             expected_version=payload.expected_version,
             archive=True,
+        )
+        if row is None:
+            self._raise_list_not_found_or_stale(context.workspace_id, list_id)
+        return _list_out(row)
+
+    def unarchive_list(
+        self, context: WorkspaceContext, list_id: UUID, payload: ExpectedVersionIn
+    ) -> LeadListOut:
+        row = self.repo.update_list(
+            workspace_id=context.workspace_id,
+            list_id=list_id,
+            expected_version=payload.expected_version,
+            unarchive=True,
         )
         if row is None:
             self._raise_list_not_found_or_stale(context.workspace_id, list_id)

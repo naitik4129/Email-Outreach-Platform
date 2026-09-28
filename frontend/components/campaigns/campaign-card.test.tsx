@@ -17,6 +17,12 @@ const { archiveCampaign, duplicateCampaign } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/campaigns-api", () => ({ archiveCampaign, duplicateCampaign }));
 
+const { purgeCampaign, eraseCampaign } = vi.hoisted(() => ({
+  purgeCampaign: vi.fn(),
+  eraseCampaign: vi.fn(),
+}));
+vi.mock("@/lib/erasure-api", () => ({ purgeCampaign, eraseCampaign }));
+
 import { CampaignCard } from "@/components/campaigns/campaign-card";
 import type { CampaignListItem } from "@/types/domain";
 
@@ -48,13 +54,17 @@ const analytics = {
   open_tracking_supported: true,
 };
 
-function renderCard(item: CampaignListItem, mayDraft = true) {
+function renderCard(
+  item: CampaignListItem,
+  mayDraft = true,
+  extra: Partial<React.ComponentProps<typeof CampaignCard>> = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <CampaignCard campaign={item} workspaceId="ws-1" mayDraft={mayDraft} />
+      <CampaignCard campaign={item} workspaceId="ws-1" mayDraft={mayDraft} {...extra} />
     </QueryClientProvider>,
   );
 }
@@ -117,30 +127,107 @@ describe("CampaignCard", () => {
     expect(screen.queryByRole("link", { name: "Configure" })).not.toBeInTheDocument();
   });
 
-  it("only offers duplicate and archive to editors, and archive only for drafts", async () => {
+  it("offers archive per state and role: drafts to editors, activated ones to executors, never running", async () => {
     const user = userEvent.setup();
     getCampaignAnalytics.mockResolvedValue(analytics);
+    const menu = async () =>
+      user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
 
     // Read-only role: view-only menu.
     const readOnly = renderCard(campaign(), false);
-    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    await menu();
     expect(screen.getByRole("menuitem", { name: "Analytics" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Duplicate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
     readOnly.unmount();
 
-    // Editor, running campaign: duplicate but no archive.
-    const running = renderCard(campaign(), true);
-    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    // A running campaign can't be archived by anyone: pause it first.
+    const running = renderCard(campaign(), true, { mayExecute: true });
+    await menu();
     expect(screen.getByRole("menuitem", { name: "Duplicate" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
     running.unmount();
 
+    // A paused campaign needs the execute permission, not just the draft one.
+    const pausedEditor = renderCard(campaign({ status: "PAUSED" }), true);
+    await menu();
+    expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
+    pausedEditor.unmount();
+
+    const pausedManager = renderCard(campaign({ status: "PAUSED" }), true, { mayExecute: true });
+    await menu();
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    pausedManager.unmount();
+
     // Editor, draft: both.
     renderCard(campaign({ status: "DRAFT" }), true);
-    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    await menu();
     expect(screen.getByRole("menuitem", { name: "Duplicate" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+  });
+
+  it("deletes an archived campaign that never sent, only after typing its name", async () => {
+    const user = userEvent.setup();
+    purgeCampaign.mockResolvedValue({});
+    renderCard(campaign({ status: "ARCHIVED", is_activated: false }), true, { mayErase: true });
+
+    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    await user.click(screen.getByRole("menuitem", { name: /delete permanently/i }));
+
+    const confirm = await screen.findByRole("button", { name: "Delete permanently" });
+    expect(confirm).toBeDisabled();
+    await user.type(screen.getByRole("textbox"), "Q1 Outbound");
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+
+    await vi.waitFor(() =>
+      expect(purgeCampaign).toHaveBeenCalledWith("ws-1", "camp-1", "Q1 Outbound"),
+    );
+    expect(eraseCampaign).not.toHaveBeenCalled();
+  });
+
+  it("erases the data of an archived campaign that did send instead of deleting it", async () => {
+    const user = userEvent.setup();
+    eraseCampaign.mockResolvedValue({});
+    getCampaignAnalytics.mockResolvedValue(analytics);
+    renderCard(campaign({ status: "ARCHIVED", is_activated: true }), true, { mayErase: true });
+
+    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    await user.click(screen.getByRole("menuitem", { name: /erase data/i }));
+    await user.type(await screen.findByRole("textbox"), "Q1 Outbound");
+    await user.click(screen.getByRole("button", { name: "Erase data" }));
+
+    await vi.waitFor(() =>
+      expect(eraseCampaign).toHaveBeenCalledWith("ws-1", "camp-1", "Q1 Outbound"),
+    );
+    expect(purgeCampaign).not.toHaveBeenCalled();
+  });
+
+  it("hides permanent removal from roles that may not erase, and once it is done", async () => {
+    const user = userEvent.setup();
+    getCampaignAnalytics.mockResolvedValue(analytics);
+
+    const noRole = renderCard(campaign({ status: "ARCHIVED", is_activated: false }), true);
+    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    expect(screen.queryByRole("menuitem", { name: /delete permanently/i })).not.toBeInTheDocument();
+    noRole.unmount();
+
+    renderCard(
+      campaign({ status: "ARCHIVED", is_activated: true, erased_at: "2026-02-01T00:00:00Z" }),
+      true,
+      { mayErase: true },
+    );
+    expect(screen.getByText("Data erased")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+    expect(screen.queryByRole("menuitem", { name: /erase data/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a checkbox for bulk selection and reports the toggle", async () => {
+    const user = userEvent.setup();
+    const onToggleSelect = vi.fn();
+    renderCard(campaign({ status: "DRAFT" }), true, { selectable: true, onToggleSelect });
+    await user.click(screen.getByRole("checkbox", { name: "Select Q1 Outbound" }));
+    expect(onToggleSelect).toHaveBeenCalledWith("camp-1");
   });
 
   it("archives only after confirmation, using the campaign's current version", async () => {

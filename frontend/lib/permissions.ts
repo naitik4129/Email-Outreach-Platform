@@ -58,3 +58,11 @@ export function canTransferOwnership(role: RoleCode): boolean {
   return role === "OWNER";
 }
 
+
+const ERASE_ROLES = new Set(["OWNER", "ADMIN"]);
+
+/** workspace.manage: permanently delete or erase data (ADMIN/OWNER). UX only:
+ * the server and the database commands enforce it. */
+export function canEraseData(role: RoleCode): boolean {
+  return Boolean(role && ERASE_ROLES.has(role));
+}

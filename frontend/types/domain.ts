@@ -88,6 +88,8 @@ export type Lead = LeadProfile & {
   validated_at: string | null;
   contact_revision: number;
   archived_at: string | null;
+  // Set once the person's data was erased; the row stays as an empty shell.
+  erased_at?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -476,6 +478,9 @@ export type CampaignListItem = {
   draft_sequence_id: string | null;
   draft_audience_id: string | null;
   current_settings_id: string | null;
+  // Absent on responses from a server that predates purge/erase.
+  is_activated?: boolean;
+  erased_at?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
@@ -501,9 +506,35 @@ export type CampaignDetail = {
   planning_status: "PENDING" | "READY";
   archived_at: string | null;
   error_reason: string | null;
+  is_activated?: boolean;
+  erased_at?: string | null;
   version: number;
   created_at: string;
   updated_at: string;
+};
+
+// --- Bulk actions and permanent removal ---
+
+export type BulkItem = { id: string; expected_version: number };
+
+export type BulkItemResult = {
+  id: string;
+  ok: boolean;
+  code: string | null;
+  message: string | null;
+};
+
+export type BulkActionResult = {
+  results: BulkItemResult[];
+  succeeded: number;
+  failed: number;
+};
+
+export type ErasureResult = {
+  operation: string;
+  target_id: string;
+  details: Record<string, unknown>;
+  files_pending_cleanup: number;
 };
 
 export type SequenceStepKind = "EMAIL" | "WAIT";

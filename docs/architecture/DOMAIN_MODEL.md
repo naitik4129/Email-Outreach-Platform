@@ -40,7 +40,7 @@ Every workspace aggregate belongs to exactly one workspace; references never tra
 
 ## Entity catalogue
 
-The lifecycle and deletion rules here are design defaults where product documents leave details open. Retention durations and any destructive product workflow remain subject to the Open Decisions below.
+The lifecycle and deletion rules here are design defaults where product documents leave details open. Retention durations remain subject to the Open Decisions below; the destructive workflows (purge and privacy erasure) are decided in [ADR-0015](../adr/0015-archive-purge-and-erasure.md).
 
 | Entity / owning subsystem | Purpose, identity and workspace | Lifecycle and relationships | Invariants; mutable data; deletion |
 |---|---|---|---|
@@ -89,7 +89,7 @@ Mutation plus associated domain event/outbox work commits atomically. Unique bus
 | Missing RBAC and misplaced flow file | Repair product files and approve action matrix; deny unspecified capabilities. Do not infer Owner grants. | Authenticated product mutation/RLS grants. |
 | Lead address normalization and changing addresses | Preserve original address; versioned canonical key, no provider-specific dot/plus rewriting. Recommended case-folded identity is detailed in suppression; changes require collision review. Existing enrollments remain bound to old address. | Lead/suppression uniqueness migration. |
 | Post-activation editing, reopening and enrolling new leads | Keep audience/content immutable; duplicate campaign for new outreach; permit safe paused schedule/limit edits only. Costs flexibility but preserves history. | Campaign commands/product UX. |
-| Retention and deletion durations | Archive referenced resources; minimize retained PII; keep suppression enforcement independently of lead history. Exact periods and erasure workflow require product/security review. | Destructive APIs or production retention jobs. |
+| Retention and deletion durations | Archive referenced resources; minimize retained PII; keep suppression enforcement independently of lead history. The user-initiated erasure workflow is approved ([ADR-0015](../adr/0015-archive-purge-and-erasure.md)); exact retention periods still require product/security review. | Production retention jobs (no automatic expiry is approved). |
 | Ownership transfer, multi-workspace mailbox reuse | Protect at least one active owner; recommend one active workspace per provider account until shared quota/consent rules exist. Neither is a pre-existing approved grant. | Membership/connection uniqueness design. |
 
 ## Testing requirements and definition of done

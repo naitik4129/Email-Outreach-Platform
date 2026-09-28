@@ -3,14 +3,17 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, Loader2, RefreshCw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, Loader2, RefreshCw, Trash2 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ImportStatusBadge, StatusBadge } from "@/components/ui/status-badge";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import { ApiError } from "@/lib/api-client";
+import { IMPORT_CONFIRMATION, purgeImport } from "@/lib/erasure-api";
 import { getImport, listImportRowResults } from "@/lib/imports-api";
+import { canEraseData } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 50;
@@ -30,7 +33,11 @@ function errorMessage(error: unknown) {
 export function ImportDetailPageClient({ importId }: { importId: string }) {
   const router = useRouter();
   const params = useSearchParams();
-  const { activeWorkspaceId } = useWorkspace();
+  const { activeWorkspaceId, activeWorkspace } = useWorkspace();
+  const queryClient = useQueryClient();
+  const mayErase = canEraseData(activeWorkspace?.role_code);
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
 
   const cursor = params.get("cursor");
 
@@ -57,6 +64,15 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
     refetchInterval: importQuery.data?.status === "PROCESSING" ? 5000 : false,
   });
 
+  const purgeMutation = useMutation({
+    mutationFn: () => purgeImport(activeWorkspaceId!, importId, IMPORT_CONFIRMATION),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "imports"] });
+      router.push("/app/leads/imports");
+    },
+    onError: (error) => setPurgeError(errorMessage(error)),
+  });
+
   function goToCursor(nextCursor: string | null) {
     const next = new URLSearchParams(params.toString());
     if (nextCursor) next.set("cursor", nextCursor);
@@ -65,6 +81,7 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
   }
 
   const job = importQuery.data;
+  const isFinished = job ? job.status !== "PENDING" && job.status !== "PROCESSING" : false;
 
   return (
     <main className="space-y-6">
@@ -129,6 +146,42 @@ export function ImportDetailPageClient({ importId }: { importId: string }) {
           )}
         </section>
       )}
+
+      {job && isFinished && mayErase ? (
+        <section className="rounded-xl border border-red-200 bg-white p-5 shadow-card">
+          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
+            Delete this import
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            Deletes the import record, its row results and the uploaded file. The leads it
+            created are not deleted.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4 border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+            onClick={() => {
+              setPurgeError(null);
+              setConfirmPurge(true);
+            }}
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            Delete import…
+          </Button>
+        </section>
+      ) : null}
+
+      <TypeToConfirmDialog
+        open={confirmPurge}
+        title="Delete this import?"
+        description="The record, its row results and the uploaded file are deleted for good. The leads it created stay. This can't be undone."
+        phrase={IMPORT_CONFIRMATION}
+        confirmLabel="Delete import"
+        loading={purgeMutation.isPending}
+        error={purgeError}
+        onConfirm={() => purgeMutation.mutate()}
+        onCancel={() => setConfirmPurge(false)}
+      />
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 flex justify-between items-center">

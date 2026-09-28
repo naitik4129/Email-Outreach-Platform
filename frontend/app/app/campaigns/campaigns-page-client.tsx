@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Megaphone, Plus, Search } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, CheckSquare, Megaphone, Plus, Search } from "lucide-react";
 
 import {
   CampaignCard,
@@ -12,14 +12,19 @@ import {
 } from "@/components/campaigns/campaign-card";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { CursorPagination } from "@/components/ui/pagination";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { PageHeader } from "@/components/ui/page-header";
-import { listCampaigns } from "@/lib/campaigns-api";
+import { SelectionBar } from "@/components/ui/selection-bar";
+import { useToast } from "@/components/ui/toast";
+import { summarizeBulk } from "@/lib/bulk-summary";
+import { bulkArchiveCampaigns, listCampaigns } from "@/lib/campaigns-api";
 import { errorMessage } from "@/lib/errors";
-import { canDraftCampaign } from "@/lib/permissions";
+import { canDraftCampaign, canEraseData, canExecuteCampaign } from "@/lib/permissions";
+import { useSelection } from "@/lib/use-selection";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { CampaignStatus } from "@/types/domain";
@@ -37,7 +42,7 @@ const STATUS_FILTERS: (CampaignStatus | "ALL")[] = [
 
 const STATUS_OPTIONS = STATUS_FILTERS.map((s) => ({
   value: s,
-  label: s === "ALL" ? "All" : s.charAt(0) + s.slice(1).toLowerCase(),
+  label: s === "ALL" ? "Not archived" : s.charAt(0) + s.slice(1).toLowerCase(),
 }));
 
 export function CampaignsPageClient() {
@@ -51,6 +56,13 @@ export function CampaignsPageClient() {
   const cursor = params.get("cursor");
   const status = (params.get("status") as CampaignStatus | "ALL" | null) ?? "ALL";
   const mayDraft = canDraftCampaign(activeWorkspace?.role_code);
+  const mayExecute = canExecuteCampaign(activeWorkspace?.role_code);
+  const mayErase = canEraseData(activeWorkspace?.role_code);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const selection = useSelection();
+  const [selectMode, setSelectMode] = useState(false);
+  const [confirmBulk, setConfirmBulk] = useState(false);
 
   useEffect(() => {
     const next = new URLSearchParams(params.toString());
@@ -83,6 +95,33 @@ export function CampaignsPageClient() {
   });
 
   const campaigns = campaignsQuery.data?.items ?? [];
+
+  // A different list (filter, search, page) must never leave hidden rows selected.
+  const paramsKey = params.toString();
+  const { clear: clearSelection } = selection;
+  useEffect(() => {
+    clearSelection();
+  }, [status, cursor, paramsKey, clearSelection]);
+
+  const bulkArchive = useMutation({
+    mutationFn: () => {
+      if (!activeWorkspaceId) return Promise.reject(new Error("No active workspace"));
+      const items = campaigns
+        .filter((c) => selection.selected.has(c.id))
+        .map((c) => ({ id: c.id, expected_version: c.version }));
+      return bulkArchiveCampaigns(activeWorkspaceId, items);
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "campaigns"] });
+      toast(summarizeBulk(result, "Archived"), result.failed > 0 ? "error" : undefined);
+      selection.clear();
+      setConfirmBulk(false);
+    },
+    onError: (err) => {
+      setConfirmBulk(false);
+      toast(errorMessage(err), "error");
+    },
+  });
   const nextCursor = campaignsQuery.data?.next_cursor ?? null;
   const isFiltered = Boolean(debouncedSearch) || status !== "ALL";
 
@@ -118,6 +157,22 @@ export function CampaignsPageClient() {
             className="pl-9"
           />
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+        {mayDraft && campaigns.length > 0 ? (
+          <Button
+            type="button"
+            variant={selectMode ? "secondary" : "outline"}
+            size="sm"
+            aria-pressed={selectMode}
+            onClick={() => {
+              setSelectMode((on) => !on);
+              selection.clear();
+            }}
+          >
+            <CheckSquare className="h-4 w-4" aria-hidden="true" />
+            {selectMode ? "Done selecting" : "Select"}
+          </Button>
+        ) : null}
         <SegmentedControl
           label="Filter by status"
           options={STATUS_OPTIONS}
@@ -129,7 +184,17 @@ export function CampaignsPageClient() {
             router.push(`${pathname}?${next.toString()}`);
           }}
         />
+        </div>
       </div>
+
+      {selectMode ? (
+        <SelectionBar count={selection.count} onClear={selection.clear}>
+          <Button type="button" variant="outline" size="sm" onClick={() => setConfirmBulk(true)}>
+            <Archive className="h-4 w-4" aria-hidden="true" />
+            Archive selected
+          </Button>
+        </SelectionBar>
+      ) : null}
 
       {campaignsQuery.isLoading ? (
         <div
@@ -182,10 +247,15 @@ export function CampaignsPageClient() {
                     campaign={c}
                     workspaceId={activeWorkspaceId}
                     mayDraft={mayDraft}
+                    mayExecute={mayExecute}
+                    mayErase={mayErase}
+                    selectable={selectMode}
+                    selected={selection.selected.has(c.id)}
+                    onToggleSelect={selection.toggle}
                   />
                 ))
               : null}
-            {mayDraft && !isFiltered && cursor === null ? (
+            {mayDraft && !isFiltered && cursor === null && !selectMode ? (
               <Link
                 href="/app/campaigns/new"
                 className="group flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-white/60 p-6 text-center transition-colors hover:border-brand-400 hover:bg-brand-50/40"
@@ -223,6 +293,17 @@ export function CampaignsPageClient() {
           />
         </>
       )}
+
+      <ConfirmDialog
+        open={confirmBulk}
+        title={`Archive ${selection.count} campaign${selection.count === 1 ? "" : "s"}?`}
+        description="Archived campaigns stop for good and can't be resumed or edited. Their history is kept. Running campaigns must be paused first and are skipped."
+        confirmLabel="Archive"
+        tone="danger"
+        loading={bulkArchive.isPending}
+        onConfirm={() => bulkArchive.mutate()}
+        onCancel={() => setConfirmBulk(false)}
+      />
     </div>
   );
 }

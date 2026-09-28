@@ -67,6 +67,6 @@ Log workspace/address-gate/suppression/source IDs, reason, actor and result; nev
 
 ## Open Decisions, testing and definition of done
 
-Normalization v1, workspace-wide unsubscribe scope and MANUAL release authority/evidence are approved above and in USER_ROLES.md. Global-block escalation, one-click UX/token policy and retention still require explicit operator/product decisions; no customer platform-block release is permitted.
+Normalization v1, workspace-wide unsubscribe scope and MANUAL release authority/evidence are approved above and in USER_ROLES.md. Global-block escalation, one-click UX/token policy and retention still require explicit operator/product decisions; no customer platform-block release is permitted. Suppressions are never deleted: when a person is erased under [ADR-0015](../adr/0015-archive-purge-and-erasure.md), an address with an ACTIVE suppression keeps its address record as the opt-out record and everything else about the person is erased.
 
 Tests must cover absent-row suppression/send race, both transaction orders, duplicate sources, independent active reasons, release racing complaint, new suppression between retry attempts, lead/list deletion and reimport, address changes, Unicode/CRLF/alias inputs, cross-tenant tokens/IDs, global-block isolation, database failure during unsubscribe, stale queued tasks, Redis flush and cancellation task loss. Verify no provider or test-send path bypasses the shared service. Related: [events](EVENT_SYSTEM.md), [database](../database/DATABASE.md), [security](../security/SECURITY_ARCHITECTURE.md).

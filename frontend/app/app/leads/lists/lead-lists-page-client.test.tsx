@@ -1,0 +1,164 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { push, replace, search } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  search: { value: "" },
+}));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/app/leads/lists",
+  useRouter: () => ({ push, replace }),
+  useSearchParams: () => new URLSearchParams(search.value),
+}));
+
+const {
+  listLeadLists,
+  createLeadList,
+  unarchiveLeadList,
+  bulkArchiveLeadLists,
+  bulkUnarchiveLeadLists,
+} = vi.hoisted(() => ({
+  listLeadLists: vi.fn(),
+  createLeadList: vi.fn(),
+  unarchiveLeadList: vi.fn(),
+  bulkArchiveLeadLists: vi.fn(),
+  bulkUnarchiveLeadLists: vi.fn(),
+}));
+
+vi.mock("@/lib/leads-api", () => ({
+  listLeadLists,
+  createLeadList,
+  unarchiveLeadList,
+  bulkArchiveLeadLists,
+  bulkUnarchiveLeadLists,
+}));
+
+const { purgeLeadList } = vi.hoisted(() => ({ purgeLeadList: vi.fn() }));
+vi.mock("@/lib/erasure-api", () => ({ purgeLeadList }));
+
+const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
+vi.mock("@/lib/workspace-context", () => ({ useWorkspace }));
+
+import { LeadListsPageClient } from "./lead-lists-page-client";
+
+function list(id: string, name: string, archived = false) {
+  return {
+    id,
+    workspace_id: "ws-1",
+    name,
+    archived_at: archived ? "2026-02-01T00:00:00Z" : null,
+    membership_revision: 1,
+    member_count: 4,
+    version: 6,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+function renderPage() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <LeadListsPageClient />
+    </QueryClientProvider>,
+  );
+}
+
+function asRole(role: string) {
+  useWorkspace.mockReturnValue({ activeWorkspaceId: "ws-1", activeWorkspace: { role_code: role } });
+}
+
+describe("LeadListsPageClient", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    search.value = "";
+  });
+
+  it("asks for active lists by default and switches to the archived filter", async () => {
+    asRole("MEMBER");
+    listLeadLists.mockResolvedValue({ items: [list("l1", "Founders")], next_cursor: null });
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText("Founders");
+    expect(listLeadLists).toHaveBeenCalledWith("ws-1", {
+      limit: 25,
+      cursor: null,
+      status: "ACTIVE",
+    });
+
+    await user.selectOptions(screen.getByLabelText("List status"), "ARCHIVED");
+    expect(push).toHaveBeenCalledWith("/app/leads/lists?status=ARCHIVED");
+  });
+
+  it("archives the selected lists after confirmation, with their versions", async () => {
+    asRole("MEMBER");
+    listLeadLists.mockResolvedValue({
+      items: [list("l1", "Founders"), list("l2", "Agencies")],
+      next_cursor: null,
+    });
+    bulkArchiveLeadLists.mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("checkbox", { name: "Select Agencies" }));
+    await user.click(screen.getByRole("button", { name: "Archive selected" }));
+    expect(bulkArchiveLeadLists).not.toHaveBeenCalled();
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Archive" }));
+
+    await waitFor(() =>
+      expect(bulkArchiveLeadLists).toHaveBeenCalledWith("ws-1", [
+        { id: "l2", expected_version: 6 },
+      ]),
+    );
+  });
+
+  it("restores an archived list", async () => {
+    search.value = "status=ARCHIVED";
+    asRole("MEMBER");
+    listLeadLists.mockResolvedValue({ items: [list("l1", "Old", true)], next_cursor: null });
+    unarchiveLeadList.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /restore/i }));
+    await waitFor(() => expect(unarchiveLeadList).toHaveBeenCalledWith("ws-1", "l1", 6));
+  });
+
+  it("lets only admins delete an archived list, after typing its name", async () => {
+    search.value = "status=ARCHIVED";
+    listLeadLists.mockResolvedValue({ items: [list("l1", "Old", true)], next_cursor: null });
+    purgeLeadList.mockResolvedValue({});
+
+    asRole("MANAGER");
+    const manager = renderPage();
+    await screen.findByText("Old");
+    expect(screen.queryByRole("button", { name: /delete old permanently/i })).not.toBeInTheDocument();
+    manager.unmount();
+
+    asRole("ADMIN");
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /delete old permanently/i }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
+    expect(confirm).toBeDisabled();
+    await user.type(within(dialog).getByRole("textbox"), "Old");
+    await user.click(confirm);
+    await waitFor(() => expect(purgeLeadList).toHaveBeenCalledWith("ws-1", "l1", "Old"));
+  });
+
+  it("gives a read-only role no selection or actions", async () => {
+    asRole("VIEWER");
+    listLeadLists.mockResolvedValue({ items: [list("l1", "Founders")], next_cursor: null });
+    renderPage();
+    await screen.findByText("Founders");
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+});

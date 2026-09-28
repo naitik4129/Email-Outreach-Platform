@@ -5,9 +5,11 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   Copy,
   FileText,
   Plus,
+  RotateCcw,
   Search,
   Trash2,
 } from "lucide-react";
@@ -16,12 +18,22 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
+import { SelectionBar } from "@/components/ui/selection-bar";
+import { useToast } from "@/components/ui/toast";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import { ApiError } from "@/lib/api-client";
+import { summarizeBulk } from "@/lib/bulk-summary";
+import { purgeTemplate } from "@/lib/erasure-api";
+import { canEraseData } from "@/lib/permissions";
 import {
   archiveTemplate,
+  bulkArchiveTemplates,
+  bulkUnarchiveTemplates,
   duplicateTemplate,
   listTemplates,
+  unarchiveTemplate,
 } from "@/lib/templates-api";
+import { useSelection } from "@/lib/use-selection";
 import { useWorkspace } from "@/lib/workspace-context";
 import { LoadingBlock } from "@/components/ui/skeleton";
 
@@ -71,6 +83,9 @@ export function TemplatesPageClient() {
   const status =
     (params.get("status") as "ACTIVE" | "ARCHIVED" | "ALL" | null) ?? "ACTIVE";
   const mayManage = canManageTemplates(activeWorkspace?.role_code);
+  const mayErase = canEraseData(activeWorkspace?.role_code);
+  const { toast } = useToast();
+  const selection = useSelection();
 
   useEffect(() => {
     const next = new URLSearchParams(params.toString());
@@ -144,6 +159,86 @@ export function TemplatesPageClient() {
 
   const templates = templatesQuery.data?.items ?? [];
   const nextCursor = templatesQuery.data?.next_cursor ?? null;
+
+  const invalidateTemplates = () =>
+    queryClient.invalidateQueries({
+      queryKey: ["workspace", activeWorkspaceId, "templates"],
+    });
+
+  // A different list (filter, search, page) must never leave hidden rows selected.
+  const paramsKey = params.toString();
+  const { clear: clearSelection } = selection;
+  useEffect(() => {
+    clearSelection();
+  }, [status, cursor, paramsKey, clearSelection]);
+
+  const selectedTemplates = templates.filter((t) => selection.selected.has(t.id));
+  const activeSelected = selectedTemplates.filter((t) => !t.archived_at);
+  const archivedSelected = selectedTemplates.filter((t) => t.archived_at);
+  const [confirmBulkArchive, setConfirmBulkArchive] = useState(false);
+
+  const bulkArchive = useMutation({
+    mutationFn: () => {
+      if (!activeWorkspaceId) throw new Error("No active workspace");
+      return bulkArchiveTemplates(
+        activeWorkspaceId,
+        activeSelected.map((t) => ({ id: t.id, expected_version: t.version })),
+      );
+    },
+    onSuccess: (result) => {
+      invalidateTemplates();
+      toast(summarizeBulk(result, "Archived"), result.failed > 0 ? "error" : undefined);
+      selection.clear();
+      setConfirmBulkArchive(false);
+    },
+    onError: (err) => {
+      setConfirmBulkArchive(false);
+      setActionError(errorMessage(err));
+    },
+  });
+
+  const bulkRestore = useMutation({
+    mutationFn: () => {
+      if (!activeWorkspaceId) throw new Error("No active workspace");
+      return bulkUnarchiveTemplates(
+        activeWorkspaceId,
+        archivedSelected.map((t) => ({ id: t.id, expected_version: t.version })),
+      );
+    },
+    onSuccess: (result) => {
+      invalidateTemplates();
+      toast(summarizeBulk(result, "Restored"), result.failed > 0 ? "error" : undefined);
+      selection.clear();
+    },
+    onError: (err) => setActionError(errorMessage(err)),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: ({ templateId, version }: { templateId: string; version: number }) => {
+      if (!activeWorkspaceId) throw new Error("No active workspace");
+      return unarchiveTemplate(activeWorkspaceId, templateId, { expected_version: version });
+    },
+    onSuccess: () => {
+      invalidateTemplates();
+      toast("Template restored.");
+    },
+    onError: (err) => setActionError(errorMessage(err)),
+  });
+
+  const [purgeTarget, setPurgeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+  const purgeMutation = useMutation({
+    mutationFn: (target: { id: string; name: string }) => {
+      if (!activeWorkspaceId) throw new Error("No active workspace");
+      return purgeTemplate(activeWorkspaceId, target.id, target.name);
+    },
+    onSuccess: () => {
+      invalidateTemplates();
+      setPurgeTarget(null);
+      toast("Template deleted.");
+    },
+    onError: (err) => setPurgeError(errorMessage(err)),
+  });
 
   return (
     <div className="space-y-6">
@@ -246,6 +341,34 @@ export function TemplatesPageClient() {
         </div>
       </div>
 
+      {mayManage ? (
+        <SelectionBar count={selection.count} onClear={selection.clear}>
+          {activeSelected.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmBulkArchive(true)}
+            >
+              <Archive className="h-4 w-4" aria-hidden="true" />
+              Archive selected
+            </Button>
+          ) : null}
+          {archivedSelected.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              loading={bulkRestore.isPending}
+              onClick={() => bulkRestore.mutate()}
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              Restore selected
+            </Button>
+          ) : null}
+        </SelectionBar>
+      ) : null}
+
       {/* Content states */}
       {templatesQuery.isLoading ? (
         <LoadingBlock size="lg" />
@@ -283,6 +406,21 @@ export function TemplatesPageClient() {
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
+                {mayManage && (
+                  <th className="w-10 px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all templates on this page"
+                      checked={templates.length > 0 && selection.count === templates.length}
+                      onChange={(event) =>
+                        event.target.checked
+                          ? selection.setAll(templates.map((t) => t.id))
+                          : selection.clear()
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-brand-600"
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-3">Template</th>
                 <th className="hidden px-4 py-3 sm:table-cell">Subject</th>
                 <th className="hidden px-4 py-3 md:table-cell">Revision</th>
@@ -293,6 +431,17 @@ export function TemplatesPageClient() {
             <tbody className="divide-y divide-slate-200">
               {templates.map((tmpl) => (
                 <tr key={tmpl.id} className="hover:bg-slate-50/50">
+                  {mayManage && (
+                    <td className="w-10 px-4 py-3.5">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${tmpl.name}`}
+                        checked={selection.selected.has(tmpl.id)}
+                        onChange={() => selection.toggle(tmpl.id)}
+                        className="h-4 w-4 rounded border-slate-300 text-brand-600"
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3.5 font-medium text-slate-900">
                     <Link
                       href={`/app/templates/${tmpl.id}`}
@@ -349,9 +498,41 @@ export function TemplatesPageClient() {
                             }
                             disabled={archiveMutation.isPending}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <Archive className="h-3.5 w-3.5" />
                           </Button>
                         </>
+                      )}
+                      {mayManage && tmpl.archived_at && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Restore"
+                          onClick={() =>
+                            restoreMutation.mutate({
+                              templateId: tmpl.id,
+                              version: tmpl.version,
+                            })
+                          }
+                          disabled={restoreMutation.isPending}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          <span className="ml-1">Restore</span>
+                        </Button>
+                      )}
+                      {mayErase && tmpl.archived_at && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-red-600 hover:text-red-700"
+                          title="Delete permanently"
+                          onClick={() => {
+                            setPurgeError(null);
+                            setPurgeTarget({ id: tmpl.id, name: tmpl.name });
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="sr-only">Delete permanently</span>
+                        </Button>
                       )}
                     </div>
                   </td>
@@ -413,6 +594,27 @@ export function TemplatesPageClient() {
             );
           }
         }}
+      />
+      <ConfirmDialog
+        open={confirmBulkArchive}
+        title={`Archive ${activeSelected.length} template${activeSelected.length === 1 ? "" : "s"}?`}
+        description="Archived templates can no longer be used in new sequences. You can restore them later."
+        confirmLabel="Archive"
+        tone="danger"
+        loading={bulkArchive.isPending}
+        onCancel={() => setConfirmBulkArchive(false)}
+        onConfirm={() => bulkArchive.mutate()}
+      />
+      <TypeToConfirmDialog
+        open={purgeTarget !== null}
+        title={`Delete "${purgeTarget?.name ?? ""}" permanently?`}
+        description="The template and all its versions are deleted for good. A template that was used in a campaign step can't be deleted and stays archived. This can't be undone."
+        phrase={purgeTarget?.name ?? ""}
+        confirmLabel="Delete permanently"
+        loading={purgeMutation.isPending}
+        error={purgeError}
+        onCancel={() => setPurgeTarget(null)}
+        onConfirm={() => purgeTarget && purgeMutation.mutate(purgeTarget)}
       />
     </div>
   );
