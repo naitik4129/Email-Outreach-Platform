@@ -197,4 +197,108 @@ describe("apiRequest", () => {
     expect((caught as ApiError).status).toBe(403);
     expect((caught as ApiError).code).toBe("forbidden");
   });
+
+  describe("transient failures", () => {
+    // Retry delays are real timers; make them instant so the suite stays fast.
+    function instantTimers() {
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
+        fn();
+        return 0;
+      }) as unknown as typeof setTimeout);
+    }
+
+    it("retries a GET on 503 and then succeeds", async () => {
+      instantTimers();
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(503, { error: { code: "service_unavailable", message: "busy" } }, {
+            "Retry-After": "2",
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await apiRequest("/api/v1/workspaces");
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.data).toEqual({ ok: true });
+    });
+
+    it("retries a GET on a network error and then succeeds", async () => {
+      instantTimers();
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const fetchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await apiRequest("/api/v1/workspaces");
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.data).toEqual({ ok: true });
+    });
+
+    it("gives up on a GET after two retries and surfaces the server error", async () => {
+      instantTimers();
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        jsonResponse(
+          500,
+          { error: { code: "internal_error", message: "Internal server error" } },
+          { "x-request-id": "rid-1" },
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(apiRequest("/api/v1/workspaces")).rejects.toMatchObject({
+        status: 500,
+        message: "Internal server error",
+        requestId: "rid-1",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("reports a persistent network failure as an ApiError, not a raw TypeError", async () => {
+      instantTimers();
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(apiRequest("/api/v1/workspaces")).rejects.toMatchObject({
+        name: "ApiError",
+        status: 0,
+        code: "network_error",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("never retries a write, even on 503", async () => {
+      instantTimers();
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        jsonResponse(503, { error: { code: "service_unavailable", message: "busy" } }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(
+        apiRequest("/api/v1/workspaces", { method: "POST", body: "{}" }),
+      ).rejects.toMatchObject({ status: 503 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry a 4xx", async () => {
+      instantTimers();
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        jsonResponse(404, { error: { code: "not_found", message: "Mailbox not found" } }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(apiRequest("/api/v1/mailboxes/x")).rejects.toMatchObject({ status: 404 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

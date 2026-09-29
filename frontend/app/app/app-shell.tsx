@@ -185,7 +185,8 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     queryKey: ["workspace", activeWorkspaceId, "notifications", "unread-count"],
     queryFn: () => getUnreadCount(activeWorkspaceId!),
     enabled: Boolean(activeWorkspaceId),
-    refetchInterval: 30000,
+    // Back off while the endpoint is failing instead of hitting it every 30 s.
+    refetchInterval: (query) => (query.state.status === "error" ? 60000 : 30000),
   });
 
   const { data: recentNotifications, isLoading: loadingNotifications } = useQuery({
@@ -299,12 +300,23 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
               ? "Sign in again to continue."
               : "Refresh the page or try again in a moment."}
           </p>
+          {!sessionExpired && workspaceError instanceof ApiError && workspaceError.requestId ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Reference: {workspaceError.requestId}
+            </p>
+          ) : null}
           <Button
             type="button"
             className="mt-5 w-full"
             onClick={() => {
-              router.push(sessionExpired ? "/auth/login" : "/app");
-              router.refresh();
+              if (sessionExpired) {
+                router.push("/auth/login");
+                router.refresh();
+                return;
+              }
+              // Actually refetch: navigating to the same route would not re-run
+              // the failed query.
+              void queryClient.refetchQueries({ queryKey: ["workspaces"] });
             }}
           >
             {sessionExpired ? "Sign in" : "Retry"}

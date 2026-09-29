@@ -48,7 +48,13 @@ class Settings(BaseSettings):
 
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_max_overflow: int = Field(default=5, ge=0, le=50)
-    db_pool_timeout_seconds: int = Field(default=5, ge=1, le=60)
+    # How long a request waits for a free pooled connection before failing. Long
+    # enough to ride out a burst (page load + polling), short enough to fail
+    # before the client gives up.
+    db_pool_timeout_seconds: int = Field(default=15, ge=1, le=60)
+    # Upper bound on opening a NEW connection (the pooler can accept the TCP
+    # connection and then stall); without it one bad connect blocks a request.
+    db_connect_timeout_seconds: int = Field(default=10, ge=1, le=60)
     db_statement_timeout_ms: int = Field(default=5_000, ge=100, le=60_000)
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
 

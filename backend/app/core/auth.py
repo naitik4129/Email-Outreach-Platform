@@ -31,7 +31,9 @@ def _unauthenticated(message: str) -> AppError:
 
 @lru_cache
 def _jwks_client(jwks_url: str) -> PyJWKClient:
-    return PyJWKClient(jwks_url)
+    # Short fetch timeout: the default (30 s) let one slow key fetch stall every
+    # concurrent request behind it. Keys are cached for `lifespan` seconds.
+    return PyJWKClient(jwks_url, timeout=5, lifespan=600)
 
 
 _ASYMMETRIC_ALGORITHMS = frozenset({"RS256", "ES256"})
@@ -90,6 +92,21 @@ def _decode(token: str, settings: Settings) -> dict[str, object]:
                     options=options,
                 ),
             )
+        except jwt.PyJWKClientConnectionError as exc:
+            # The signing keys could not be fetched (network/DNS/timeout): the
+            # token was never judged. This is a service problem, not a bad
+            # session -- a 401 here would make the client sign the user out.
+            logger.warning(
+                "Unable to fetch signing keys from %s: %s: %s",
+                settings.supabase_jwks_url,
+                type(exc).__name__,
+                exc,
+            )
+            raise AppError(
+                "auth_unavailable",
+                "Unable to verify your session right now. Please retry.",
+                status_code=503,
+            ) from exc
         except jwt.PyJWTError as exc:
             logger.warning(
                 "Rejected %s access token: %s (issuer=%s audience=%s jwks_url=%s)",
@@ -107,7 +124,11 @@ def _decode(token: str, settings: Settings) -> dict[str, object]:
                 type(exc).__name__,
                 exc,
             )
-            raise _unauthenticated("Unable to verify session") from exc
+            raise AppError(
+                "auth_unavailable",
+                "Unable to verify your session right now. Please retry.",
+                status_code=503,
+            ) from exc
 
     raise _unauthenticated("Unsupported token signing algorithm")
 

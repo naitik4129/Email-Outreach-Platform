@@ -107,3 +107,97 @@ def test_unexpected_error_still_carries_cors_headers() -> None:
     assert response.status_code == 500
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
+
+
+def _probe_client(exc: Exception) -> TestClient:
+    app: FastAPI = create_app()
+
+    @app.get("/probe")
+    def probe() -> None:
+        raise exc
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _pool_timeout() -> Exception:
+    from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+
+    return PoolTimeoutError("QueuePool limit of size 5 overflow 5 reached")
+
+
+def _operational_error() -> Exception:
+    from sqlalchemy.exc import OperationalError
+
+    return OperationalError(
+        "SELECT 1", {}, Exception("MaxClientsInSessionMode: max clients reached")
+    )
+
+
+def _psycopg_operational_error() -> Exception:
+    import psycopg
+
+    return psycopg.OperationalError("server closed the connection unexpectedly")
+
+
+def test_transient_database_failures_are_503_with_retry_after_and_cors() -> None:
+    for make in (_pool_timeout, _operational_error, _psycopg_operational_error):
+        response = _probe_client(make()).get(
+            "/probe", headers={"X-Request-ID": "rid", "Origin": "http://localhost:3000"}
+        )
+
+        assert response.status_code == 503, make.__name__
+        assert response.headers["retry-after"] == "2"
+        # Must still pass through CORS, or the browser reports a CORS error
+        # instead of the retryable 503.
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "http://localhost:3000"
+        )
+        assert response.json() == {
+            "error": {
+                "code": "service_unavailable",
+                "message": "The service is busy. Please retry.",
+                "request_id": "rid",
+                "details": None,
+            }
+        }
+
+
+def test_database_defects_stay_500() -> None:
+    from sqlalchemy.exc import IntegrityError, ProgrammingError
+
+    for exc in (
+        ProgrammingError("SELECT f()", {}, Exception("function f() does not exist")),
+        IntegrityError("INSERT", {}, Exception("duplicate key")),
+    ):
+        response = _probe_client(exc).get("/probe")
+
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "internal_error"
+
+
+def test_transient_database_failure_log_names_the_cause() -> None:
+    import logging
+
+    # create_app() reconfigures the root logger's handlers, which drops pytest's
+    # caplog handler, so attach a collector to the module logger directly.
+    class _Collect(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__(logging.WARNING)
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.messages.append(record.getMessage())
+
+    collector = _Collect()
+    module_logger = logging.getLogger("app.core.middleware")
+    module_logger.addHandler(collector)
+    try:
+        _probe_client(_operational_error()).get("/probe")
+    finally:
+        module_logger.removeHandler(collector)
+
+    assert any(
+        "Database temporarily unavailable" in m and "MaxClientsInSessionMode" in m
+        for m in collector.messages
+    )

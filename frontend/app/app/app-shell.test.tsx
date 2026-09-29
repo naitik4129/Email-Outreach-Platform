@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -37,11 +37,12 @@ import { AppShell } from "@/app/app/app-shell";
 
 function renderShell() {
   const queryClient = new QueryClient();
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <AppShell>content</AppShell>
     </QueryClientProvider>,
   );
+  return { ...utils, queryClient };
 }
 
 describe("AppShell", () => {
@@ -84,6 +85,27 @@ describe("AppShell", () => {
 
     expect(await screen.findByText("Unable to load workspace")).toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("Retry on a workspace-load failure refetches the workspace list and shows the reference id", async () => {
+    useWorkspace.mockReturnValue({
+      workspaces: [],
+      activeWorkspaceId: null,
+      activeWorkspace: null,
+      isLoading: false,
+      error: new ApiError("Internal server error", 500, "internal_error", "req-42"),
+      switchWorkspace: vi.fn(),
+    });
+
+    const { queryClient } = renderShell();
+    const refetch = vi.spyOn(queryClient, "refetchQueries").mockResolvedValue();
+
+    expect(await screen.findByText("Reference: req-42")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    // A real refetch, not a navigation to the same route (which re-runs nothing).
+    expect(refetch).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
     expect(push).not.toHaveBeenCalled();
   });
 

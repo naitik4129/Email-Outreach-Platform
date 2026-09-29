@@ -25,6 +25,21 @@ x-app-env: &app-env
     # (a local-dev .env commonly points at localhost).
     REDIS_URL: redis://redis:6379/0
 
+# Same as x-app-env plus a small database connection cap. Every process keeps its
+# own pool, and all of them (plus the API and any local dev stack) share the
+# Supabase Session pooler's limited client slots (docs/operations/DEPLOYMENT.md,
+# "Database connection budget"). A worker rarely needs more than one connection:
+# 1 kept open, up to 2 more during a burst (released afterwards). Override with
+# WORKER_DB_POOL_SIZE / WORKER_DB_MAX_OVERFLOW in .env. The API keeps DB_POOL_SIZE
+# / DB_MAX_OVERFLOW from .env.
+x-worker-env: &worker-env
+  env_file:
+    - .env
+  environment:
+    REDIS_URL: redis://redis:6379/0
+    DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-1}
+    DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-2}
+
 # Cap container logs: this stack shares a server, and unbounded json-file logs
 # would slowly fill its disk.
 x-logging: &default-logging
@@ -86,7 +101,7 @@ services:
       - app
 
   worker-general:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     command:
       [
         "celery", "-A", "workers.celery_app:celery_app", "worker",
@@ -95,7 +110,7 @@ services:
       ]
 
   worker-events:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     command:
       [
         "celery", "-A", "workers.celery_app:celery_app", "worker",
@@ -103,7 +118,7 @@ services:
       ]
 
   worker-send:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     command:
       [
         "celery", "-A", "workers.celery_app:celery_app", "worker",
@@ -111,7 +126,7 @@ services:
       ]
 
   worker-sync:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     command:
       [
         "celery", "-A", "workers.celery_app:celery_app", "worker",
@@ -124,7 +139,7 @@ services:
   # PERSONALIZATION_ENABLED=true in .env. `required: false` needs Docker Compose
   # 2.24 or newer.
   worker-personalization:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     env_file:
       - path: .env
       - path: .env.personalization
@@ -132,13 +147,13 @@ services:
     command: ["python", "-m", "workers.personalization_worker"]
 
   rate-controller:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     command: ["python", "-m", "workers.rate_controller"]
 
   # Exactly one replica: due-work discovery is concurrency-safe, but there is
   # no reason to run more than one.
   scheduler:
-    <<: [*worker, *app-env]
+    <<: [*worker, *worker-env]
     command: ["python", "-m", "workers.scheduler"]
 
   frontend:

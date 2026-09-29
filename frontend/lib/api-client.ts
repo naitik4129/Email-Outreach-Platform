@@ -29,6 +29,70 @@ function apiUrl(path: string): string {
   return new URL(path, baseUrl).toString();
 }
 
+// Reads (GET/HEAD) are safe to repeat, so a transient failure -- a network blip,
+// or the backend answering 500/502/503/504 while the database is briefly busy --
+// is retried a couple of times with a short backoff before the user sees an
+// error. Writes are never retried here: they would need an idempotency key.
+const READ_TIMEOUT_MS = 30_000;
+const MAX_READ_RETRIES = 2;
+const RETRYABLE_STATUS = new Set([500, 502, 503, 504]);
+const NETWORK_ERROR_MESSAGE = "Unable to reach the server. Check your connection and try again.";
+
+function isReadMethod(method: string | undefined): boolean {
+  const upper = (method ?? "GET").toUpperCase();
+  return upper === "GET" || upper === "HEAD";
+}
+
+function retryDelayMs(attempt: number, response: Response | null): number {
+  const retryAfterSeconds = Number(response?.headers.get("retry-after"));
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds, 5) * 1000 + Math.random() * 250;
+  }
+  return 300 * 3 ** attempt + Math.random() * 200;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** One fetch bounded by READ_TIMEOUT_MS, still honouring a caller's own signal. */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const callerSignal = init.signal ?? null;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal?.aborted) controller.abort();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  const isRead = isReadMethod(init.method);
+  const maxRetries = isRead ? MAX_READ_RETRIES : 0;
+  for (let attempt = 0; ; attempt += 1) {
+    let response: Response | null = null;
+    try {
+      // Only reads get a timeout: an upload legitimately takes as long as it takes.
+      response = isRead ? await fetchWithTimeout(url, init) : await fetch(url, init);
+    } catch (error) {
+      // The caller cancelled on purpose (e.g. the component unmounted): not a failure.
+      if (init.signal?.aborted) throw error;
+      if (attempt >= maxRetries) {
+        throw new ApiError(NETWORK_ERROR_MESSAGE, 0, "network_error", null);
+      }
+    }
+    if (response && !(RETRYABLE_STATUS.has(response.status) && attempt < maxRetries)) {
+      return response;
+    }
+    await sleep(retryDelayMs(attempt, response));
+  }
+}
+
 let redirectingToLogin = false;
 
 async function redirectToLogin() {
@@ -81,7 +145,8 @@ type ApiRequestInit = Omit<RequestInit, "headers"> & {
  * Attaches the current Supabase access token as a bearer credential (never
  * a client-supplied user id), retries exactly once through a session
  * refresh on 401, and redirects to login if that refresh also fails --
- * centralized here so no page duplicates token/401 handling.
+ * centralized here so no page duplicates token/401 handling. Reads also
+ * retry transient failures (see fetchWithRetry).
  */
 export async function apiRequest<T>(
   path: string,
@@ -98,7 +163,7 @@ export async function apiRequest<T>(
         : { "Content-Type": "application/json", ...extraHeaders };
     if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
-    return fetch(apiUrl(path), { ...rest, headers });
+    return fetchWithRetry(apiUrl(path), { ...rest, headers });
   }
 
   const token = await getAccessToken();

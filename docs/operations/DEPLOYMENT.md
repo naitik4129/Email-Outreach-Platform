@@ -682,6 +682,16 @@ docker compose down
 **After a reboot:** containers use `restart: unless-stopped`, so they return on their own once Docker
 starts.
 
+### Database connection budget
+
+Every backend and worker process keeps its own connection pool, and all of them connect through the Supabase **Session pooler** (port 5432), which only allows as many simultaneous clients as its **Pool size** (Supabase dashboard -> Database -> Connection pooling; often 15). Anything beyond that is refused (`MaxClientsInSessionMode: max clients reached`) and the request fails. **A local dev stack that uses the same Supabase project counts against the same limit.**
+
+- The API pool is `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` from `.env` (default 5 + 5). Only `DB_POOL_SIZE` connections stay open when idle; the overflow is closed again after a burst.
+- Each of the seven worker processes is capped by `docker-compose.yml` at 1 idle connection and up to 2 more in a burst (`WORKER_DB_POOL_SIZE` / `WORKER_DB_MAX_OVERFLOW`).
+- Keep (API `DB_POOL_SIZE` + 7 workers + local dev) at or below the pooler Pool size, and lower `DB_POOL_SIZE` if you cannot raise the Pool size.
+- When the database is unreachable, the API answers `503 service_unavailable` (with `Retry-After`) instead of a generic 500, and the web app retries reads automatically. The backend log line `Database temporarily unavailable: type=... sqlstate=... detail=... pool=...` names the cause: `QueuePool limit` (not enough connections in this process), `MaxClients` (pooler limit reached), `SSL connection`/`server closed` (connection dropped).
+- Moving the app to the Transaction pooler (port 6543) would lift the limit, but it changes how connections behave and is an architecture decision, not a setting.
+
 ---
 
 ## Part 11 — If something goes wrong
@@ -700,6 +710,7 @@ starts.
 | CSV import stays "pending" | Check `worker-general` logs, the `imports` bucket, and `SUPABASE_SERVICE_ROLE_KEY`. |
 | Campaign running but nothing sends | Is `SENDING_WORKER_ENABLED=true`? Check `worker-send` and `rate-controller` logs and mailbox health. |
 | Build is killed / server slows down | Out of memory. Stop this project's build, and check `free -h` before retrying. |
+| Pages intermittently show "The service is busy" / "Internal server error", or the workspace list does not load | Database connection pressure. See "Database connection budget" above and read the backend log line `Database temporarily unavailable` (it names the cause and the pool state). |
 | Caddy `502` | The container is down (`ps`), or the Caddy block has the wrong port or (8B) Caddy is not on the project's network. |
 | Caddy cannot get a certificate for the subdomain | The wildcard setup is not covering it. Ask whoever manages Caddy/DNS; do not change other sites' blocks. |
 

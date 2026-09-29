@@ -33,8 +33,26 @@ def get_db() -> Iterator[Session]:
         yield session
 
 
-def get_current_user(
+def get_verified_principal(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> AuthenticatedPrincipal:
+    """Verify the bearer token without touching the database.
+
+    Kept separate from get_db so that a request is authenticated (which may
+    fetch signing keys over the network) BEFORE it checks out a pooled
+    connection: a slow key fetch or a bad token must never hold, or exhaust,
+    the connection pool.
+    """
+    if credentials is None or not credentials.credentials:
+        raise AppError("unauthenticated", "Missing bearer token", status_code=401)
+
+    return verify_access_token(credentials.credentials, Settings.current())
+
+
+def get_current_user(
+    # Declared before `db`: FastAPI resolves parameters in order, so the token
+    # is verified before get_db checks out a connection.
+    principal: AuthenticatedPrincipal = Depends(get_verified_principal),
     db: Session = Depends(get_db),
 ) -> AuthenticatedPrincipal:
     """Resolve the authenticated identity from a verified bearer token only.
@@ -43,12 +61,6 @@ def get_current_user(
     exists for this identity (self-only INSERT, permitted by the existing
     profiles_api_insert RLS policy) so downstream endpoints can rely on it.
     """
-    if credentials is None or not credentials.credentials:
-        raise AppError("unauthenticated", "Missing bearer token", status_code=401)
-
-    settings = Settings.current()
-    principal = verify_access_token(credentials.credentials, settings)
-
     set_transaction_context(db, user_id=principal.user_id)
     db.execute(
         text("INSERT INTO profiles (id) VALUES (:id) ON CONFLICT (id) DO NOTHING"),

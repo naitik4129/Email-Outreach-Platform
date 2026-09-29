@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { isRetryableError } from "@/lib/errors";
 import { listWorkspaces } from "@/lib/workspaces-api";
 import type { WorkspaceListItem } from "@/types/domain";
 
@@ -45,6 +46,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const { data: workspaces = [], error, isLoading } = useQuery({
     queryKey: ["workspaces"],
     queryFn: listWorkspaces,
+    // Everything in the app waits on this list, so ride out a brief backend or
+    // database stall (on top of the API client's own quick read retries) rather
+    // than dropping straight to the error screen. A 4xx is a real answer (e.g.
+    // an expired session) and is never retried.
+    retry: (failureCount, err) => failureCount < 2 && isRetryableError(err),
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
   });
 
   useEffect(() => {

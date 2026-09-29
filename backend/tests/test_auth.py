@@ -106,3 +106,55 @@ def test_malformed_token_rejected() -> None:
     with pytest.raises(AppError) as exc_info:
         verify_access_token("not-a-jwt-at-all", _settings())
     assert exc_info.value.status_code == 401
+
+
+def _es256_shaped_token() -> str:
+    # Only the header is read before the (mocked) signing-key lookup.
+    import base64
+    import json
+
+    def part(obj: dict[str, object]) -> str:
+        raw = json.dumps(obj).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    header = part({"alg": "ES256", "kid": "k1", "typ": "JWT"})
+    return ".".join([header, part({}), "sig"])
+
+
+class _FailingJwksClient:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def get_signing_key_from_jwt(self, token: str) -> object:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        jwt.PyJWKClientConnectionError("Fail to fetch data from the url"),
+        ConnectionResetError("reset by peer"),
+    ],
+)
+def test_jwks_fetch_failure_is_503_not_401(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    # A signing-key fetch failure never judged the token, so it must not read
+    # as an invalid session (the client would sign the user out).
+    monkeypatch.setattr(
+        "app.core.auth._jwks_client", lambda url: _FailingJwksClient(error)
+    )
+    with pytest.raises(AppError) as exc_info:
+        verify_access_token(_es256_shaped_token(), _settings())
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "auth_unavailable"
+
+
+def test_unknown_signing_key_is_still_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = jwt.PyJWKClientError("Unable to find a signing key that matches: k1")
+    monkeypatch.setattr(
+        "app.core.auth._jwks_client", lambda url: _FailingJwksClient(error)
+    )
+    with pytest.raises(AppError) as exc_info:
+        verify_access_token(_es256_shaped_token(), _settings())
+    assert exc_info.value.status_code == 401

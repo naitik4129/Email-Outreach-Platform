@@ -39,6 +39,7 @@ import {
   updateSmtpMailbox,
 } from "@/lib/mailboxes-api";
 import { purgeMailbox } from "@/lib/erasure-api";
+import { errorMessage, isRetryableError } from "@/lib/errors";
 import { canEraseData } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { MailboxTestSendResult, SmtpSecurityMode } from "@/types/domain";
@@ -288,13 +289,26 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
   }
 
   if (mailboxQuery.error || !mailbox) {
+    // A 5xx / network failure is transient and says nothing about whether the
+    // mailbox exists, so offer to try again instead of a dead end.
+    const canRetry = isRetryableError(mailboxQuery.error);
     return (
       <div className="mx-auto max-w-xl space-y-4 py-8 text-center">
         <Alert variant="error">
           {mailboxQuery.error instanceof ApiError
-            ? mailboxQuery.error.message
+            ? errorMessage(mailboxQuery.error)
             : "Mailbox not found or unavailable."}
         </Alert>
+        {canRetry ? (
+          <Button
+            type="button"
+            onClick={() => void mailboxQuery.refetch()}
+            disabled={mailboxQuery.isFetching}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Try again
+          </Button>
+        ) : null}
         <Button variant="outline" asChild>
           <Link href="/app/mailboxes">
             <ArrowLeft className="mr-2 h-4 w-4" />

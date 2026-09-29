@@ -110,6 +110,28 @@ def install_error_handlers(app: FastAPI) -> None:
     # produces this exact same response shape.
 
 
+#: Seconds a client is told to wait before retrying a 503 (Retry-After).
+SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS = 2
+
+
+def service_unavailable_response(request_id: str | None) -> JSONResponse:
+    """503 for a transient infrastructure failure (database pool/connection).
+
+    Distinct from the generic 500 so clients know a retry is safe and useful,
+    and so the failure is never mistaken for an application bug.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=error_body(
+            "service_unavailable",
+            "The service is busy. Please retry.",
+            request_id=request_id,
+            details=None,
+        ),
+        headers={"Retry-After": str(SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS)},
+    )
+
+
 def unhandled_exception_response(request_id: str | None) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

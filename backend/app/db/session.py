@@ -18,6 +18,7 @@ def get_engine(
     pool_size: int,
     max_overflow: int,
     pool_timeout: int,
+    connect_timeout: int = 10,
 ) -> Engine:
     kwargs: dict[str, object] = {"pool_pre_ping": True}
     if database_url.startswith("sqlite"):
@@ -28,6 +29,16 @@ def get_engine(
                 "pool_size": pool_size,
                 "max_overflow": max_overflow,
                 "pool_timeout": pool_timeout,
+                # A connect that stalls must fail (and be retried by the client)
+                # rather than block a request indefinitely; keepalives let a
+                # connection silently dropped by the pooler/NAT be noticed.
+                "connect_args": {
+                    "connect_timeout": connect_timeout,
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 3,
+                },
             }
         )
     engine = create_engine(database_url, **kwargs)
@@ -41,6 +52,7 @@ def engine_from_settings(settings: Settings) -> Engine:
         settings.db_pool_size,
         settings.db_max_overflow,
         settings.db_pool_timeout_seconds,
+        settings.db_connect_timeout_seconds,
     )
 
 
