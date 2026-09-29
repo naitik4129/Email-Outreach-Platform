@@ -9,41 +9,37 @@ import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { CursorPagination } from "@/components/ui/pagination";
+import { PageHeader } from "@/components/ui/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api-client";
+import { useToast } from "@/components/ui/toast";
+import { errorMessage } from "@/lib/errors";
 import {
   createManualSuppression,
   listSuppressions,
   releaseManualSuppression,
 } from "@/lib/suppression-api";
+import { canManageContacts } from "@/lib/permissions";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 25;
 
-function canManageContacts(role?: string) {
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
-}
-
-function useDebouncedValue(value: string, delayMs: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(handle);
-  }, [value, delayMs]);
-  return debounced;
-}
+// UNSUBSCRIBE/HARD_BOUNCE/COMPLAINT are permanent signals from the recipient
+// or provider and can never be released from this UI; only a MANUAL entry
+// (removable, set server-side) can be.
+const PERMANENT_REASON_LABEL: Record<string, string> = {
+  UNSUBSCRIBE: "Unsubscribed by the recipient — permanent.",
+  HARD_BOUNCE: "Hard bounce reported by the provider — permanent.",
+  COMPLAINT: "Spam complaint reported by the provider — permanent.",
+};
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     new Date(value),
   );
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
 }
 
 export function SuppressionPageClient() {
@@ -52,7 +48,8 @@ export function SuppressionPageClient() {
   const params = useSearchParams();
   const queryClient = useQueryClient();
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
-  
+  const { toast } = useToast();
+
   const [searchText, setSearchText] = useState(params.get("q") ?? "");
   const [formOpen, setFormOpen] = useState(false);
   const [emailToSuppress, setEmailToSuppress] = useState("");
@@ -113,8 +110,12 @@ export function SuppressionPageClient() {
       queryClient.invalidateQueries({
         queryKey: ["workspace", activeWorkspaceId, "suppressions"],
       });
+      setReleaseTarget(null);
+      toast("Suppression released.");
     },
-    // Not explicitly handling per-row error here for brevity, could add toast
+    // Keep the dialog open on failure (only onSuccess clears releaseTarget)
+    // so a failed release surfaces instead of silently closing.
+    onError: (error) => toast(errorMessage(error), "error"),
   });
 
   function goToCursor(nextCursor: string | null) {
@@ -126,24 +127,19 @@ export function SuppressionPageClient() {
 
   return (
     <main className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            Suppression List
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Contacts that will never receive outreach (unsubscribed, bounced, or manually suppressed).
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {mayManage ? (
+      <PageHeader
+        title="Suppression List"
+        description="Contacts that will never receive outreach (unsubscribed, bounced, or manually suppressed). Unsubscribe, bounce and complaint entries are permanent; only manually suppressed addresses can be released."
+        back={{ href: "/app/leads", label: "Back to leads" }}
+        actions={
+          mayManage ? (
             <Button type="button" onClick={() => setFormOpen((open) => !open)}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Suppress Email
             </Button>
-          ) : null}
-        </div>
-      </div>
+          ) : null
+        }
+      />
 
       {formOpen && mayManage ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
@@ -252,7 +248,14 @@ export function SuppressionPageClient() {
                         </StatusBadge>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        {suppression.reason}
+                        <span
+                          title={
+                            PERMANENT_REASON_LABEL[suppression.reason] ??
+                            "Added manually — releasable by an admin."
+                          }
+                        >
+                          {suppression.reason}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {formatDate(suppression.first_observed_at)}
@@ -276,24 +279,15 @@ export function SuppressionPageClient() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!cursor}
-                onClick={() => goToCursor(null)}
-              >
-                First
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!suppressionQuery.data?.next_cursor}
-                onClick={() => goToCursor(suppressionQuery.data?.next_cursor ?? null)}
-              >
-                Next
-              </Button>
-            </div>
+            <CursorPagination
+              summary={`Showing ${suppressionQuery.data?.items.length ?? 0} suppression${
+                (suppressionQuery.data?.items.length ?? 0) === 1 ? "" : "s"
+              }`}
+              canGoFirst={Boolean(cursor)}
+              canGoNext={Boolean(suppressionQuery.data?.next_cursor)}
+              onFirst={() => goToCursor(null)}
+              onNext={() => goToCursor(suppressionQuery.data?.next_cursor ?? null)}
+            />
           </>
         )}
       </section>
@@ -306,9 +300,7 @@ export function SuppressionPageClient() {
         loading={releaseMutation.isPending}
         onCancel={() => setReleaseTarget(null)}
         onConfirm={() => {
-          if (releaseTarget) {
-            releaseMutation.mutate(releaseTarget, { onSettled: () => setReleaseTarget(null) });
-          }
+          if (releaseTarget) releaseMutation.mutate(releaseTarget);
         }}
       />
     </main>

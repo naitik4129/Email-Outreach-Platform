@@ -80,10 +80,9 @@ describe("AppShell navigation", () => {
         "/app/deliverability",
         "/app/mailboxes",
         "/app/leads",
+        "/app/leads/lists",
         "/app/inbox",
         "/app/templates",
-        "/app/leads/imports",
-        "/app/leads/suppression",
         "/app/team",
       ].sort(),
     );
@@ -101,16 +100,27 @@ describe("AppShell navigation", () => {
     expect(within(nav).getByRole("link", { name: "Leads" })).not.toHaveAttribute("aria-current");
   });
 
-  it("highlights Imports, not Leads, on a nested leads route", () => {
-    pathnameRef.current = "/app/leads/imports/new";
+  it("highlights Lists, not Leads, on a nested lists route", () => {
+    pathnameRef.current = "/app/leads/lists/abc";
     renderShell();
     const nav = screen.getByRole("navigation", { name: "Primary" });
 
-    expect(within(nav).getByRole("link", { name: "Imports" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Lists" })).toHaveAttribute(
       "aria-current",
       "page",
     );
     expect(within(nav).getByRole("link", { name: "Leads" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("falls back to highlighting Leads on a nested leads route with no dedicated nav item (e.g. imports)", () => {
+    pathnameRef.current = "/app/leads/imports/new";
+    renderShell();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+
+    expect(within(nav).getByRole("link", { name: "Leads" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("still highlights Leads on the leads page itself", () => {

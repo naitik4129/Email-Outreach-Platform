@@ -10,12 +10,14 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import {
   LeadProfileDetails,
   LeadProfileFields,
 } from "@/components/leads/lead-profile-fields";
 import { LeadActivityTimeline } from "@/components/leads/lead-activity";
+import { LeadCampaignHistory } from "@/components/leads/lead-campaign-history";
 import { ApiError } from "@/lib/api-client";
 import {
   profilePayload,
@@ -24,7 +26,7 @@ import {
 } from "@/lib/lead-fields";
 import { eraseLead } from "@/lib/erasure-api";
 import { archiveLead, getLead, unarchiveLead, updateLead } from "@/lib/leads-api";
-import { canEraseData } from "@/lib/permissions";
+import { canEraseData, canManageContacts } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { LeadDetail } from "@/types/domain";
 
@@ -37,10 +39,6 @@ type EditState = {
   profile: LeadProfileFormValues;
   custom_fields: string;
 };
-
-function canManageContacts(role?: string) {
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
-}
 
 function fullName(lead: LeadDetail) {
   return [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "Unnamed lead";
@@ -202,45 +200,43 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
 
   return (
     <main className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <Button asChild variant="ghost">
-            <Link href="/app/leads">Back to leads</Link>
-          </Button>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-3">
-            {fullName(lead)}
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">{lead.email}</p>
-        </div>
-        {mayManage && lead.status === "ACTIVE" ? (
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" onClick={() => setEditing(true)}>
-              <Pencil className="h-4 w-4" aria-hidden="true" />
-              Edit
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={archiveMutation.isPending}
-              onClick={() => archiveMutation.mutate()}
-            >
-              <Archive className="h-4 w-4" aria-hidden="true" />
-              Archive
-            </Button>
-          </div>
-        ) : null}
-        {mayManage && lead.status === "ARCHIVED" && !lead.erased_at ? (
-          <Button
-            type="button"
-            variant="outline"
-            loading={restoreMutation.isPending}
-            onClick={() => restoreMutation.mutate()}
-          >
-            <RotateCcw className="h-4 w-4" aria-hidden="true" />
-            Restore
-          </Button>
-        ) : null}
-      </div>
+      <PageHeader
+        title={fullName(lead)}
+        description={lead.email}
+        back={{ href: "/app/leads", label: "Back to leads" }}
+        actions={
+          <>
+            {mayManage && lead.status === "ACTIVE" ? (
+              <>
+                <Button type="button" variant="ghost" onClick={() => setEditing(true)}>
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
+                  Edit
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={archiveMutation.isPending}
+                  onClick={() => archiveMutation.mutate()}
+                >
+                  <Archive className="h-4 w-4" aria-hidden="true" />
+                  Archive
+                </Button>
+              </>
+            ) : null}
+            {mayManage && lead.status === "ARCHIVED" && !lead.erased_at ? (
+              <Button
+                type="button"
+                variant="outline"
+                loading={restoreMutation.isPending}
+                onClick={() => restoreMutation.mutate()}
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                Restore
+              </Button>
+            ) : null}
+          </>
+        }
+      />
 
       {error ? <Alert>{error}</Alert> : null}
       {lead.erased_at ? (
@@ -365,16 +361,43 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
               <dd className="mt-1 text-slate-900">{lead.status}</dd>
             </div>
             <div>
-              <dt className="font-medium text-slate-500">Company</dt>
-              <dd className="mt-1 text-slate-900">{lead.company ?? "No company"}</dd>
-            </div>
-            <div>
               <dt className="font-medium text-slate-500">Job title</dt>
               <dd className="mt-1 text-slate-900">{lead.title ?? "No title"}</dd>
             </div>
           </dl>
         )}
-        {editing && mayManage ? null : <LeadProfileDetails lead={lead} />}
+        {editing && mayManage ? null : (
+          <LeadProfileDetails
+            lead={lead}
+            groups={["Professional", "Location"]}
+            emptyMessage="No additional profile details."
+          />
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
+        <h2 className="text-lg font-semibold tracking-normal text-slate-900">
+          Company
+        </h2>
+        {!editing || !mayManage ? (
+          <>
+            <dl className="mt-4 grid gap-4 text-sm md:grid-cols-2">
+              <div>
+                <dt className="font-medium text-slate-500">Company</dt>
+                <dd className="mt-1 text-slate-900">{lead.company ?? "No company"}</dd>
+              </div>
+            </dl>
+            <LeadProfileDetails
+              lead={lead}
+              groups={["Company"]}
+              emptyMessage="No additional company details."
+            />
+          </>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500">
+            Company name and details are edited together with the profile above.
+          </p>
+        )}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
@@ -437,7 +460,10 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
       />
 
       {activeWorkspaceId ? (
-        <LeadActivityTimeline workspaceId={activeWorkspaceId} leadId={lead.id} />
+        <>
+          <LeadCampaignHistory workspaceId={activeWorkspaceId} leadId={lead.id} />
+          <LeadActivityTimeline workspaceId={activeWorkspaceId} leadId={lead.id} />
+        </>
       ) : null}
     </main>
   );

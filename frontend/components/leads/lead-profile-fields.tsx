@@ -6,6 +6,7 @@ import {
   LEAD_PROFILE_FIELDS,
   LEAD_PROFILE_GROUPS,
   type LeadProfileFormValues,
+  type LeadProfileGroup,
 } from "@/lib/lead-fields";
 import type { LeadProfile, LeadProfileKey } from "@/types/domain";
 
@@ -93,20 +94,33 @@ function DetailValue({ value, isUrl }: { value: string; isUrl: boolean }) {
   return <span className="break-words">{value}</span>;
 }
 
-export function LeadProfileDetails({ lead }: { lead: LeadProfile }) {
-  const groups = LEAD_PROFILE_GROUPS.map((group) => ({
-    group,
-    fields: LEAD_PROFILE_FIELDS.filter(
-      (field) =>
-        field.group === group &&
-        lead[field.key] !== null &&
-        lead[field.key] !== undefined &&
-        lead[field.key] !== "",
-    ),
-  })).filter(({ fields }) => fields.length > 0);
+export function LeadProfileDetails({
+  lead,
+  groups: onlyGroups = LEAD_PROFILE_GROUPS,
+  emptyMessage = "No additional details.",
+}: {
+  lead: LeadProfile;
+  // Restricts which field groups render, so a page can split Professional/
+  // Location and Company into separate cards without duplicating the field
+  // list or the value-filtering logic below.
+  groups?: LeadProfileGroup[];
+  emptyMessage?: string;
+}) {
+  const groups = onlyGroups
+    .map((group) => ({
+      group,
+      fields: LEAD_PROFILE_FIELDS.filter(
+        (field) =>
+          field.group === group &&
+          lead[field.key] !== null &&
+          lead[field.key] !== undefined &&
+          lead[field.key] !== "",
+      ),
+    }))
+    .filter(({ fields }) => fields.length > 0);
 
   if (groups.length === 0) {
-    return <p className="mt-4 text-sm text-slate-500">No additional details.</p>;
+    return <p className="mt-4 text-sm text-slate-500">{emptyMessage}</p>;
   }
 
   return (

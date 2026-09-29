@@ -4,69 +4,31 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Loader2, Plus, RotateCcw, Search, Users } from "lucide-react";
+import { Archive, ListPlus, Loader2, Plus, RotateCcw, Search, ShieldOff, UploadCloud, Users } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { CursorPagination } from "@/components/ui/pagination";
+import { PageHeader } from "@/components/ui/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SelectionBar } from "@/components/ui/selection-bar";
 import { useToast } from "@/components/ui/toast";
-import { LeadProfileFields } from "@/components/leads/lead-profile-fields";
-import { ApiError } from "@/lib/api-client";
-import {
-  emptyProfileValues,
-  formatLocation,
-  profilePayload,
-  type LeadProfileFormValues,
-} from "@/lib/lead-fields";
+import { AddLeadDialog } from "@/components/leads/add-lead-dialog";
+import { CreateListFromFilterDialog } from "@/components/leads/create-list-from-filter-dialog";
+import { ImportLeadsDialog } from "@/components/leads/import-leads-dialog";
+import { formatLocation } from "@/lib/lead-fields";
 import { summarizeBulk } from "@/lib/bulk-summary";
-import {
-  bulkArchiveLeads,
-  bulkUnarchiveLeads,
-  createLead,
-  listLeadLists,
-  listLeads,
-} from "@/lib/leads-api";
+import { errorMessage } from "@/lib/errors";
+import { bulkArchiveLeads, bulkUnarchiveLeads, listLeadLists, listLeads } from "@/lib/leads-api";
+import { canManageContacts } from "@/lib/permissions";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSelection } from "@/lib/use-selection";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 25;
-
-type LeadFormState = {
-  email: string;
-  first_name: string;
-  last_name: string;
-  company: string;
-  title: string;
-  list_id: string;
-  profile: LeadProfileFormValues;
-};
-
-const emptyForm: LeadFormState = {
-  email: "",
-  first_name: "",
-  last_name: "",
-  company: "",
-  title: "",
-  list_id: "",
-  profile: emptyProfileValues,
-};
-
-function canManageContacts(role?: string) {
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
-}
-
-function useDebouncedValue(value: string, delayMs: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(handle);
-  }, [value, delayMs]);
-  return debounced;
-}
 
 function fullName(firstName: string | null, lastName: string | null) {
   return [firstName, lastName].filter(Boolean).join(" ") || "Unnamed lead";
@@ -78,11 +40,6 @@ function formatDate(value: string) {
   );
 }
 
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
-}
-
 export function LeadsPageClient() {
   const router = useRouter();
   const pathname = usePathname();
@@ -90,9 +47,9 @@ export function LeadsPageClient() {
   const queryClient = useQueryClient();
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const [searchText, setSearchText] = useState(params.get("q") ?? "");
-  const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState<LeadFormState>(emptyForm);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [addLeadOpen, setAddLeadOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [createListOpen, setCreateListOpen] = useState(false);
 
   const debouncedSearch = useDebouncedValue(searchText, 350);
   const cursor = params.get("cursor");
@@ -136,32 +93,6 @@ export function LeadsPageClient() {
     queryKey: ["workspace", activeWorkspaceId, "lead-lists", "picker"],
     queryFn: () => listLeadLists(activeWorkspaceId!, { limit: 100 }),
     enabled: Boolean(activeWorkspaceId),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      createLead(activeWorkspaceId!, {
-        email: form.email,
-        first_name: form.first_name || null,
-        last_name: form.last_name || null,
-        company: form.company || null,
-        title: form.title || null,
-        ...profilePayload(form.profile),
-        custom_fields: {},
-        list_id: form.list_id || null,
-      }),
-    onSuccess: () => {
-      setForm(emptyForm);
-      setFormOpen(false);
-      setFormError(null);
-      queryClient.invalidateQueries({
-        queryKey: ["workspace", activeWorkspaceId, "leads"],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["workspace", activeWorkspaceId, "lead-lists"],
-      });
-    },
-    onError: (error) => setFormError(errorMessage(error)),
   });
 
   const leads = leadsQuery.data?.items ?? [];
@@ -226,136 +157,35 @@ export function LeadsPageClient() {
 
   return (
     <main className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            Leads
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Workspace contacts for outreach and reusable lists.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button asChild variant="ghost">
-            <Link href="/app/leads/lists">Lists</Link>
-          </Button>
-          {mayManage ? (
-            <Button type="button" onClick={() => setFormOpen((open) => !open)}>
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Add Lead
+      <PageHeader
+        title="Leads"
+        description="Workspace contacts for outreach and reusable lists."
+        actions={
+          <>
+            <Button asChild variant="ghost">
+              <Link href="/app/leads/lists">Lists</Link>
             </Button>
-          ) : null}
-        </div>
-      </div>
-
-      {formOpen && mayManage ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
-            Add lead
-          </h2>
-          {formError ? (
-            <div className="mt-3">
-              <Alert>{formError}</Alert>
-            </div>
-          ) : null}
-          <form
-            className="mt-4 grid gap-4 md:grid-cols-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setFormError(null);
-              createMutation.mutate();
-            }}
-          >
-            <Field id="lead-email" label="Email" className="md:col-span-2">
-              <Input
-                value={form.email}
-                onChange={(event) => setForm({ ...form, email: event.target.value })}
-                disabled={createMutation.isPending}
-                required
-                type="email"
-              />
-            </Field>
-            <Field id="lead-first-name" label="First name">
-              <Input
-                value={form.first_name}
-                onChange={(event) =>
-                  setForm({ ...form, first_name: event.target.value })
-                }
-                disabled={createMutation.isPending}
-              />
-            </Field>
-            <Field id="lead-last-name" label="Last name">
-              <Input
-                value={form.last_name}
-                onChange={(event) =>
-                  setForm({ ...form, last_name: event.target.value })
-                }
-                disabled={createMutation.isPending}
-              />
-            </Field>
-            <Field id="lead-company" label="Company">
-              <Input
-                value={form.company}
-                onChange={(event) => setForm({ ...form, company: event.target.value })}
-                disabled={createMutation.isPending}
-              />
-            </Field>
-            <Field id="lead-title" label="Job title">
-              <Input
-                value={form.title}
-                onChange={(event) => setForm({ ...form, title: event.target.value })}
-                disabled={createMutation.isPending}
-              />
-            </Field>
-            <LeadProfileFields
-              idPrefix="lead"
-              values={form.profile}
-              onChange={(key, value) =>
-                setForm((current) => ({
-                  ...current,
-                  profile: { ...current.profile, [key]: value },
-                }))
-              }
-              disabled={createMutation.isPending}
-            />
-            <div className="space-y-1.5 md:col-span-2">
-              <label htmlFor="lead-list" className="text-sm font-medium text-slate-700">
-                List
-              </label>
-              <select
-                id="lead-list"
-                value={form.list_id}
-                onChange={(event) => setForm({ ...form, list_id: event.target.value })}
-                disabled={createMutation.isPending}
-                className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
-              >
-                <option value="">No list</option>
-                {(listsQuery.data?.items ?? []).map((list) => (
-                  <option key={list.id} value={list.id}>
-                    {list.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-2 md:col-span-2">
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : null}
-                Create
+            {mayManage && leads.length > 0 ? (
+              <Button type="button" variant="outline" onClick={() => setCreateListOpen(true)}>
+                <ListPlus className="h-4 w-4" aria-hidden="true" />
+                Create list from filter
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={createMutation.isPending}
-                onClick={() => setFormOpen(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </section>
-      ) : null}
+            ) : null}
+            {mayManage ? (
+              <>
+                <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
+                  <UploadCloud className="h-4 w-4" aria-hidden="true" />
+                  Import
+                </Button>
+                <Button type="button" onClick={() => setAddLeadOpen(true)}>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Add Lead
+                </Button>
+              </>
+            ) : null}
+          </>
+        }
+      />
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-card">
         <div className="grid gap-3 md:grid-cols-[1fr_180px_220px]">
@@ -371,21 +201,19 @@ export function LeadsPageClient() {
               className="pl-9"
             />
           </div>
-          <select
+          <Select
             aria-label="Lead status"
             value={status}
             onChange={(event) => updateParam("status", event.target.value)}
-            className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
           >
             <option value="ACTIVE">Active</option>
             <option value="ARCHIVED">Archived</option>
             <option value="ALL">All</option>
-          </select>
-          <select
+          </Select>
+          <Select
             aria-label="Lead list filter"
             value={listId ?? ""}
             onChange={(event) => updateParam("list_id", event.target.value)}
-            className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
           >
             <option value="">All lists</option>
             {(listsQuery.data?.items ?? []).map((list) => (
@@ -393,7 +221,16 @@ export function LeadsPageClient() {
                 {list.name}
               </option>
             ))}
-          </select>
+          </Select>
+        </div>
+        <div className="mt-3">
+          <Link
+            href="/app/leads/suppression"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-900"
+          >
+            <ShieldOff className="h-3.5 w-3.5" aria-hidden="true" />
+            View suppression list
+          </Link>
         </div>
       </section>
 
@@ -443,12 +280,12 @@ export function LeadsPageClient() {
             action={
               mayManage ? (
                 <>
-                  <Button onClick={() => setFormOpen(true)}>
+                  <Button onClick={() => setAddLeadOpen(true)}>
                     <Plus className="h-4 w-4" aria-hidden="true" />
                     Add lead
                   </Button>
-                  <Button variant="outline" asChild>
-                    <Link href="/app/leads/imports/new">Import from CSV</Link>
+                  <Button variant="outline" onClick={() => setImportOpen(true)}>
+                    Import from CSV
                   </Button>
                 </>
               ) : null
@@ -527,24 +364,13 @@ export function LeadsPageClient() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!cursor}
-                onClick={() => goToCursor(null)}
-              >
-                First
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!leadsQuery.data?.next_cursor}
-                onClick={() => goToCursor(leadsQuery.data?.next_cursor ?? null)}
-              >
-                Next
-              </Button>
-            </div>
+            <CursorPagination
+              summary={`Showing ${leads.length} lead${leads.length === 1 ? "" : "s"}`}
+              canGoFirst={Boolean(cursor)}
+              canGoNext={Boolean(leadsQuery.data?.next_cursor)}
+              onFirst={() => goToCursor(null)}
+              onNext={() => goToCursor(leadsQuery.data?.next_cursor ?? null)}
+            />
           </>
         )}
       </section>
@@ -557,6 +383,18 @@ export function LeadsPageClient() {
         loading={bulkMutation.isPending}
         onCancel={() => setConfirmBulkArchive(false)}
         onConfirm={() => bulkMutation.mutate({ restore: false })}
+      />
+      <AddLeadDialog open={addLeadOpen} onOpenChange={setAddLeadOpen} />
+      <ImportLeadsDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        defaultImportKind="LEADS"
+        onImported={(job) => router.push(`/app/leads/imports/${job.id}`)}
+      />
+      <CreateListFromFilterDialog
+        open={createListOpen}
+        onOpenChange={setCreateListOpen}
+        filters={{ q: params.get("q"), status, listId }}
       />
     </main>
   );

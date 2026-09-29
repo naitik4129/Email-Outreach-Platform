@@ -12,6 +12,7 @@ import { ApiError } from "@/lib/api-client";
 import {
   abandonAudience,
   commitAudience,
+  getAudienceExclusions,
   getCommittedAudience,
   selectAudience,
 } from "@/lib/campaigns-api";
@@ -26,7 +27,81 @@ function errorMessage(error: unknown) {
   return "We couldn't complete that request. Please try again.";
 }
 
+// Lazily fetches the exclusion-reason breakdown only once expanded, since
+// most audience reviews never need it. archived_lead/suppressed are exact
+// counts; invalid_address_estimate is a residual the backend computes
+// because a lead with no resolvable address never gets a stored row to
+// count exactly (see AudienceExclusionBreakdown).
+function AudienceExclusionDetails({
+  workspaceId,
+  campaignId,
+  audienceId,
+  excludedCount,
+}: {
+  workspaceId: string;
+  campaignId: string;
+  audienceId: string;
+  excludedCount: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const query = useQuery({
+    queryKey: [
+      "workspace",
+      workspaceId,
+      "campaigns",
+      campaignId,
+      "audience",
+      audienceId,
+      "exclusions",
+    ],
+    queryFn: () => getAudienceExclusions(workspaceId, campaignId, audienceId),
+    enabled: expanded,
+  });
+
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        className="text-xs font-medium text-emerald-800 underline-offset-2 hover:underline"
+        onClick={() => setExpanded((current) => !current)}
+      >
+        Why were {excludedCount} lead{excludedCount === 1 ? "" : "s"} excluded?
+      </button>
+      {expanded ? (
+        <div className="mt-1.5 rounded-md bg-white/60 p-2 text-xs text-emerald-900">
+          {query.isLoading ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading breakdown...
+            </span>
+          ) : query.isError ? (
+            <span>We couldn&apos;t load the breakdown.</span>
+          ) : query.data ? (
+            <ul className="space-y-0.5">
+              {query.data.archived_lead > 0 ? (
+                <li>{query.data.archived_lead} already archived</li>
+              ) : null}
+              {query.data.suppressed > 0 ? (
+                <li>{query.data.suppressed} suppressed (unsubscribed, bounced, or blocked)</li>
+              ) : null}
+              {query.data.invalid_address_estimate > 0 ? (
+                <li>~{query.data.invalid_address_estimate} with no valid email address</li>
+              ) : null}
+              {query.data.archived_lead === 0 &&
+              query.data.suppressed === 0 &&
+              query.data.invalid_address_estimate === 0 ? (
+                <li>No further detail is available for this revision.</li>
+              ) : null}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AudienceStatusPanel({
+  workspaceId,
+  campaignId,
   audience,
   onCommit,
   onAbandon,
@@ -34,6 +109,8 @@ function AudienceStatusPanel({
   isCommitting,
   isAbandoning,
 }: {
+  workspaceId: string;
+  campaignId: string;
   audience: CampaignAudience;
   onCommit: () => void;
   onAbandon: () => void;
@@ -69,18 +146,26 @@ function AudienceStatusPanel({
   }
 
   if (audience.status === "READY") {
+    const excludedCount = audience.excluded_count ?? 0;
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
         <div className="flex items-center gap-2 text-sm font-medium text-emerald-900">
           <CheckCircle2 className="h-4 w-4" />
           Audience ready: {audience.accepted_count ?? 0} eligible
-          {(audience.excluded_count ?? 0) > 0 && (
+          {excludedCount > 0 && (
             <span className="font-normal text-emerald-700">
-              ({audience.excluded_count} excluded -- archived, suppressed, or
-              invalid)
+              ({excludedCount} excluded)
             </span>
           )}
         </div>
+        {excludedCount > 0 ? (
+          <AudienceExclusionDetails
+            workspaceId={workspaceId}
+            campaignId={campaignId}
+            audienceId={audience.id}
+            excludedCount={excludedCount}
+          />
+        ) : null}
         {!audience.is_committed && canManage && (
           <div className="mt-3">
             <Button size="sm" disabled={isCommitting} onClick={onCommit}>
@@ -214,8 +299,10 @@ export default function CampaignAudiencePage() {
 
       {audienceQuery.isLoading ? (
         <LoadingBlock />
-      ) : audience ? (
+      ) : audience && activeWorkspaceId ? (
         <AudienceStatusPanel
+          workspaceId={activeWorkspaceId}
+          campaignId={campaignId}
           audience={audience}
           onCommit={() => commitMutation.mutate()}
           onAbandon={() => abandonMutation.mutate()}

@@ -11,12 +11,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { CursorPagination } from "@/components/ui/pagination";
+import { PageHeader } from "@/components/ui/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SelectionBar } from "@/components/ui/selection-bar";
 import { useToast } from "@/components/ui/toast";
 import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
-import { ApiError } from "@/lib/api-client";
 import { summarizeBulk } from "@/lib/bulk-summary";
+import { errorMessage } from "@/lib/errors";
 import { purgeLeadList } from "@/lib/erasure-api";
 import {
   bulkArchiveLeadLists,
@@ -25,25 +28,16 @@ import {
   listLeadLists,
   unarchiveLeadList,
 } from "@/lib/leads-api";
-import { canEraseData } from "@/lib/permissions";
+import { canEraseData, canManageContacts } from "@/lib/permissions";
 import { useSelection } from "@/lib/use-selection";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 25;
 
-function canManageContacts(role?: string) {
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
-}
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     new Date(value),
   );
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
 }
 
 export function LeadListsPageClient() {
@@ -165,25 +159,19 @@ export function LeadListsPageClient() {
 
   return (
     <main className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <Button asChild variant="ghost">
-            <Link href="/app/leads">Back to leads</Link>
-          </Button>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-3">
-            Lead Lists
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Reusable collections of workspace leads.
-          </p>
-        </div>
-        {mayManage ? (
-          <Button type="button" onClick={() => setFormOpen((open) => !open)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Create List
-          </Button>
-        ) : null}
-      </div>
+      <PageHeader
+        title="Lead Lists"
+        description="Reusable collections of workspace leads."
+        back={{ href: "/app/leads", label: "Back to leads" }}
+        actions={
+          mayManage ? (
+            <Button type="button" onClick={() => setFormOpen((open) => !open)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Create List
+            </Button>
+          ) : null
+        }
+      />
 
       {formOpen && mayManage ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
@@ -224,16 +212,16 @@ export function LeadListsPageClient() {
       {actionError ? <Alert>{actionError}</Alert> : null}
 
       <div className="flex items-center gap-2">
-        <select
+        <Select
           aria-label="List status"
           value={status}
           onChange={(event) => updateStatus(event.target.value)}
-          className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
+          className="w-auto"
         >
           <option value="ACTIVE">Active</option>
           <option value="ARCHIVED">Archived</option>
           <option value="ALL">All</option>
-        </select>
+        </Select>
       </div>
 
       {mayManage ? (
@@ -377,24 +365,13 @@ export function LeadListsPageClient() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!cursor}
-                onClick={() => goToCursor(null)}
-              >
-                First
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!listsQuery.data?.next_cursor}
-                onClick={() => goToCursor(listsQuery.data?.next_cursor ?? null)}
-              >
-                Next
-              </Button>
-            </div>
+            <CursorPagination
+              summary={`Showing ${lists.length} list${lists.length === 1 ? "" : "s"}`}
+              canGoFirst={Boolean(cursor)}
+              canGoNext={Boolean(listsQuery.data?.next_cursor)}
+              onFirst={() => goToCursor(null)}
+              onNext={() => goToCursor(listsQuery.data?.next_cursor ?? null)}
+            />
           </>
         )}
       </section>

@@ -11,14 +11,21 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const { createLead, listLeadLists, listLeads, bulkArchiveLeads, bulkUnarchiveLeads } =
-  vi.hoisted(() => ({
-    createLead: vi.fn(),
-    listLeadLists: vi.fn(),
-    listLeads: vi.fn(),
-    bulkArchiveLeads: vi.fn(),
-    bulkUnarchiveLeads: vi.fn(),
-  }));
+const {
+  createLead,
+  listLeadLists,
+  listLeads,
+  bulkArchiveLeads,
+  bulkUnarchiveLeads,
+  addLeadListMember,
+} = vi.hoisted(() => ({
+  createLead: vi.fn(),
+  listLeadLists: vi.fn(),
+  listLeads: vi.fn(),
+  bulkArchiveLeads: vi.fn(),
+  bulkUnarchiveLeads: vi.fn(),
+  addLeadListMember: vi.fn(),
+}));
 
 vi.mock("@/lib/leads-api", () => ({
   createLead,
@@ -26,6 +33,7 @@ vi.mock("@/lib/leads-api", () => ({
   listLeads,
   bulkArchiveLeads,
   bulkUnarchiveLeads,
+  addLeadListMember,
 }));
 
 const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
@@ -127,8 +135,8 @@ describe("LeadsPageClient", () => {
     await user.click(await screen.findByRole("button", { name: /add lead/i }));
     await user.type(screen.getByLabelText(/email/i), "ada@example.com");
     await user.type(screen.getByLabelText(/first name/i), "Ada");
-    await user.selectOptions(screen.getByLabelText("List"), "list-1");
-    await user.click(screen.getByRole("button", { name: /create/i }));
+    await user.click(await screen.findByRole("checkbox", { name: "Founders" }));
+    await user.click(screen.getByRole("button", { name: /create lead/i }));
 
     await waitFor(() =>
       expect(createLead).toHaveBeenCalledWith("ws-1", {
@@ -139,8 +147,10 @@ describe("LeadsPageClient", () => {
         title: null,
         ...emptyProfile,
         custom_fields: {},
-        list_id: "list-1",
       }),
+    );
+    await waitFor(() =>
+      expect(addLeadListMember).toHaveBeenCalledWith("ws-1", "list-1", "lead-1"),
     );
     expect(listLeads).toHaveBeenCalledWith(
       "ws-1",
@@ -165,7 +175,7 @@ describe("LeadsPageClient", () => {
     await user.type(screen.getByLabelText("City"), "Berlin");
     await user.type(screen.getByLabelText("Company founded year"), "1999");
     await user.type(screen.getByLabelText("Company website"), "acme.example.com");
-    await user.click(screen.getByRole("button", { name: /create/i }));
+    await user.click(screen.getByRole("button", { name: /create lead/i }));
 
     await waitFor(() =>
       expect(createLead).toHaveBeenCalledWith("ws-1", {
@@ -181,7 +191,6 @@ describe("LeadsPageClient", () => {
         company_founded_year: 1999,
         company_website: "acme.example.com",
         custom_fields: {},
-        list_id: null,
       }),
     );
   });

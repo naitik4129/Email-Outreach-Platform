@@ -27,6 +27,7 @@ from app.modules.campaigns.preflight import PreflightService
 from app.modules.campaigns.review import ReviewService
 from app.modules.campaigns.schemas import (
     ActivateIn,
+    AudienceExclusionBreakdown,
     AudienceOut,
     AudienceSelectIn,
     CampaignArchiveIn,
@@ -513,6 +514,21 @@ def get_audience_capture_status(
     db: Session = Depends(get_db),
 ) -> AudienceOut:
     return AudienceService(db).get_audience(context, campaign_id, audience_id)
+
+
+@router.get(
+    "/campaigns/{campaign_id}/audience/{audience_id}/exclusions",
+    response_model=AudienceExclusionBreakdown,
+)
+def get_audience_exclusions(
+    campaign_id: UUID,
+    audience_id: UUID,
+    context: WorkspaceContext = Depends(get_workspace_context),
+    db: Session = Depends(get_db),
+) -> AudienceExclusionBreakdown:
+    return AudienceService(db).get_audience_exclusions(
+        context, campaign_id, audience_id
+    )
 
 
 @router.post(

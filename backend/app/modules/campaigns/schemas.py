@@ -302,6 +302,21 @@ class AudienceOut(BaseModel):
     error_reason: str | None = None
 
 
+class AudienceExclusionBreakdown(BaseModel):
+    """Why excluded_count leads were excluded, for the audience review UI.
+
+    archived_lead and suppressed are exact counts from campaign_audience_members.
+    invalid_address_estimate is a residual (total_candidates minus every row
+    actually stored) because a lead with no resolvable email address never
+    gets a row there -- see workers/campaigns.py's insertable filter -- so it
+    can only be known in aggregate, not per lead.
+    """
+
+    archived_lead: int = 0
+    suppressed: int = 0
+    invalid_address_estimate: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Preflight
 # ---------------------------------------------------------------------------

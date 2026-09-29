@@ -4,46 +4,30 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Archive, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { CursorPagination } from "@/components/ui/pagination";
+import { PageHeader } from "@/components/ui/page-header";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { ApiError } from "@/lib/api-client";
+import { AddListMembersDialog } from "@/components/leads/add-list-members-dialog";
+import { errorMessage } from "@/lib/errors";
 import {
-  addLeadListMember,
   archiveLeadList,
   getLeadList,
   listLeadListMembers,
-  listLeads,
   removeLeadListMember,
   updateLeadList,
 } from "@/lib/leads-api";
+import { canManageContacts } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 25;
 
-function canManageContacts(role?: string) {
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
-}
-
 function fullName(firstName: string | null, lastName: string | null) {
   return [firstName, lastName].filter(Boolean).join(" ") || "Unnamed lead";
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
-}
-
-function useDebouncedValue(value: string, delayMs: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const handle = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(handle);
-  }, [value, delayMs]);
-  return debounced;
 }
 
 export function LeadListDetailClient({ listId }: { listId: string }) {
@@ -54,12 +38,10 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
-  const [memberSearch, setMemberSearch] = useState("");
-  const [selectedLeadId, setSelectedLeadId] = useState("");
+  const [addMembersOpen, setAddMembersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cursor = params.get("cursor");
   const mayManage = canManageContacts(activeWorkspace?.role_code);
-  const debouncedMemberSearch = useDebouncedValue(memberSearch, 350);
 
   const listQuery = useQuery({
     queryKey: ["workspace", activeWorkspaceId, "lead-list", listId],
@@ -75,23 +57,6 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
         cursor,
       }),
     enabled: Boolean(activeWorkspaceId),
-  });
-
-  const searchQuery = useQuery({
-    queryKey: [
-      "workspace",
-      activeWorkspaceId,
-      "leads",
-      "member-search",
-      debouncedMemberSearch,
-    ],
-    queryFn: () =>
-      listLeads(activeWorkspaceId!, {
-        limit: 10,
-        q: debouncedMemberSearch,
-        status: "ACTIVE",
-      }),
-    enabled: Boolean(activeWorkspaceId && mayManage && debouncedMemberSearch),
   });
 
   useEffect(() => {
@@ -125,25 +90,6 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
         queryKey: ["workspace", activeWorkspaceId, "lead-lists"],
       });
       router.push("/app/leads/lists");
-    },
-    onError: (err) => setError(errorMessage(err)),
-  });
-
-  const addMutation = useMutation({
-    mutationFn: () => addLeadListMember(activeWorkspaceId!, listId, selectedLeadId),
-    onSuccess: () => {
-      setSelectedLeadId("");
-      setMemberSearch("");
-      setError(null);
-      queryClient.invalidateQueries({
-        queryKey: ["workspace", activeWorkspaceId, "lead-list", listId],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["workspace", activeWorkspaceId, "lead-list-members", listId],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["workspace", activeWorkspaceId, "leads"],
-      });
     },
     onError: (err) => setError(errorMessage(err)),
   });
@@ -197,36 +143,34 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
 
   return (
     <main className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <Button asChild variant="ghost">
-            <Link href="/app/leads/lists">Back to lists</Link>
-          </Button>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 mt-3">
-            {list.name}
-          </h1>
-          <p className="mt-2 text-sm text-slate-500">
-            {list.member_count} members
-          </p>
-        </div>
-        {mayManage && !list.archived_at ? (
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" onClick={() => setEditing(true)}>
-              <Pencil className="h-4 w-4" aria-hidden="true" />
-              Rename
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={archiveMutation.isPending}
-              onClick={() => archiveMutation.mutate()}
-            >
-              <Archive className="h-4 w-4" aria-hidden="true" />
-              Archive
-            </Button>
-          </div>
-        ) : null}
-      </div>
+      <PageHeader
+        title={list.name}
+        description={`${list.member_count} members`}
+        back={{ href: "/app/leads/lists", label: "Back to lists" }}
+        actions={
+          mayManage && !list.archived_at ? (
+            <>
+              <Button type="button" onClick={() => setAddMembersOpen(true)}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add leads
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setEditing(true)}>
+                <Pencil className="h-4 w-4" aria-hidden="true" />
+                Rename
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={archiveMutation.isPending}
+                onClick={() => archiveMutation.mutate()}
+              >
+                <Archive className="h-4 w-4" aria-hidden="true" />
+                Archive
+              </Button>
+            </>
+          ) : null
+        }
+      />
 
       {error ? <Alert>{error}</Alert> : null}
 
@@ -261,49 +205,6 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
         </section>
       ) : null}
 
-      {mayManage && !list.archived_at ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
-            Add member
-          </h2>
-          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-            <div className="relative">
-              <Search
-                className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400"
-                aria-hidden="true"
-              />
-              <Input
-                value={memberSearch}
-                onChange={(event) => setMemberSearch(event.target.value)}
-                placeholder="Search active leads"
-                className="pl-9"
-              />
-            </div>
-            <select
-              aria-label="Lead to add"
-              value={selectedLeadId}
-              onChange={(event) => setSelectedLeadId(event.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3"
-            >
-              <option value="">Select lead</option>
-              {(searchQuery.data?.items ?? []).map((lead) => (
-                <option key={lead.id} value={lead.id}>
-                  {fullName(lead.first_name, lead.last_name)} ({lead.email})
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              disabled={!selectedLeadId || addMutation.isPending}
-              onClick={() => addMutation.mutate()}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Add
-            </Button>
-          </div>
-        </section>
-      ) : null}
-
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
         {membersQuery.isLoading ? (
           <div className="flex h-40 items-center justify-center">
@@ -318,6 +219,12 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
             <h2 className="text-lg font-semibold text-slate-900">
               No leads in this list
             </h2>
+            {mayManage && !list.archived_at ? (
+              <Button className="mt-4" onClick={() => setAddMembersOpen(true)}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add leads
+              </Button>
+            ) : null}
           </div>
         ) : (
           <>
@@ -364,27 +271,24 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!cursor}
-                onClick={() => goToCursor(null)}
-              >
-                First
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!membersQuery.data?.next_cursor}
-                onClick={() => goToCursor(membersQuery.data?.next_cursor ?? null)}
-              >
-                Next
-              </Button>
-            </div>
+            <CursorPagination
+              summary={`Showing ${membersQuery.data?.items.length ?? 0} member${
+                (membersQuery.data?.items.length ?? 0) === 1 ? "" : "s"
+              }`}
+              canGoFirst={Boolean(cursor)}
+              canGoNext={Boolean(membersQuery.data?.next_cursor)}
+              onFirst={() => goToCursor(null)}
+              onNext={() => goToCursor(membersQuery.data?.next_cursor ?? null)}
+            />
           </>
         )}
       </section>
+      <AddListMembersDialog
+        open={addMembersOpen}
+        onOpenChange={setAddMembersOpen}
+        listId={listId}
+        listName={list.name}
+      />
     </main>
   );
 }

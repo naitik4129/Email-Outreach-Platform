@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   BarChart3,
   Bell,
-  Ban,
   Check,
   CheckCheck,
   ChevronDown,
@@ -18,6 +17,7 @@ import {
   HelpCircle,
   Inbox,
   LayoutDashboard,
+  ListChecks,
   Loader2,
   LogOut,
   Mail,
@@ -27,7 +27,6 @@ import {
   Settings,
   ShieldCheck,
   Sliders,
-  UploadCloud,
   UserCircle,
   Users,
   X,
@@ -69,8 +68,7 @@ const navigationGroups: NavGroup[] = [
     label: "Audience",
     items: [
       { href: "/app/leads", label: "Leads", icon: Contact },
-      { href: "/app/leads/imports", label: "Imports", icon: UploadCloud },
-      { href: "/app/leads/suppression", label: "Suppression", icon: Ban },
+      { href: "/app/leads/lists", label: "Lists", icon: ListChecks },
     ],
   },
   {

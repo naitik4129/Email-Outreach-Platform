@@ -1258,6 +1258,33 @@ class CampaignRepository:
         )
         return {"accepted": int(row["accepted"]), "excluded": int(row["excluded"])}
 
+    def get_audience_exclusion_reason_counts(
+        self, *, workspace_id: UUID, audience_id: UUID
+    ) -> dict[str, int]:
+        """Counts EXCLUDED members grouped by why, for the UI's "why were N
+        leads excluded" breakdown. Only reasons that actually get a row here
+        (archived_lead, suppressed) are meaningful; a lead with no resolvable
+        address is filtered out before insert (see workers/campaigns.py) and
+        is never counted here -- the caller derives that bucket as a residual
+        against total_candidates instead."""
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT exclusion_reason, COUNT(*) AS n
+                    FROM campaign_audience_members
+                    WHERE workspace_id = :workspace_id AND audience_id = :audience_id
+                      AND eligibility_status = 'EXCLUDED'
+                    GROUP BY exclusion_reason
+                    """
+                ),
+                {"workspace_id": str(workspace_id), "audience_id": str(audience_id)},
+            )
+            .mappings()
+            .all()
+        )
+        return {str(row["exclusion_reason"]): int(row["n"]) for row in rows}
+
     # -------------------------------------------------------------------
     # Step attachments (campaign_step_attachments, migration 0025)
     # -------------------------------------------------------------------

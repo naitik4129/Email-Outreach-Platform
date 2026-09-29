@@ -637,6 +637,15 @@ export type CampaignAudience = {
   error_reason: string | null;
 };
 
+// archived_lead/suppressed are exact; invalid_address_estimate is a residual
+// (see backend AudienceExclusionBreakdown) since a lead with no resolvable
+// email address never gets a campaign_audience_members row to count exactly.
+export type AudienceExclusionBreakdown = {
+  archived_lead: number;
+  suppressed: number;
+  invalid_address_estimate: number;
+};
+
 export type PreflightIssue = {
   code: string;
   message: string;

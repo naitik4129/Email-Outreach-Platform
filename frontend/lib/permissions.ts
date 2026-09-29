@@ -73,3 +73,12 @@ const ERASE_ROLES = new Set(["OWNER", "ADMIN"]);
 export function canEraseData(role: RoleCode): boolean {
   return Boolean(role && ERASE_ROLES.has(role));
 }
+
+const MANAGE_CONTACTS_ROLES = new Set(["OWNER", "ADMIN", "MANAGER", "MEMBER"]);
+
+/** contacts.manage: create/edit/archive leads, lists, imports and manual
+ * suppressions. Matches backend app/core/permissions.py's "contacts.manage".
+ * UX only -- the server re-checks every mutation. */
+export function canManageContacts(role: RoleCode): boolean {
+  return Boolean(role && MANAGE_CONTACTS_ROLES.has(role));
+}

@@ -1,5 +1,6 @@
 import { apiRequest } from "@/lib/api-client";
 import type {
+  AudienceExclusionBreakdown,
   BulkActionResult,
   BulkItem,
   CampaignAudience,
@@ -429,6 +430,18 @@ export async function getAudienceCaptureStatus(
     `/campaigns/${campaignId}/audience/${audienceId}`,
   );
   return (await apiRequest<CampaignAudience>(path)).data;
+}
+
+export async function getAudienceExclusions(
+  workspaceId: string,
+  campaignId: string,
+  audienceId: string,
+) {
+  const path = workspacePath(
+    workspaceId,
+    `/campaigns/${campaignId}/audience/${audienceId}/exclusions`,
+  );
+  return (await apiRequest<AudienceExclusionBreakdown>(path)).data;
 }
 
 export async function commitAudience(

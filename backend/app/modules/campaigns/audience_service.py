@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import WorkspaceContext
 from app.core.errors import AppError
 from app.modules.campaigns.repository import CampaignRepository
-from app.modules.campaigns.schemas import AudienceOut, AudienceSelectIn
+from app.modules.campaigns.schemas import (
+    AudienceExclusionBreakdown,
+    AudienceOut,
+    AudienceSelectIn,
+)
 
 
 class AudienceService:
@@ -229,6 +233,33 @@ class AudienceService:
             campaign_id=campaign_id,
             audience_id=audience_id,
             abandon=True,
+        )
+
+    def get_audience_exclusions(
+        self, context: WorkspaceContext, campaign_id: UUID, audience_id: UUID
+    ) -> AudienceExclusionBreakdown:
+        """Read-only breakdown of why a READY/FAILED audience's excluded
+        members were excluded. Reuses get_audience for the same
+        not-found/campaign-ownership checks every other audience read uses;
+        does not touch capture, commit or worker classification."""
+        audience_out = self.get_audience(context, campaign_id, audience_id)
+        reasons = self.repo.get_audience_exclusion_reason_counts(
+            workspace_id=context.workspace_id, audience_id=audience_id
+        )
+        archived_lead = reasons.get("archived_lead", 0)
+        suppressed = reasons.get("suppressed", 0)
+        stored_excluded = archived_lead + suppressed
+        total_candidates = audience_out.total_candidates or 0
+        accepted = audience_out.accepted_count or 0
+        # invalid_address rows are filtered out before insert (see
+        # workers/campaigns.py), so that bucket only exists as this residual.
+        invalid_address_estimate = max(
+            0, total_candidates - accepted - stored_excluded
+        )
+        return AudienceExclusionBreakdown(
+            archived_lead=archived_lead,
+            suppressed=suppressed,
+            invalid_address_estimate=invalid_address_estimate,
         )
 
     def _dispatch_capture_task(

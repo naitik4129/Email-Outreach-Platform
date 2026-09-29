@@ -9,26 +9,18 @@ import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { ImportStatusBadge } from "@/components/ui/status-badge";
-import { ApiError } from "@/lib/api-client";
+import { errorMessage } from "@/lib/errors";
 import { listImports } from "@/lib/imports-api";
+import { canManageContacts } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 
 const PAGE_SIZE = 25;
-
-function canManageContacts(role?: string) {
-  return role === "OWNER" || role === "ADMIN" || role === "MANAGER" || role === "MEMBER";
-}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
-}
-
-function errorMessage(error: unknown) {
-  if (error instanceof ApiError) return error.message;
-  return "We couldn't complete that request. Please try again.";
 }
 
 export function ImportsPageClient() {

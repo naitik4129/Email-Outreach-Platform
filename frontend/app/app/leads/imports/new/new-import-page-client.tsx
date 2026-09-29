@@ -18,18 +18,34 @@ import {
 } from "@/lib/lead-fields";
 import { listLeadLists } from "@/lib/leads-api";
 import { useWorkspace } from "@/lib/workspace-context";
-import type { ImportKind, ImportUploadOut } from "@/types/domain";
+import type { ImportJob, ImportKind, ImportUploadOut } from "@/types/domain";
 
 type Step = "UPLOAD" | "MAP" | "CONFIRM";
 
-export function NewImportPageClient() {
+type NewImportPageClientProps = {
+  defaultImportKind?: ImportKind;
+  defaultListId?: string;
+  // Falls back to the standalone route's push-to-detail-page behavior when
+  // omitted, so /app/leads/imports/new keeps working unchanged.
+  onImported?: (job: ImportJob) => void;
+  // A dialog wrapper supplies its own title, so it hides this page's own
+  // heading to avoid showing the same title twice.
+  showHeading?: boolean;
+};
+
+export function NewImportPageClient({
+  defaultImportKind = "LEADS",
+  defaultListId = "",
+  onImported,
+  showHeading = true,
+}: NewImportPageClientProps = {}) {
   const router = useRouter();
   const { activeWorkspaceId } = useWorkspace();
 
   const [step, setStep] = useState<Step>("UPLOAD");
   const [file, setFile] = useState<File | null>(null);
-  const [importKind, setImportKind] = useState<ImportKind>("LEADS");
-  const [listId, setListId] = useState<string>("");
+  const [importKind, setImportKind] = useState<ImportKind>(defaultImportKind);
+  const [listId, setListId] = useState<string>(defaultListId);
   const [uploadResult, setUploadResult] = useState<ImportUploadOut | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +86,8 @@ export function NewImportPageClient() {
         list_id: listId || null,
       }),
     onSuccess: (job) => {
-      router.push(`/app/leads/imports/${job.id}`);
+      if (onImported) onImported(job);
+      else router.push(`/app/leads/imports/${job.id}`);
     },
     onError: (err) => {
       setError(err instanceof ApiError ? err.message : "Failed to start import");
@@ -113,14 +130,16 @@ export function NewImportPageClient() {
 
   return (
     <main className="mx-auto max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-          New Import
-        </h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Upload a CSV to import leads or manual suppressions.
-        </p>
-      </div>
+      {showHeading ? (
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            New Import
+          </h1>
+          <p className="mt-2 text-sm text-slate-500">
+            Upload a CSV to import leads or manual suppressions.
+          </p>
+        </div>
+      ) : null}
 
       {error ? <Alert>{error}</Alert> : null}
 
