@@ -168,7 +168,8 @@ describe("LeadsPageClient", () => {
     renderWithClient(<LeadsPageClient />);
 
     await user.click(await screen.findByRole("button", { name: /add lead/i }));
-    await user.type(screen.getByLabelText("Email"), "ada@example.com");
+    // Required fields render a trailing "*" as part of the label text.
+    await user.type(screen.getByLabelText("Email*"), "ada@example.com");
     await user.type(screen.getByLabelText("Job title"), "Founder");
     await user.type(screen.getByLabelText("Phone"), "  +1 555 123 4567 ");
     await user.type(screen.getByLabelText("Experience (years)"), "7");

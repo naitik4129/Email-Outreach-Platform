@@ -95,69 +95,153 @@ export function formatLocation(
 
 // --- import column mapping -------------------------------------------------
 
-export type LeadImportField = { key: string; label: string; aliases: string[] };
+export type LeadImportField = {
+  key: string;
+  label: string;
+  aliases: string[];
+  // Shown in the downloadable sample CSV so the column's expected shape is
+  // obvious (e.g. a plain year, a bare domain) without guessing.
+  sample: string;
+};
 
 // Aliases are compared after normalizeHeader(), so "first_name", "First-Name"
 // and "first name" are the same. Keys must match backend LEADS_MAPPABLE_FIELDS.
 export const LEAD_IMPORT_FIELDS: LeadImportField[] = [
-  { key: "email", label: "Email", aliases: ["email", "e mail", "email address", "work email"] },
-  { key: "first_name", label: "First name", aliases: ["first name", "firstname", "given name"] },
+  {
+    key: "email",
+    label: "Email",
+    aliases: ["email", "e mail", "email address", "work email"],
+    sample: "ada@example.com",
+  },
+  {
+    key: "first_name",
+    label: "First name",
+    aliases: ["first name", "firstname", "given name"],
+    sample: "Ada",
+  },
   {
     key: "last_name",
     label: "Last name",
     aliases: ["last name", "lastname", "surname", "family name"],
+    sample: "Lovelace",
   },
   {
     key: "company",
     label: "Company",
     aliases: ["company", "company name", "organization", "organisation", "employer"],
+    sample: "Acme Corp",
   },
-  { key: "title", label: "Job title", aliases: ["title", "job title", "position", "role"] },
+  {
+    key: "title",
+    label: "Job title",
+    aliases: ["title", "job title", "position", "role"],
+    sample: "Head of Growth",
+  },
   {
     key: "phone",
     label: "Phone",
     aliases: ["phone", "phone number", "mobile", "mobile phone", "telephone", "cell"],
+    sample: "+1 555 123 4567",
   },
-  { key: "department", label: "Department", aliases: ["department", "dept"] },
+  {
+    key: "department",
+    label: "Department",
+    aliases: ["department", "dept"],
+    sample: "Marketing",
+  },
   {
     key: "experience_years",
     label: "Experience (years)",
     aliases: ["experience", "experience years", "years of experience", "years experience"],
+    sample: "7",
   },
   {
     key: "linkedin_url",
     label: "LinkedIn URL",
     aliases: ["linkedin", "linkedin url", "linkedin profile"],
+    sample: "https://linkedin.com/in/ada-lovelace",
   },
-  { key: "website", label: "Website", aliases: ["website", "personal website", "web site"] },
-  { key: "city", label: "City", aliases: ["city", "town"] },
-  { key: "state", label: "State", aliases: ["state", "province", "region", "state province"] },
-  { key: "country", label: "Country", aliases: ["country"] },
+  {
+    key: "website",
+    label: "Website",
+    aliases: ["website", "personal website", "web site"],
+    sample: "ada.example.com",
+  },
+  { key: "city", label: "City", aliases: ["city", "town"], sample: "London" },
+  {
+    key: "state",
+    label: "State",
+    aliases: ["state", "province", "region", "state province"],
+    sample: "",
+  },
+  { key: "country", label: "Country", aliases: ["country"], sample: "United Kingdom" },
   {
     key: "company_website",
     label: "Company website",
     aliases: ["company website", "company url", "company domain", "organization website"],
+    sample: "acme.example.com",
   },
   {
     key: "company_industry",
     label: "Company industry",
     aliases: ["company industry", "industry", "sector"],
+    sample: "Software",
   },
   {
     key: "company_founded_year",
     label: "Company founded year",
     aliases: ["company founded year", "company founded", "founded", "founded year", "year founded"],
+    sample: "1999",
   },
   {
     key: "company_linkedin_url",
     label: "Company LinkedIn URL",
     aliases: ["company linkedin", "company linkedin url", "company linkedin page"],
+    sample: "https://linkedin.com/company/acme",
   },
 ];
 
 export const SUPPRESSION_IMPORT_FIELDS: LeadImportField[] = LEAD_IMPORT_FIELDS.filter(
   (field) => field.key === "email",
 );
+
+// Quotes a value only when it needs it (contains a comma, quote or newline),
+// doubling any embedded quotes -- standard CSV escaping (RFC 4180).
+function csvCell(value: string): string {
+  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+  return value;
+}
+
+// A second example row with different values, so the format reads as a
+// real file rather than a single placeholder row.
+const SECOND_SAMPLE: Record<string, string> = {
+  email: "grace@example.com",
+  first_name: "Grace",
+  last_name: "Hopper",
+  company: "Acme Corp",
+  title: "VP Engineering",
+  phone: "+1 555 987 6543",
+  department: "Engineering",
+  experience_years: "12",
+  linkedin_url: "https://linkedin.com/in/grace-hopper",
+  website: "",
+  city: "Berlin",
+  state: "",
+  country: "Germany",
+  company_website: "acme.example.com",
+  company_industry: "Software",
+  company_founded_year: "1999",
+  company_linkedin_url: "https://linkedin.com/company/acme",
+};
+
+export function buildSampleCsv(fields: LeadImportField[]): string {
+  const rows = [
+    fields.map((field) => field.label),
+    fields.map((field) => field.sample),
+    fields.map((field) => SECOND_SAMPLE[field.key] ?? field.sample),
+  ];
+  return rows.map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
 
 function normalizeHeader(header: string) {
   return header

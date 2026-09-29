@@ -13,14 +13,28 @@ import {
   LEAD_IMPORT_FIELDS,
   SUPPRESSION_IMPORT_FIELDS,
   autoMapHeaders,
+  buildSampleCsv,
   duplicateMappedFields,
   toApiColumns,
+  type LeadImportField,
 } from "@/lib/lead-fields";
 import { listLeadLists } from "@/lib/leads-api";
 import { useWorkspace } from "@/lib/workspace-context";
 import type { ImportJob, ImportKind, ImportUploadOut } from "@/types/domain";
 
 type Step = "UPLOAD" | "MAP" | "CONFIRM";
+
+function downloadSampleCsv(fields: LeadImportField[], filename: string) {
+  const blob = new Blob([buildSampleCsv(fields)], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 type NewImportPageClientProps = {
   defaultImportKind?: ImportKind;
@@ -191,7 +205,23 @@ export function NewImportPageClient({
               )}
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">CSV File</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-sm font-medium text-slate-700">CSV File</label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      downloadSampleCsv(
+                        mappableFields,
+                        importKind === "LEADS"
+                          ? "sample-leads-import.csv"
+                          : "sample-suppressions-import.csv",
+                      )
+                    }
+                    className="text-sm font-medium text-brand-600 hover:text-brand-700 hover:underline"
+                  >
+                    Download sample CSV
+                  </button>
+                </div>
                 <div className="flex justify-center rounded-lg border border-dashed border-slate-300 px-6 py-10">
                   <div className="text-center">
                     <UploadCloud className="mx-auto h-12 w-12 text-slate-300" aria-hidden="true" />
