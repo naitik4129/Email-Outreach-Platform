@@ -12,7 +12,7 @@ function workspacePath(workspaceId: string, path: string) {
 
 export async function listTeamMembers(workspaceId: string) {
   return (
-    await apiRequest<WorkspaceMember[]>(workspacePath(workspaceId, "/team"))
+    await apiRequest<WorkspaceMember[]>(workspacePath(workspaceId, "/members"))
   ).data;
 }
 
@@ -23,7 +23,7 @@ export async function updateMemberRole(
 ) {
   return (
     await apiRequest<WorkspaceMember>(
-      workspacePath(workspaceId, `/team/${memberId}/role`),
+      workspacePath(workspaceId, `/members/${memberId}`),
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -33,24 +33,31 @@ export async function updateMemberRole(
   ).data;
 }
 
-export async function removeMember(workspaceId: string, memberId: string) {
+export async function removeMember(
+  workspaceId: string,
+  memberId: string,
+  payload: { expected_version: number },
+) {
   return (
-    await apiRequest<{ ok: boolean }>(
-      workspacePath(workspaceId, `/team/${memberId}`),
-      {
-        method: "DELETE",
-      },
-    )
+    await apiRequest<void>(workspacePath(workspaceId, `/members/${memberId}`), {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
   ).data;
 }
 
 export async function transferOwnership(
   workspaceId: string,
-  payload: { new_owner_user_id: string; retain_role: RoleCode },
+  payload: {
+    target_membership_id: string;
+    expected_owner_version: number;
+    expected_target_version: number;
+  },
 ) {
   return (
-    await apiRequest<{ ok: boolean }>(
-      workspacePath(workspaceId, "/team/transfer-ownership"),
+    await apiRequest<{ workspace_id: string; previous_owner_id: string; new_owner_id: string }>(
+      workspacePath(workspaceId, "/transfer-ownership"),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,10 +110,10 @@ export async function revokeInvitation(
   invitationId: string,
 ) {
   return (
-    await apiRequest<{ ok: boolean }>(
-      workspacePath(workspaceId, `/invitations/${invitationId}`),
+    await apiRequest<void>(
+      workspacePath(workspaceId, `/invitations/${invitationId}/revoke`),
       {
-        method: "DELETE",
+        method: "POST",
       },
     )
   ).data;

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Pencil } from "lucide-react";
+import { AlertTriangle, Loader2, Pencil } from "lucide-react";
 import { z } from "zod";
 
 import { Alert } from "@/components/ui/alert";
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api-client";
+import { canDeleteWorkspace } from "@/lib/permissions";
 import { useWorkspace } from "@/lib/workspace-context";
 import { getWorkspace, updateWorkspace } from "@/lib/workspaces-api";
 
@@ -67,6 +69,7 @@ export function WorkspaceSettings() {
   if (!workspace) return null;
 
   return (
+    <>
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -117,5 +120,15 @@ export function WorkspaceSettings() {
         )}
       </div>
     </section>
+    {canDeleteWorkspace(activeWorkspace?.role_code) ? (
+      <Link
+        href="/app/settings/danger"
+        className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700"
+      >
+        <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+        Danger Zone
+      </Link>
+    ) : null}
+    </>
   );
 }

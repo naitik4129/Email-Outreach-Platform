@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   BarChart3,
   Bell,
   Ban,
@@ -21,6 +22,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  Plus,
   Send,
   Settings,
   ShieldCheck,
@@ -34,6 +36,7 @@ import {
 import { LogoMark, Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { ToastProvider } from "@/components/ui/toast";
+import { NewWorkspaceDialog } from "@/components/workspace/new-workspace-dialog";
 import { ApiError } from "@/lib/api-client";
 import {
   getUnreadCount,
@@ -41,6 +44,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from "@/lib/notifications-api";
+import { canDeleteWorkspace } from "@/lib/permissions";
 import { signOutCurrentBrowser } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { useWorkspace, WorkspaceProvider } from "@/lib/workspace-context";
@@ -172,6 +176,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   } = useWorkspace();
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false);
   const headerActionsRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const notificationsOpen = openMenu === "notifications";
@@ -419,23 +424,36 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
               <label htmlFor="workspace-select" className="sr-only">
                 Select workspace
               </label>
-              <div className="relative">
-                <select
-                  id="workspace-select"
-                  value={activeWorkspaceId ?? ""}
-                  onChange={handleWorkspaceChange}
-                  className="h-9 w-full max-w-[220px] cursor-pointer appearance-none truncate rounded-lg border border-slate-200 bg-white py-0 pl-3 pr-8 text-sm font-semibold text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
+              <div className="flex items-center gap-1.5">
+                <div className="relative min-w-0">
+                  <select
+                    id="workspace-select"
+                    value={activeWorkspaceId ?? ""}
+                    onChange={handleWorkspaceChange}
+                    className="h-9 w-full max-w-[220px] cursor-pointer appearance-none truncate rounded-lg border border-slate-200 bg-white py-0 pl-3 pr-8 text-sm font-semibold text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30"
+                  >
+                    {workspaces.map((workspace) => (
+                      <option key={workspace.workspace_id} value={workspace.workspace_id}>
+                        {workspace.workspace_name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-400"
+                    aria-hidden="true"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="New workspace"
+                  title="New workspace"
+                  className="h-9 w-9 shrink-0"
+                  onClick={() => setNewWorkspaceDialogOpen(true)}
                 >
-                  {workspaces.map((workspace) => (
-                    <option key={workspace.workspace_id} value={workspace.workspace_id}>
-                      {workspace.workspace_name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-400"
-                  aria-hidden="true"
-                />
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                </Button>
               </div>
               {activeWorkspace ? (
                 <p className="mt-0.5 hidden truncate text-xs text-slate-500 sm:block">
@@ -623,6 +641,17 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
                     <Users className="h-4 w-4 text-slate-500" aria-hidden="true" />
                     Team &amp; Access
                   </Link>
+                  {canDeleteWorkspace(activeWorkspace?.role_code) ? (
+                    <Link
+                      href="/app/settings/danger"
+                      role="menuitem"
+                      onClick={() => setOpenMenu(null)}
+                      className={menuItemClasses}
+                    >
+                      <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />
+                      Danger Zone
+                    </Link>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -666,6 +695,10 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </div>
+      <NewWorkspaceDialog
+        open={newWorkspaceDialogOpen}
+        onRequestClose={() => setNewWorkspaceDialogOpen(false)}
+      />
     </div>
   );
 }

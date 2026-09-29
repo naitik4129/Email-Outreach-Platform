@@ -33,6 +33,7 @@ _STATUS_FOR_CODE: dict[str, tuple[str, int]] = {
     "state": ("state_conflict", 409),
     "in_use": ("in_use", 409),
     "in_flight": ("in_flight", 409),
+    "invalid": ("confirmation_mismatch", 422),
 }
 
 
@@ -159,6 +160,39 @@ class ErasureService:
         )
         self._run("app_purge_mailbox", context, mailbox_id)
         return self._finish("mailbox.purge", mailbox_id, {})
+
+    def purge_workspace(self, context: WorkspaceContext, confirm: str) -> ErasureOut:
+        """Permanently deletes the workspace and every row it owns. Irreversible.
+
+        Doesn't reuse _confirm/_run: those assume a "workspace_id + id" row
+        inside the workspace, but here the workspace itself is the target, so
+        there is no workspace_id column to filter by.
+        """
+        row = self.session.execute(
+            text("SELECT name FROM workspaces WHERE id = :id"),
+            {"id": str(context.workspace_id)},
+        ).first()
+        if row is None:
+            raise AppError("not_found", "Workspace not found", status_code=404)
+        if confirm.strip() != str(row[0]).strip():
+            raise self._mismatch()
+
+        try:
+            with self.session.begin_nested():
+                value = self.session.execute(
+                    text("SELECT public.app_delete_workspace(:ws, :confirm)"),
+                    {"ws": str(context.workspace_id), "confirm": confirm},
+                ).scalar_one()
+        except DBAPIError as exc:
+            translated = _translate(exc)
+            if translated is None:
+                raise
+            raise translated from exc
+
+        result = dict(value or {})
+        return self._finish(
+            "workspace.delete", context.workspace_id, result.get("deleted", {})
+        )
 
     # -- internals ----------------------------------------------------------
 

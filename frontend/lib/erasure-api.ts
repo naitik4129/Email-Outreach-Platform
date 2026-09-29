@@ -36,5 +36,9 @@ export const purgeImport = (ws: string, id: string, confirm: string) =>
 export const purgeMailbox = (ws: string, id: string, confirm: string) =>
   post(ws, `/mailboxes/${id}/purge`, confirm);
 
+/** Permanently delete the workspace and everything in it. Irreversible. */
+export const purgeWorkspace = (ws: string, confirm: string) =>
+  post(ws, "/purge", confirm);
+
 /** Imports have no name, so the confirmation is this word. */
 export const IMPORT_CONFIRMATION = "DELETE";

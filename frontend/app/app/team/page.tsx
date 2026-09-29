@@ -65,8 +65,7 @@ export default function TeamPage() {
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Transfer Ownership Form
-  const [newOwnerUserId, setNewOwnerUserId] = useState("");
-  const [retainRole, setRetainRole] = useState<RoleCode>("ADMIN");
+  const [newOwnerMembershipId, setNewOwnerMembershipId] = useState("");
 
   // Status banners
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -127,8 +126,10 @@ export default function TeamPage() {
   });
 
   const removeMemberMutation = useMutation({
-    mutationFn: (memberId: string) =>
-      removeMember(activeWorkspaceId!, memberId),
+    mutationFn: (member: WorkspaceMember) =>
+      removeMember(activeWorkspaceId!, member.membership_id, {
+        expected_version: member.version,
+      }),
     onSuccess: () => {
       setSuccessMessage("Member removed from workspace.");
       setErrorMessage(null);
@@ -207,11 +208,22 @@ export default function TeamPage() {
   });
 
   const transferMutation = useMutation({
-    mutationFn: () =>
-      transferOwnership(activeWorkspaceId!, {
-        new_owner_user_id: newOwnerUserId,
-        retain_role: retainRole,
-      }),
+    mutationFn: () => {
+      const owner = members?.find(
+        (m) => m.role_code === "OWNER" && m.status === "ACTIVE",
+      );
+      const target = members?.find(
+        (m) => m.membership_id === newOwnerMembershipId,
+      );
+      if (!owner || !target) {
+        throw new Error("Select a member to transfer ownership to.");
+      }
+      return transferOwnership(activeWorkspaceId!, {
+        target_membership_id: target.membership_id,
+        expected_owner_version: owner.version,
+        expected_target_version: target.version,
+      });
+    },
     onSuccess: () => {
       setSuccessMessage(
         "Workspace ownership transferred successfully. Your role has been updated.",
@@ -259,10 +271,12 @@ export default function TeamPage() {
               variant="outline"
               size="sm"
               onClick={() => {
-                const candidates = members.filter((m) => m.role_code !== "OWNER");
-                if (candidates.length > 0) {
-                  setNewOwnerUserId(candidates[0].user_id);
-                }
+                const candidates = members.filter(
+                  (m) => m.role_code !== "OWNER" && m.status === "ACTIVE",
+                );
+                setNewOwnerMembershipId(
+                  candidates.length > 0 ? candidates[0].membership_id : "",
+                );
                 setTransferModalOpen(true);
               }}
               className="gap-2 text-slate-700 hover:text-slate-900"
@@ -702,7 +716,7 @@ export default function TeamPage() {
             <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1">
               <p className="font-semibold">Irreversible Administrative Action</p>
               <p>
-                Transferring ownership designates another member as the primary OWNER. You will retain access under your selected role, but you will no longer have exclusive ownership authority.
+                Transferring ownership designates another member as the primary OWNER. You will be demoted to ADMIN, but will no longer have exclusive ownership authority.
               </p>
             </div>
 
@@ -717,32 +731,20 @@ export default function TeamPage() {
                 <Label htmlFor="new-owner">Select New Owner</Label>
                 <select
                   id="new-owner"
-                  value={newOwnerUserId}
-                  onChange={(e) => setNewOwnerUserId(e.target.value)}
+                  value={newOwnerMembershipId}
+                  onChange={(e) => setNewOwnerMembershipId(e.target.value)}
                   className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3 mt-1"
                 >
+                  <option value="" disabled>
+                    Choose a member&hellip;
+                  </option>
                   {members
-                    ?.filter((m) => m.role_code !== "OWNER")
+                    ?.filter((m) => m.role_code !== "OWNER" && m.status === "ACTIVE")
                     .map((m) => (
-                      <option key={m.user_id} value={m.user_id}>
+                      <option key={m.membership_id} value={m.membership_id}>
                         {m.display_name ?? m.email} ({m.email})
                       </option>
                     ))}
-                </select>
-              </div>
-
-              <div>
-                <Label htmlFor="retain-role">Your Role After Transfer</Label>
-                <select
-                  id="retain-role"
-                  value={retainRole}
-                  onChange={(e) => setRetainRole(e.target.value as RoleCode)}
-                  className="w-full rounded-md border border-slate-300 bg-white text-sm text-slate-900 shadow-sm transition-colors placeholder:text-slate-400 hover:border-slate-400 focus-visible:border-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/30 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500 disabled:opacity-70 aria-[invalid=true]:border-red-400 aria-[invalid=true]:focus-visible:ring-red-500/30 h-10 px-3 mt-1"
-                >
-                  <option value="ADMIN">ADMIN</option>
-                  <option value="MANAGER">MANAGER</option>
-                  <option value="MEMBER">MEMBER</option>
-                  <option value="VIEWER">VIEWER</option>
                 </select>
               </div>
 
@@ -757,7 +759,7 @@ export default function TeamPage() {
                 <Button
                   type="submit"
                   variant="danger"
-                  disabled={transferMutation.isPending || !newOwnerUserId}
+                  disabled={transferMutation.isPending || !newOwnerMembershipId}
                 >
                   {transferMutation.isPending ? (
                     <>
@@ -794,7 +796,7 @@ export default function TeamPage() {
         loading={removeMemberMutation.isPending}
         onCancel={() => setMemberToRemove(null)}
         onConfirm={() => {
-          if (memberToRemove) removeMemberMutation.mutate(memberToRemove.membership_id);
+          if (memberToRemove) removeMemberMutation.mutate(memberToRemove);
         }}
       />
     </main>

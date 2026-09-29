@@ -16,6 +16,11 @@ router = APIRouter()
 # address must not end up in a URL (access logs, browser history), and the
 # database commands re-check workspace.manage (ADMIN/OWNER) on their own.
 _Admin = Depends(require_permission("workspace.manage"))
+# Deleting the whole workspace is stricter than erasing one resource in it --
+# reuses the existing OWNER-only "ownership.manage" capability (same one
+# transfer-ownership uses) rather than adding a new entry to the closed,
+# approved app_has_permission() matrix in 0001_initial.sql.
+_Owner = Depends(require_permission("ownership.manage"))
 
 
 @router.post("/campaigns/{campaign_id}/purge", response_model=ErasureOut)
@@ -86,3 +91,13 @@ def purge_mailbox(
     db: Session = Depends(get_db),
 ) -> ErasureOut:
     return ErasureService(db).purge_mailbox(context, mailbox_id, payload.confirm)
+
+
+@router.post("/purge", response_model=ErasureOut)
+def purge_workspace(
+    payload: ErasureConfirmIn,
+    context: WorkspaceContext = _Owner,
+    db: Session = Depends(get_db),
+) -> ErasureOut:
+    """Permanently deletes the workspace and everything in it. Irreversible."""
+    return ErasureService(db).purge_workspace(context, payload.confirm)

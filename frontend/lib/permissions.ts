@@ -58,6 +58,13 @@ export function canTransferOwnership(role: RoleCode): boolean {
   return role === "OWNER";
 }
 
+/** ownership.manage: permanently delete the whole workspace (Owner only).
+ * Stricter than canEraseData (ADMIN/OWNER), which gates erasing individual
+ * resources within a workspace, not the workspace itself. */
+export function canDeleteWorkspace(role: RoleCode): boolean {
+  return role === "OWNER";
+}
+
 
 const ERASE_ROLES = new Set(["OWNER", "ADMIN"]);
 
