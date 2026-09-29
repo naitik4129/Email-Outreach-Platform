@@ -16,7 +16,54 @@ type LeadProfileFieldsProps = {
   onChange: (key: LeadProfileKey, value: string) => void;
   disabled?: boolean;
   defaultOpen?: boolean;
+  // false renders every group directly, with no click-to-reveal step -- for
+  // a dialog where the whole form should be scannable/scrollable at once
+  // rather than hidden behind a toggle.
+  collapsible?: boolean;
 };
+
+function ProfileFieldGroups({
+  idPrefix,
+  values,
+  onChange,
+  disabled,
+}: Omit<LeadProfileFieldsProps, "defaultOpen" | "collapsible">) {
+  return (
+    <div className="space-y-5">
+      {LEAD_PROFILE_GROUPS.map((group) => (
+        <fieldset key={group}>
+          <legend className="text-xs font-semibold uppercase tracking-normal text-slate-500">
+            {group}
+          </legend>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            {LEAD_PROFILE_FIELDS.filter((field) => field.group === group).map(
+              (field) => (
+                <Field
+                  key={field.key}
+                  id={`${idPrefix}-${field.key.replace(/_/g, "-")}`}
+                  label={field.label}
+                >
+                  <Input
+                    // Not type="url": browsers reject "example.com" without a
+                    // scheme, but the server accepts it and defaults to https.
+                    type={field.input === "url" ? "text" : field.input}
+                    inputMode={field.input === "url" ? "url" : undefined}
+                    value={values[field.key]}
+                    onChange={(event) => onChange(field.key, event.target.value)}
+                    disabled={disabled}
+                    placeholder={field.placeholder}
+                    min={field.min}
+                    max={field.max}
+                  />
+                </Field>
+              ),
+            )}
+          </div>
+        </fieldset>
+      ))}
+    </div>
+  );
+}
 
 // Collapsed by default on create so the form stays short; every field is
 // optional and only the server decides whether a value is acceptable.
@@ -26,7 +73,21 @@ export function LeadProfileFields({
   onChange,
   disabled,
   defaultOpen = false,
+  collapsible = true,
 }: LeadProfileFieldsProps) {
+  if (!collapsible) {
+    return (
+      <div className="md:col-span-2">
+        <ProfileFieldGroups
+          idPrefix={idPrefix}
+          values={values}
+          onChange={onChange}
+          disabled={disabled}
+        />
+      </div>
+    );
+  }
+
   return (
     <details
       className="rounded-md border border-slate-200 md:col-span-2"
@@ -35,38 +96,13 @@ export function LeadProfileFields({
       <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-slate-700">
         More details
       </summary>
-      <div className="space-y-5 border-t border-slate-200 p-3">
-        {LEAD_PROFILE_GROUPS.map((group) => (
-          <fieldset key={group}>
-            <legend className="text-xs font-semibold uppercase tracking-normal text-slate-500">
-              {group}
-            </legend>
-            <div className="mt-3 grid gap-4 md:grid-cols-2">
-              {LEAD_PROFILE_FIELDS.filter((field) => field.group === group).map(
-                (field) => (
-                  <Field
-                    key={field.key}
-                    id={`${idPrefix}-${field.key.replace(/_/g, "-")}`}
-                    label={field.label}
-                  >
-                    <Input
-                      // Not type="url": browsers reject "example.com" without a
-                      // scheme, but the server accepts it and defaults to https.
-                      type={field.input === "url" ? "text" : field.input}
-                      inputMode={field.input === "url" ? "url" : undefined}
-                      value={values[field.key]}
-                      onChange={(event) => onChange(field.key, event.target.value)}
-                      disabled={disabled}
-                      placeholder={field.placeholder}
-                      min={field.min}
-                      max={field.max}
-                    />
-                  </Field>
-                ),
-              )}
-            </div>
-          </fieldset>
-        ))}
+      <div className="border-t border-slate-200 p-3">
+        <ProfileFieldGroups
+          idPrefix={idPrefix}
+          values={values}
+          onChange={onChange}
+          disabled={disabled}
+        />
       </div>
     </details>
   );

@@ -189,19 +189,22 @@ export function AddLeadDialog({ open, onOpenChange, defaultListId }: AddLeadDial
           />
         </Field>
 
-        <LeadProfileFields
-          idPrefix="add-lead"
-          values={form.profile}
-          onChange={(key, value) =>
-            setForm((current) => ({
-              ...current,
-              profile: { ...current.profile, [key]: value },
-            }))
-          }
-          disabled={createMutation.isPending}
-        />
+        <div className="md:col-span-2 border-t border-slate-200 pt-4">
+          <LeadProfileFields
+            idPrefix="add-lead"
+            values={form.profile}
+            onChange={(key, value) =>
+              setForm((current) => ({
+                ...current,
+                profile: { ...current.profile, [key]: value },
+              }))
+            }
+            disabled={createMutation.isPending}
+            collapsible={false}
+          />
+        </div>
 
-        <fieldset className="md:col-span-2">
+        <fieldset className="md:col-span-2 border-t border-slate-200 pt-4">
           <legend className="text-sm font-medium text-slate-700">
             Add to list{listsQuery.data?.items.length ? "(s)" : ""}
           </legend>

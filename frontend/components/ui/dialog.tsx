@@ -99,6 +99,12 @@ export function Dialog({
         onKeyDown={onKeyDown}
         className={cn(
           "flex w-full max-w-6xl flex-col overflow-hidden bg-white shadow-overlay outline-none animate-slide-up sm:rounded-xl",
+          // "stretch" already fills the fixed-inset overlay's height via
+          // items-stretch above. "center" sizes to content instead, so
+          // without a cap here a tall form (e.g. Add Lead) grows past the
+          // viewport -- and body scroll is locked while open, making the
+          // overflow unreachable -- instead of scrolling inside itself.
+          align === "center" ? "max-h-[85vh]" : null,
           className,
         )}
       >
