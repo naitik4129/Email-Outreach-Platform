@@ -147,6 +147,21 @@ class TestAuthorization:
             ).fetchone()[0]
 
 
+    def test_the_erasure_role_can_run_the_identity_helpers(self, uri) -> None:
+        """Migration 0036: without EXECUTE on these, every command fails with
+        'permission denied for function app_current_workspace_role' on a database
+        whose migration user is not a superuser."""
+        with psycopg.connect(uri) as conn:
+            for fn in ("app_current_user_id()", "app_current_workspace_id()",
+                       "app_current_workspace_role()", "app_has_permission(text)"):
+                assert conn.execute(
+                    "SELECT has_function_privilege('app_erasure', %s, 'EXECUTE')", [f"public.{fn}"]
+                ).fetchone()[0], fn
+            assert not conn.execute(
+                "SELECT pg_has_role('app_api', 'app_foundation_reader', 'MEMBER')"
+            ).fetchone()[0]
+
+
 # ---------------------------------------------------------------------------
 # campaigns
 # ---------------------------------------------------------------------------
