@@ -33,6 +33,7 @@ _STATUS_FOR_CODE: dict[str, tuple[str, int]] = {
     "state": ("state_conflict", 409),
     "in_use": ("in_use", 409),
     "in_flight": ("in_flight", 409),
+    "recent_sends": ("recent_sends", 409),
     "invalid": ("confirmation_mismatch", 422),
 }
 
@@ -55,7 +56,7 @@ def _translate(exc: DBAPIError) -> AppError | None:
 
 
 class ErasureService:
-    """Runs the purge / erase commands (ADR-0015) and the file cleanup around them.
+    """Runs the purge / erase / delete commands (ADR-0015) and the file cleanup.
 
     The rules themselves (who may, what blocks it, what is removed or redacted) are
     in the database commands so a worker or script cannot bypass them; this class
@@ -82,7 +83,7 @@ class ErasureService:
         self, context: WorkspaceContext, campaign_id: UUID, confirm: str
     ) -> ErasureOut:
         self._confirm(context, "campaigns", "name", campaign_id, confirm, "Campaign")
-        result = self._run("app_purge_campaign", context, campaign_id)
+        result = self._run("app_delete_campaign", context, campaign_id)
         # Attachment files can be shared with a duplicated campaign: only the
         # ones nothing else references are removed.
         repo = CampaignRepository(self.session)
@@ -95,7 +96,7 @@ class ErasureService:
             == 0
         ]
         return self._finish(
-            "campaign.purge",
+            "campaign.delete",
             campaign_id,
             result.get("deleted", {}),
             [(self._attachments_storage, orphaned)],
@@ -158,8 +159,8 @@ class ErasureService:
         self._confirm(
             context, "mailboxes", "original_address", mailbox_id, confirm, "Mailbox"
         )
-        self._run("app_purge_mailbox", context, mailbox_id)
-        return self._finish("mailbox.purge", mailbox_id, {})
+        result = self._run("app_delete_mailbox", context, mailbox_id)
+        return self._finish("mailbox.delete", mailbox_id, result.get("deleted", {}))
 
     def purge_workspace(self, context: WorkspaceContext, confirm: str) -> ErasureOut:
         """Permanently deletes the workspace and every row it owns. Irreversible.

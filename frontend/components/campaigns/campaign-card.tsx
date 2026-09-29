@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BarChart3, Copy, Eraser, Eye, Send, Sparkles, Trash2 } from "lucide-react";
+import { Archive, BarChart3, Copy, Eye, Send, Sparkles, Trash2 } from "lucide-react";
 
 import { CampaignTypeBadge } from "@/components/campaigns/campaign-type-badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { getCampaignAnalytics } from "@/lib/analytics-api";
 import { archiveCampaign, duplicateCampaign } from "@/lib/campaigns-api";
-import { eraseCampaign, purgeCampaign } from "@/lib/erasure-api";
+import { purgeCampaign } from "@/lib/erasure-api";
 import { errorMessage } from "@/lib/errors";
 import { formatNumber, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -187,19 +187,15 @@ export function CampaignCard({
     },
   });
 
-  // An archived campaign that was never activated has nothing to keep and is
-  // deleted; an activated one keeps its counts and only its recipients' data is erased.
+  // Only an archived campaign can be deleted; the delete removes it and its sent
+  // history for good (leads, mailboxes and suppressions are not affected).
   const isArchived = campaign.status === "ARCHIVED";
-  const neverActivated = campaign.is_activated === false;
   const removalMutation = useMutation({
-    mutationFn: (phrase: string) =>
-      neverActivated
-        ? purgeCampaign(workspaceId, campaign.id, phrase)
-        : eraseCampaign(workspaceId, campaign.id, phrase),
+    mutationFn: (phrase: string) => purgeCampaign(workspaceId, campaign.id, phrase),
     onSuccess: () => {
       invalidateList();
       setConfirmRemoval(false);
-      toast(neverActivated ? `Deleted “${campaign.name}”.` : `Erased the data in “${campaign.name}”.`);
+      toast(`Deleted “${campaign.name}”.`);
     },
     onError: (err) => setRemovalError(errorMessage(err)),
   });
@@ -231,11 +227,11 @@ export function CampaignCard({
           },
         ]
       : []),
-    ...(mayErase && isArchived && campaign.is_activated !== undefined && !campaign.erased_at
+    ...(mayErase && isArchived
       ? [
           {
-            label: neverActivated ? "Delete permanently…" : "Erase data…",
-            icon: neverActivated ? <Trash2 /> : <Eraser />,
+            label: "Delete permanently…",
+            icon: <Trash2 />,
             tone: "danger" as const,
             onSelect: () => {
               setRemovalError(null);
@@ -291,7 +287,7 @@ export function CampaignCard({
               <CampaignTypeBadge type={campaign.campaign_type} />
               {campaign.erased_at ? (
                 <span className="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600">
-                  Data erased
+                  Data removed
                 </span>
               ) : null}
             </div>
@@ -342,14 +338,10 @@ export function CampaignCard({
 
       <TypeToConfirmDialog
         open={confirmRemoval}
-        title={neverActivated ? `Delete "${campaign.name}"?` : `Erase data in "${campaign.name}"?`}
-        description={
-          neverActivated
-            ? "This campaign never sent anything. It and its steps, audience and settings are deleted permanently. Your leads and mailboxes are not affected. This can't be undone."
-            : "The recipients' names, addresses, email content and replies in this campaign are permanently erased. The campaign, its counts and the fact that emails were sent are kept. This can't be undone."
-        }
+        title={`Delete "${campaign.name}"?`}
+        description="The campaign, its steps, audience, and every email it sent, with their tracking and replies, are deleted permanently. Your leads, mailboxes and suppression list are not affected. This can't be undone."
         phrase={campaign.name}
-        confirmLabel={neverActivated ? "Delete permanently" : "Erase data"}
+        confirmLabel="Delete permanently"
         loading={removalMutation.isPending}
         error={removalError}
         onConfirm={() => removalMutation.mutate(campaign.name)}

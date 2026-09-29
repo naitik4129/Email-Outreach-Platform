@@ -17,11 +17,8 @@ const { archiveCampaign, duplicateCampaign } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/campaigns-api", () => ({ archiveCampaign, duplicateCampaign }));
 
-const { purgeCampaign, eraseCampaign } = vi.hoisted(() => ({
-  purgeCampaign: vi.fn(),
-  eraseCampaign: vi.fn(),
-}));
-vi.mock("@/lib/erasure-api", () => ({ purgeCampaign, eraseCampaign }));
+const { purgeCampaign } = vi.hoisted(() => ({ purgeCampaign: vi.fn() }));
+vi.mock("@/lib/erasure-api", () => ({ purgeCampaign }));
 
 import { CampaignCard } from "@/components/campaigns/campaign-card";
 import type { CampaignListItem } from "@/types/domain";
@@ -166,60 +163,41 @@ describe("CampaignCard", () => {
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
   });
 
-  it("deletes an archived campaign that never sent, only after typing its name", async () => {
-    const user = userEvent.setup();
-    purgeCampaign.mockResolvedValue({});
-    renderCard(campaign({ status: "ARCHIVED", is_activated: false }), true, { mayErase: true });
+  it.each([false, true])(
+    "deletes an archived campaign (activated: %s), only after typing its name",
+    async (activated) => {
+      const user = userEvent.setup();
+      purgeCampaign.mockResolvedValue({});
+      getCampaignAnalytics.mockResolvedValue(analytics);
+      renderCard(campaign({ status: "ARCHIVED", is_activated: activated }), true, { mayErase: true });
 
-    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
-    await user.click(screen.getByRole("menuitem", { name: /delete permanently/i }));
+      await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
+      await user.click(screen.getByRole("menuitem", { name: /delete permanently/i }));
 
-    const confirm = await screen.findByRole("button", { name: "Delete permanently" });
-    expect(confirm).toBeDisabled();
-    await user.type(screen.getByRole("textbox"), "Q1 Outbound");
-    expect(confirm).toBeEnabled();
-    await user.click(confirm);
+      const confirm = await screen.findByRole("button", { name: "Delete permanently" });
+      expect(confirm).toBeDisabled();
+      await user.type(screen.getByRole("textbox"), "Q1 Outbound");
+      expect(confirm).toBeEnabled();
+      await user.click(confirm);
 
-    await vi.waitFor(() =>
-      expect(purgeCampaign).toHaveBeenCalledWith("ws-1", "camp-1", "Q1 Outbound"),
-    );
-    expect(eraseCampaign).not.toHaveBeenCalled();
-  });
+      await vi.waitFor(() =>
+        expect(purgeCampaign).toHaveBeenCalledWith("ws-1", "camp-1", "Q1 Outbound"),
+      );
+    },
+  );
 
-  it("erases the data of an archived campaign that did send instead of deleting it", async () => {
-    const user = userEvent.setup();
-    eraseCampaign.mockResolvedValue({});
-    getCampaignAnalytics.mockResolvedValue(analytics);
-    renderCard(campaign({ status: "ARCHIVED", is_activated: true }), true, { mayErase: true });
-
-    await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
-    await user.click(screen.getByRole("menuitem", { name: /erase data/i }));
-    await user.type(await screen.findByRole("textbox"), "Q1 Outbound");
-    await user.click(screen.getByRole("button", { name: "Erase data" }));
-
-    await vi.waitFor(() =>
-      expect(eraseCampaign).toHaveBeenCalledWith("ws-1", "camp-1", "Q1 Outbound"),
-    );
-    expect(purgeCampaign).not.toHaveBeenCalled();
-  });
-
-  it("hides permanent removal from roles that may not erase, and once it is done", async () => {
+  it("offers deletion only for archived campaigns and only to roles that may erase", async () => {
     const user = userEvent.setup();
     getCampaignAnalytics.mockResolvedValue(analytics);
 
-    const noRole = renderCard(campaign({ status: "ARCHIVED", is_activated: false }), true);
+    const noRole = renderCard(campaign({ status: "ARCHIVED", is_activated: true }), true);
     await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
     expect(screen.queryByRole("menuitem", { name: /delete permanently/i })).not.toBeInTheDocument();
     noRole.unmount();
 
-    renderCard(
-      campaign({ status: "ARCHIVED", is_activated: true, erased_at: "2026-02-01T00:00:00Z" }),
-      true,
-      { mayErase: true },
-    );
-    expect(screen.getByText("Data erased")).toBeInTheDocument();
+    renderCard(campaign({ status: "PAUSED", is_activated: true }), true, { mayErase: true });
     await user.click(screen.getByRole("button", { name: /actions for q1 outbound/i }));
-    expect(screen.queryByRole("menuitem", { name: /erase data/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /delete permanently/i })).not.toBeInTheDocument();
   });
 
   it("shows a checkbox for bulk selection and reports the toggle", async () => {

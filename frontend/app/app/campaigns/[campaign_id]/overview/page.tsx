@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, Copy, Eraser, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArrowRight, Copy, Pencil, Trash2 } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ import {
   getCampaign,
   updateCampaign,
 } from "@/lib/campaigns-api";
-import { eraseCampaign, purgeCampaign } from "@/lib/erasure-api";
+import { purgeCampaign } from "@/lib/erasure-api";
 import { errorMessage } from "@/lib/errors";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { canDraftCampaign, canEraseData, canExecuteCampaign } from "@/lib/permissions";
@@ -113,23 +113,15 @@ export default function CampaignOverviewPage() {
   const removalMutation = useMutation({
     mutationFn: (phrase: string) => {
       if (!activeWorkspaceId || !campaignId) throw new Error("Not ready");
-      return campaignQuery.data?.is_activated === false
-        ? purgeCampaign(activeWorkspaceId, campaignId, phrase)
-        : eraseCampaign(activeWorkspaceId, campaignId, phrase);
+      return purgeCampaign(activeWorkspaceId, campaignId, phrase);
     },
     onSuccess: () => {
-      const deleted = campaignQuery.data?.is_activated === false;
       queryClient.invalidateQueries({
         queryKey: ["workspace", activeWorkspaceId, "campaigns"],
       });
       setConfirmRemoval(false);
-      if (deleted) {
-        toast("Campaign deleted.");
-        router.push("/app/campaigns");
-      } else {
-        invalidate();
-        toast("Recipient data erased.");
-      }
+      toast("Campaign deleted.");
+      router.push("/app/campaigns");
     },
     onError: (err) => setRemovalError(errorMessage(err)),
   });
@@ -162,12 +154,7 @@ export default function CampaignOverviewPage() {
   const isDraft = campaign.status === "DRAFT";
   const hint = STATUS_HINT[campaign.status];
   const mayArchive = canArchiveCampaign(campaign.status, mayDraft, mayExecute);
-  const neverActivated = campaign.is_activated === false;
-  const canRemove =
-    mayErase &&
-    campaign.status === "ARCHIVED" &&
-    campaign.is_activated !== undefined &&
-    !campaign.erased_at;
+  const canRemove = mayErase && campaign.status === "ARCHIVED";
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -296,12 +283,8 @@ export default function CampaignOverviewPage() {
       {canRemove && (
         <Card className="border-red-200">
           <CardHeader
-            title={neverActivated ? "Delete permanently" : "Erase personal data"}
-            description={
-              neverActivated
-                ? "This campaign never sent anything. Deleting it removes it and its steps, audience and settings for good."
-                : "Erase the recipients' names, addresses, email content and replies from this campaign. The campaign, its counts and the fact that emails were sent are kept."
-            }
+            title="Delete permanently"
+            description="Deletes this campaign, its steps and audience, and every email it sent with their tracking and replies. Your leads, mailboxes and suppression list are not affected."
           />
           <div className="mt-4">
             <Button
@@ -313,12 +296,8 @@ export default function CampaignOverviewPage() {
                 setConfirmRemoval(true);
               }}
             >
-              {neverActivated ? (
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-              ) : (
-                <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
-              )}
-              {neverActivated ? "Delete campaign…" : "Erase data…"}
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Delete campaign…
             </Button>
           </div>
         </Card>
@@ -326,21 +305,17 @@ export default function CampaignOverviewPage() {
 
       {campaign.erased_at ? (
         <Alert variant="info">
-          The recipients&apos; personal data in this campaign was erased on{" "}
+          Some of this campaign&apos;s data was removed on{" "}
           {formatDate(campaign.erased_at)}.
         </Alert>
       ) : null}
 
       <TypeToConfirmDialog
         open={confirmRemoval}
-        title={neverActivated ? `Delete "${campaign.name}"?` : `Erase data in "${campaign.name}"?`}
-        description={
-          neverActivated
-            ? "This can't be undone. Your leads and mailboxes are not affected."
-            : "This can't be undone. Sent emails stay counted, but their content and recipients are no longer recoverable."
-        }
+        title={`Delete "${campaign.name}"?`}
+        description="This can't be undone. The campaign and every email it sent are removed. Your leads, mailboxes and suppression list are not affected."
         phrase={campaign.name}
-        confirmLabel={neverActivated ? "Delete permanently" : "Erase data"}
+        confirmLabel="Delete permanently"
         loading={removalMutation.isPending}
         error={removalError}
         onConfirm={() => removalMutation.mutate(campaign.name)}

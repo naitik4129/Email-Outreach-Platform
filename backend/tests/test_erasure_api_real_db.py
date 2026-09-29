@@ -27,6 +27,7 @@ from app.main import app
 from app.modules.imports.storage import StorageUnavailableError
 from tests.support.real_pg import throwaway_database
 from tests.support.real_seed import World, _insert, seed_world
+from tests.test_hard_delete_real_db import disconnect, settled_world
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -134,7 +135,7 @@ def test_purge_draft_with_the_right_name_removes_it(client, su) -> None:
     res = post(client, w, f"/campaigns/{w.campaign_id}/purge", "  Outbound  ")
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["operation"] == "campaign.purge" and body["files_pending_cleanup"] == 0
+    assert body["operation"] == "campaign.delete" and body["files_pending_cleanup"] == 0
     assert scalar(su, "SELECT count(*) FROM public.campaigns WHERE id=%s", w.campaign_id) == 0
     assert scalar(su, "SELECT count(*) FROM public.leads WHERE workspace_id=%s", w.ws) == 1
 
@@ -154,7 +155,7 @@ def test_refusal_from_the_database_is_translated(client, su) -> None:
     res = post(client, w, f"/campaigns/{w.campaign_id}/purge", "Outbound")
     assert res.status_code == 409
     err = res.json()["error"]
-    assert err["code"] == "state_conflict" and "erase" in err["message"].lower()
+    assert err["code"] == "state_conflict" and "archive" in err["message"].lower()
     assert "erasure:" not in res.text and "public." not in res.text  # nothing internal leaks
 
 
@@ -249,3 +250,36 @@ def test_purge_template_list_and_mailbox_routes(client, su) -> None:
     assert post(client, w, f"/mailboxes/{mailbox}/purge", "spare@acme.test").status_code == 200
     for table, row in (("templates", template), ("lead_lists", lst), ("mailboxes", mailbox)):
         assert scalar(su, f"SELECT count(*) FROM public.{table} WHERE id=%s", row) == 0
+
+
+def test_delete_an_archived_campaign_that_sent_and_its_mailbox(client, su) -> None:
+    w = settled_world(su, members=1)
+    client.holder["as"] = (w, "OWNER")
+    res = post(client, w, f"/campaigns/{w.campaign_id}/purge", "Outbound")
+    assert res.status_code == 200, res.text
+    assert res.json()["operation"] == "campaign.delete"
+    assert scalar(su, "SELECT count(*) FROM public.messages WHERE workspace_id=%s", w.ws) == 0
+    assert scalar(su, "SELECT count(*) FROM public.leads WHERE workspace_id=%s", w.ws) == 1
+
+    # the mailbox is still connected: refused with a client-safe message
+    res = post(client, w, f"/mailboxes/{w.mailbox_id}/purge", "sender@acme.test")
+    assert res.status_code == 409 and res.json()["error"]["code"] == "state_conflict"
+    disconnect(su, w)
+    res = post(client, w, f"/mailboxes/{w.mailbox_id}/purge", "sender@acme.test")
+    assert res.status_code == 200, res.text
+    assert res.json()["operation"] == "mailbox.delete"
+    assert scalar(su, "SELECT count(*) FROM public.mailboxes WHERE id=%s", w.mailbox_id) == 0
+
+
+def test_a_recent_send_is_refused_with_a_client_safe_error(client, su) -> None:
+    from tests.test_erasure_real_db import archive, sent_world
+
+    w = sent_world(su, members=1)
+    archive(su, w)
+    client.holder["as"] = (w, "OWNER")
+    res = post(client, w, f"/campaigns/{w.campaign_id}/purge", "Outbound")
+    assert res.status_code == 409
+    err = res.json()["error"]
+    assert err["code"] == "recent_sends" and "25 hours" in err["message"]
+    assert "erasure:" not in res.text
+    assert scalar(su, "SELECT count(*) FROM public.campaigns WHERE id=%s", w.campaign_id) == 1

@@ -419,9 +419,10 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
         <div className="rounded-xl border border-red-200 bg-white p-6">
           <h3 className="text-base font-semibold text-slate-900">Remove this mailbox</h3>
           <p className="mt-1 text-sm text-slate-600">
-            Removes the mailbox from your workspace. Its credentials are already destroyed.
-            A mailbox that has sent email or is assigned to a campaign keeps its history and
-            cannot be removed; it stays disconnected.
+            Removes the mailbox from your workspace, together with every email it sent and
+            every reply it received. Its credentials are already destroyed. Your leads and
+            suppression list are not affected. It can&apos;t be removed while a campaign that
+            isn&apos;t archived uses it, or within 25 hours of its last send.
           </p>
           <Button
             className="mt-4 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
@@ -440,7 +441,7 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
       <TypeToConfirmDialog
         open={confirmRemove}
         title={`Remove ${mailbox.email_address}?`}
-        description="This can't be undone. You can connect the same address again later."
+        description="The mailbox and its sent and received email history are deleted permanently. You can connect the same address again later, but the history won't come back. This can't be undone."
         phrase={mailbox.email_address}
         confirmLabel="Remove mailbox"
         loading={removeMutation.isPending}
