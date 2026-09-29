@@ -81,9 +81,14 @@ def _translate(exc: DBAPIError) -> AppError | None:
         known = _STATUS_FOR_SQLSTATE.get(sqlstate or "")
         if known is None:
             return None
+        # Server log only (never sent to the client): the database's own words
+        # and the object involved, so an operator can find the real cause.
         logger.warning(
-            "erasure command failed",
-            extra={"sqlstate": sqlstate, "reason": primary[:200]},
+            "erasure command failed: sqlstate=%s message=%r table=%s constraint=%s",
+            sqlstate,
+            primary[:300],
+            getattr(diag, "table_name", None),
+            getattr(diag, "constraint_name", None),
         )
         code, status, message = known
         return AppError(code, message, status_code=status)
