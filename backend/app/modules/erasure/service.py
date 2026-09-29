@@ -38,12 +38,55 @@ _STATUS_FOR_CODE: dict[str, tuple[str, int]] = {
 }
 
 
+#: Database failures that are not one of the command's own refusals but that a user
+#: can understand and act on: (code, HTTP status, message). Nothing internal is shown.
+_NOT_AVAILABLE = (
+    "not_available",
+    503,
+    "This action isn't available on this server yet because a database update "
+    "for it hasn't been applied. Nothing was deleted. Ask an administrator to "
+    "apply the latest database update.",
+)
+_BUSY = (
+    "busy",
+    409,
+    "This took too long or clashed with other activity, so nothing was deleted. "
+    "Please try again in a moment.",
+)
+_PERMISSION = (
+    "database_permission",
+    500,
+    "The database refused this action, so nothing was deleted. "
+    "Please contact support.",
+)
+_STATUS_FOR_SQLSTATE: dict[str, tuple[str, int, str]] = {
+    "42883": _NOT_AVAILABLE,  # undefined_function
+    "42P01": _NOT_AVAILABLE,  # undefined_table
+    "42703": _NOT_AVAILABLE,  # undefined_column
+    "42501": _PERMISSION,  # insufficient_privilege
+    "57014": _BUSY,  # query_canceled (statement timeout)
+    "55P03": _BUSY,  # lock_not_available
+    "40P01": _BUSY,  # deadlock_detected
+    "40001": _BUSY,  # serialization_failure
+}
+
+
 def _translate(exc: DBAPIError) -> AppError | None:
-    """Turn a command refusal into a client-safe error; None for anything else."""
-    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    """Turn a command failure into a client-safe error; None for anything else."""
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
     primary = getattr(diag, "message_primary", None) or ""
     if not primary.startswith(_SQL_PREFIX):
-        return None
+        sqlstate = getattr(orig, "sqlstate", None) or getattr(diag, "sqlstate", None)
+        known = _STATUS_FOR_SQLSTATE.get(sqlstate or "")
+        if known is None:
+            return None
+        logger.warning(
+            "erasure command failed",
+            extra={"sqlstate": sqlstate, "reason": primary[:200]},
+        )
+        code, status, message = known
+        return AppError(code, message, status_code=status)
     code, status = _STATUS_FOR_CODE.get(
         primary[len(_SQL_PREFIX) :], ("erasure_refused", 409)
     )
