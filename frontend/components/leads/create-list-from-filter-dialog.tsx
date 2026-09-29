@@ -136,7 +136,7 @@ export function CreateListFromFilterDialog({
           Creates a new list with a snapshot of every lead currently matching your search and
           filters. It won&apos;t update automatically as leads change later.
         </p>
-        <Field id="new-list-name" label="List name">
+        <Field id="new-list-name" label="List name" required>
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}

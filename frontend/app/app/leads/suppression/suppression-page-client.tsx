@@ -159,7 +159,7 @@ export function SuppressionPageClient() {
               createMutation.mutate();
             }}
           >
-            <Field id="suppress-email" label="Email Address" className="md:col-span-2">
+            <Field id="suppress-email" label="Email Address" required className="md:col-span-2">
               <Input
                 value={emailToSuppress}
                 onChange={(event) => setEmailToSuppress(event.target.value)}

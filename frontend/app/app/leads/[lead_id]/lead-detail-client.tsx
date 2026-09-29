@@ -259,7 +259,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
               saveMutation.mutate();
             }}
           >
-            <Field id="edit-email" label="Email" className="md:col-span-2">
+            <Field id="edit-email" label="Email" required className="md:col-span-2">
               <Input
                 value={form.email}
                 onChange={(event) => setForm({ ...form, email: event.target.value })}

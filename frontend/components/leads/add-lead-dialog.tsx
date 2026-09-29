@@ -150,7 +150,7 @@ export function AddLeadDialog({ open, onOpenChange, defaultListId }: AddLeadDial
             <Alert>{error}</Alert>
           </div>
         ) : null}
-        <Field id="add-lead-email" label="Email" className="md:col-span-2">
+        <Field id="add-lead-email" label="Email" required className="md:col-span-2">
           <Input
             value={form.email}
             onChange={(event) => setForm({ ...form, email: event.target.value })}

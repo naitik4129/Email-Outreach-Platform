@@ -184,7 +184,7 @@ export function LeadListDetailClient({ listId }: { listId: string }) {
               renameMutation.mutate();
             }}
           >
-            <Field id="rename-list" label="List name" className="flex-1">
+            <Field id="rename-list" label="List name" required className="flex-1">
               <Input
                 value={name}
                 onChange={(event) => setName(event.target.value)}

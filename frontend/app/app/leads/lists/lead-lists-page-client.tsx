@@ -191,7 +191,7 @@ export function LeadListsPageClient() {
               createMutation.mutate();
             }}
           >
-            <Field id="list-name" label="Name" className="flex-1">
+            <Field id="list-name" label="Name" required className="flex-1">
               <Input
                 value={name}
                 onChange={(event) => setName(event.target.value)}
