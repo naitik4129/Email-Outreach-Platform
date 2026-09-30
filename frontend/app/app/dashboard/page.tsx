@@ -8,7 +8,7 @@ export default function DashboardPage() {
     <main className="space-y-8">
       <PageHeader
         title="Dashboard"
-        description="Your outreach at a glance for the last 30 days."
+        description="Outreach performance and sending health for your workspace."
       />
 
       <DashboardOverview />

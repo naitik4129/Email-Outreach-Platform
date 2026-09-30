@@ -1,5 +1,6 @@
-import { DeliverabilityPageClient } from "./deliverability-page-client";
+import { redirect } from "next/navigation";
 
-export default function DeliverabilityPage() {
-  return <DeliverabilityPageClient />;
+// Merged into the dashboard; kept so existing bookmarks still resolve.
+export default function Page() {
+  redirect("/app/dashboard");
 }

@@ -81,10 +81,6 @@ Templates
     ↓
 Mailboxes
     ↓
-Deliverability
-    ↓
-Analytics
-    ↓
 Integrations / Team / Settings
 ```
 
@@ -470,10 +466,6 @@ Inbox
 Templates
 
 Mailboxes
-
-Deliverability
-
-Analytics
 ```
 
 Recommended secondary / workspace navigation:
@@ -568,6 +560,26 @@ Examples:
 - connected mailbox count
 - unhealthy/disconnected mailboxes
 - important provider issues
+
+### Analytics and Deliverability
+
+Workspace-level analytics and sending-health signals are sections of the dashboard, not separate pages.
+
+Analytics section:
+
+- date range presets (today, yesterday, 7 days, 30 days)
+- outreach KPIs (sent, replies, bounces, unsubscribes, complaints, send failures, opens when tracked)
+- activity trend
+- top campaigns and top mailboxes
+
+Deliverability section:
+
+- overall health status and active safety holds
+- active deliverability warnings
+- per-mailbox health
+- send-failure breakdown
+
+The selected date range applies to both sections.
 
 ### Recent Activity
 
@@ -1826,17 +1838,15 @@ Secrets and raw tokens must never be exposed here.
 
 # 65. Deliverability Route Structure
 
-Recommended:
+Deliverability is no longer a separate page. Its content is a section of `/app/dashboard` (see section 21 and section 105).
 
-```text
-/app/deliverability
-```
+`/app/deliverability` remains only as a redirect to `/app/dashboard` so existing bookmarks keep working.
 
 Potential future expansion may introduce mailbox-specific or campaign-specific subpages, but the MVP can remain focused.
 
 ---
 
-# 66. `/app/deliverability`
+# 66. Deliverability section of `/app/dashboard`
 
 ## Purpose
 
@@ -1864,11 +1874,9 @@ Avoid inventing opaque reputation scores without a defined model.
 
 # 67. Analytics Route Structure
 
-Recommended:
+Workspace-level analytics is no longer a separate page. Its content is a section of `/app/dashboard` (see section 21 and section 104).
 
-```text
-/app/analytics
-```
+`/app/analytics` remains only as a redirect to `/app/dashboard` so existing bookmarks keep working.
 
 Campaign-specific analytics remain under:
 
@@ -1878,7 +1886,7 @@ Campaign-specific analytics remain under:
 
 ---
 
-# 68. `/app/analytics`
+# 68. Workspace analytics section of `/app/dashboard`
 
 ## Purpose
 
@@ -2692,7 +2700,7 @@ Dashboard cards should lead somewhere actionable.
 Use:
 
 ```text
-/app/analytics
+/app/dashboard
 ```
 
 for workspace-level insights.
@@ -2713,17 +2721,19 @@ Avoid creating multiple unrelated analytics areas for the same data.
 
 Deliverability is operational health, not general reporting.
 
-Therefore:
+Workspace analytics and deliverability now live together on `/app/dashboard`, as separate sections:
 
 ```text
-Analytics
+Analytics section
     = What happened?
 
-Deliverability
+Deliverability section
     = Are we seeing warning signs affecting sending health?
 ```
 
-The two may share underlying data but should preserve distinct user goals.
+The two may share underlying data but each section should preserve its distinct user goal.
+
+The consolidation is a product decision: three overlapping pages (Dashboard, Analytics, Deliverability) were merged into one. The backend endpoints are unchanged.
 
 ---
 
@@ -2990,10 +3000,6 @@ The production MVP route structure is therefore approximately:
     │   │   └── smtp
     │   └── [mailbox_id]
     │
-    ├── deliverability
-    │
-    ├── analytics
-    │
     ├── integrations
     │
     ├── team
@@ -3032,10 +3038,6 @@ Inbox
 Templates
 
 Mailboxes
-
-Deliverability
-
-Analytics
 ```
 
 Secondary group:
@@ -3246,11 +3248,11 @@ Sending account connection and health belong under Mailboxes.
 
 ### Analytics ownership
 
-Cross-campaign performance belongs under Analytics.
+Cross-campaign performance belongs in the Analytics section of the Dashboard.
 
 ### Deliverability ownership
 
-Sending-health signals belong under Deliverability.
+Sending-health signals belong in the Deliverability section of the Dashboard.
 
 ### Workspace administration
 
@@ -3477,8 +3479,7 @@ This document is complete when the project agrees on:
 ✓ Inbox hierarchy
 ✓ Templates hierarchy
 ✓ Mailbox hierarchy
-✓ Deliverability location
-✓ Analytics location
+✓ Deliverability and Analytics location (Dashboard sections)
 ✓ Integrations location
 ✓ Team location
 ✓ Billing location
@@ -3506,8 +3507,6 @@ Leads
 Inbox
 Templates
 Mailboxes
-Deliverability
-Analytics
 Workspace Management
 ```
 

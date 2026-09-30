@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -9,18 +8,11 @@ import {
   CheckCircle2,
   Info,
   Mail,
-  RefreshCw,
   ShieldAlert,
   XCircle,
 } from "lucide-react";
 
-
-import { Alert } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { getDeliverabilityOverview } from "@/lib/analytics-api";
-import { useWorkspace } from "@/lib/workspace-context";
 import type { DeliverabilityOverview, DeliverabilityWarning } from "@/types/analytics";
-import { LoadingBlock } from "@/components/ui/skeleton";
 
 function HealthStatusBadge({ status }: { status: "HEALTHY" | "WARNING" | "CRITICAL" | "DISCONNECTED" }) {
   const styles = {
@@ -95,65 +87,10 @@ function WarningCard({ warning }: { warning: DeliverabilityWarning }) {
   );
 }
 
-export function DeliverabilityPageClient() {
-  const { activeWorkspaceId } = useWorkspace();
-
-  const query = useQuery({
-    queryKey: ["workspace", activeWorkspaceId, "analytics", "deliverability"],
-    queryFn: () =>
-      activeWorkspaceId
-        ? getDeliverabilityOverview(activeWorkspaceId)
-        : Promise.reject(new Error("No active workspace")),
-    enabled: Boolean(activeWorkspaceId),
-  });
-
-  if (query.isLoading) {
-    return (
-      <LoadingBlock size="lg" />
-    );
-  }
-
-  if (query.isError || !query.data) {
-    return (
-      <div className="space-y-4">
-        <Alert variant="error">
-          {query.error instanceof Error
-            ? query.error.message
-            : "Failed to load deliverability metrics."}
-        </Alert>
-        <Button variant="outline" onClick={() => query.refetch()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  const data: DeliverabilityOverview = query.data;
-
+// Overall health status, headline rates and active alerts.
+export function DeliverabilityHealth({ data }: { data: DeliverabilityOverview }) {
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            Deliverability Center
-          </h1>
-          <p className="text-sm text-slate-500">
-            Operational visibility into inbox delivery health, sender reputation, and failure
-            telemetry.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => query.refetch()}
-          className="self-start sm:self-auto"
-        >
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh Status
-        </Button>
-      </div>
-
-      {/* Deliverability Status Banner */}
+    <div className="space-y-6">
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-2">
@@ -211,7 +148,7 @@ export function DeliverabilityPageClient() {
             </div>
 
             <div className="space-y-0.5">
-              <p className="text-[11px] font-medium text-slate-400">Send Failures</p>
+              <p className="text-[11px] font-medium text-slate-400">Send Failure Rate</p>
               <p className="text-lg font-bold text-slate-900">{data.failure_rate}%</p>
               <p className="text-[10px] text-slate-400">Total Sent: {data.total_sent}</p>
             </div>
@@ -231,7 +168,6 @@ export function DeliverabilityPageClient() {
         </div>
       </div>
 
-      {/* Warnings Panel */}
       {data.warnings.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold tracking-wide text-slate-900">
@@ -244,8 +180,14 @@ export function DeliverabilityPageClient() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Mailbox Deliverability Table */}
+// Per-mailbox health table and categorized send-failure telemetry.
+export function DeliverabilityDetails({ data }: { data: DeliverabilityOverview }) {
+  return (
+    <div className="space-y-6">
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
@@ -274,7 +216,7 @@ export function DeliverabilityPageClient() {
                   <th className="pb-3 font-medium">Mailbox</th>
                   <th className="pb-3 font-medium">Provider</th>
                   <th className="pb-3 font-medium">Status</th>
-                  <th className="pb-3 text-right font-medium">Sent (30d)</th>
+                  <th className="pb-3 text-right font-medium">Sent</th>
                   <th className="pb-3 text-right font-medium">Bounce Rate</th>
                   <th className="pb-3 text-right font-medium">Complaint Rate</th>
                   <th className="pb-3 text-right font-medium">Failures</th>
@@ -343,7 +285,6 @@ export function DeliverabilityPageClient() {
         )}
       </div>
 
-      {/* Operational Send Failure Diagnostics */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card">
         <div className="mb-4 border-b border-slate-100 pb-3">
           <h2 className="text-base font-semibold text-slate-900">

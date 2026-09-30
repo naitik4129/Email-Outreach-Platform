@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  BarChart3,
   Bell,
   Check,
   CheckCheck,
@@ -25,7 +24,6 @@ import {
   Plus,
   Send,
   Settings,
-  ShieldCheck,
   Sliders,
   UserCircle,
   Users,
@@ -69,13 +67,6 @@ const navigationGroups: NavGroup[] = [
     items: [
       { href: "/app/leads", label: "Leads", icon: Contact },
       { href: "/app/leads/lists", label: "Lists", icon: ListChecks },
-    ],
-  },
-  {
-    label: "Insights",
-    items: [
-      { href: "/app/analytics", label: "Analytics", icon: BarChart3 },
-      { href: "/app/deliverability", label: "Deliverability", icon: ShieldCheck },
     ],
   },
   {

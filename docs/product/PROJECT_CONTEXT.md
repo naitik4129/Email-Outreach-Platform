@@ -215,8 +215,6 @@ Templates
 
 INFRASTRUCTURE
 Mailboxes
-Deliverability
-Analytics
 
 WORKSPACE
 Integrations
@@ -1328,6 +1326,8 @@ Create Template should use the same Standard vs Smart Personalization choice use
 
 # 41. ANALYTICS
 
+Workspace-level analytics is a section of the Dashboard (`/app/dashboard`), not a separate page. See `PAGE_MAP.md` section 21.
+
 Global filters:
 
 - Date range
@@ -1366,7 +1366,7 @@ Tables:
 
 # 42. DELIVERABILITY CENTER
 
-Dedicated major page.
+Deliverability is a section of the Dashboard (`/app/dashboard`), not a separate page. See `PAGE_MAP.md` section 21.
 
 Possible overview:
 
@@ -4369,7 +4369,7 @@ Use Docker from the beginning.
 
 AWS is currently preferred over Hostinger VPS for production, while keeping initial AWS architecture simple.
 
-The frontend needs Dashboard, Campaigns, Leads, Inbox, Templates, Mailboxes, Deliverability, Analytics, Integrations, Team, Billing, Settings, Help/Education, plus a separate internal Admin/Compliance console.
+The frontend needs Dashboard, Campaigns, Leads, Inbox, Templates, Mailboxes, Integrations, Team, Billing, Settings, Help/Education, plus a separate internal Admin/Compliance console.
 
 Campaign creation should be a guided wizard:
 

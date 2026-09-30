@@ -1,5 +1,6 @@
-import { AnalyticsPageClient } from "./analytics-page-client";
+import { redirect } from "next/navigation";
 
-export default function AnalyticsPage() {
-  return <AnalyticsPageClient />;
+// Merged into the dashboard; kept so existing bookmarks still resolve.
+export default function Page() {
+  redirect("/app/dashboard");
 }

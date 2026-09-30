@@ -76,8 +76,6 @@ describe("AppShell navigation", () => {
       [
         "/app/dashboard",
         "/app/campaigns",
-        "/app/analytics",
-        "/app/deliverability",
         "/app/mailboxes",
         "/app/leads",
         "/app/leads/lists",
