@@ -246,6 +246,36 @@ def _seed_campaign(session: Session, ws_id: uuid.UUID, name: str = "Outreach Q3"
     return camp_id
 
 
+def _seed_reply(
+    session: Session,
+    ws_id: uuid.UUID,
+    mb_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    when: datetime,
+    association_status: str = "MATCHED",
+) -> uuid.UUID:
+    """Inbound message that makes a conversation count as a reply."""
+    inbound_id = uuid.uuid4()
+    session.execute(
+        text(
+            """
+            INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, association_status, received_at, observed_at)
+            VALUES (:id, :ws, :mbid, :cid, :pmid, 'Re: hello', :status, :t, :t)
+            """
+        ),
+        {
+            "id": str(inbound_id),
+            "ws": str(ws_id),
+            "mbid": str(mb_id),
+            "cid": str(conversation_id),
+            "pmid": f"prov-{inbound_id}",
+            "status": association_status,
+            "t": when,
+        },
+    )
+    return inbound_id
+
+
 class TestInboxDomain:
     def test_keyset_cursor_pagination_and_ordering(self, db_session: Session) -> None:
         ws_id = uuid.uuid4()
@@ -271,8 +301,8 @@ class TestInboxDomain:
             db_session.execute(
                 text(
                     """
-                    INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, content_text, received_at, observed_at)
-                    VALUES (:id, :ws, :mbid, :cid, :pmid, :sub, :txt, :act, :act)
+                    INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, content_text, association_status, received_at, observed_at)
+                    VALUES (:id, :ws, :mbid, :cid, :pmid, :sub, :txt, 'MATCHED', :act, :act)
                     """
                 ),
                 {
@@ -335,6 +365,7 @@ class TestInboxDomain:
             ),
             {"id": str(cid_unread), "ws": str(ws_id), "mbid": str(mb_id), "act": now},
         )
+        _seed_reply(db_session, ws_id, mb_id, cid_unread, now)
 
         # Read conversation (read_at >= latest_activity_at)
         db_session.execute(
@@ -346,6 +377,7 @@ class TestInboxDomain:
             ),
             {"id": str(cid_read), "ws": str(ws_id), "mbid": str(mb_id), "act": now - timedelta(hours=1), "read": now},
         )
+        _seed_reply(db_session, ws_id, mb_id, cid_read, now - timedelta(hours=1))
         db_session.commit()
 
         context = WorkspaceContext(workspace_id=ws_id, user_id=uuid.uuid4(), role_code="MEMBER")
@@ -362,6 +394,60 @@ class TestInboxDomain:
         assert len(read_page.items) == 1
         assert read_page.items[0].id == cid_read
         assert read_page.items[0].is_read is True
+
+    def test_only_replies_to_outreach_are_listed(self, db_session: Session) -> None:
+        ws_id = uuid.uuid4()
+        mb_id = _seed_mailbox(db_session, ws_id)
+        now = datetime.now(UTC)
+
+        def conversation() -> uuid.UUID:
+            cid = uuid.uuid4()
+            db_session.execute(
+                text(
+                    """
+                    INSERT INTO public.conversations (id, workspace_id, mailbox_id, latest_activity_at, read_at)
+                    VALUES (:id, :ws, :mbid, :act, NULL)
+                    """
+                ),
+                {"id": str(cid), "ws": str(ws_id), "mbid": str(mb_id), "act": now},
+            )
+            return cid
+
+        matched = conversation()
+        _seed_reply(db_session, ws_id, mb_id, matched, now)
+
+        # Unresolved but tied to outreach through a candidate link: still a reply.
+        linked = conversation()
+        linked_inbound = _seed_reply(db_session, ws_id, mb_id, linked, now, "UNRESOLVED")
+        db_session.execute(
+            text(
+                """
+                INSERT INTO public.inbound_outreach_links (id, workspace_id, mailbox_id, inbound_message_id, outbound_message_id, evidence_type, confidence, status)
+                VALUES (:id, :ws, :mbid, :inb, :outb, 'AMBIGUOUS_CANDIDATE', 'LOW', 'CANDIDATE')
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "ws": str(ws_id),
+                "mbid": str(mb_id),
+                "inb": str(linked_inbound),
+                "outb": str(uuid.uuid4()),
+            },
+        )
+
+        # Unrelated mail that was stored by an earlier sync: no match, no link.
+        unrelated = conversation()
+        _seed_reply(db_session, ws_id, mb_id, unrelated, now, "UNRESOLVED")
+
+        # Conversation with no inbound message at all.
+        conversation()
+        db_session.commit()
+
+        context = WorkspaceContext(workspace_id=ws_id, user_id=uuid.uuid4(), role_code="MEMBER")
+        page = InboxService(db_session).list_conversations(context)
+
+        assert {item.id for item in page.items} == {matched, linked}
+        assert page.unread_count == 2
 
     def test_mark_read_and_unread_idempotency_and_auto_unread(self, db_session: Session) -> None:
         ws_id = uuid.uuid4()
@@ -434,6 +520,7 @@ class TestInboxDomain:
             ),
             {"id": str(cid), "ws": str(ws_id), "mbid": str(mb_id), "act": now},
         )
+        _seed_reply(db_session, ws_id, mb_id, cid, now)
         db_session.commit()
 
         context = WorkspaceContext(workspace_id=ws_id, user_id=uuid.uuid4(), role_code="MANAGER")
@@ -488,8 +575,8 @@ class TestInboxDomain:
         db_session.execute(
             text(
                 """
-                INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, participants, received_at, observed_at)
-                VALUES (:id, :ws, :mbid, :cid, :pmid, 'Re: Acme Partnership Proposal', :parts, :act, :act)
+                INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, participants, association_status, received_at, observed_at)
+                VALUES (:id, :ws, :mbid, :cid, :pmid, 'Re: Acme Partnership Proposal', :parts, 'MATCHED', :act, :act)
                 """
             ),
             {
@@ -516,8 +603,8 @@ class TestInboxDomain:
         db_session.execute(
             text(
                 """
-                INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, participants, received_at, observed_at)
-                VALUES (:id, :ws, :mbid, :cid, :pmid, 'Product Inquiry', :parts, :act, :act)
+                INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, participants, association_status, received_at, observed_at)
+                VALUES (:id, :ws, :mbid, :cid, :pmid, 'Product Inquiry', :parts, 'MATCHED', :act, :act)
                 """
             ),
             {

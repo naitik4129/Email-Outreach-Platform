@@ -262,8 +262,8 @@ def test_api_list_conversations_with_data(test_setup) -> None:
     session.execute(
         text(
             """
-            INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, content_text, participants, received_at, observed_at)
-            VALUES (:id, :ws, :mbid, :cid, 'msg-1', 'Demo Inquiry', 'Interested in product demo', :parts, :now, :now)
+            INSERT INTO public.inbound_messages (id, workspace_id, mailbox_id, conversation_id, provider_message_id, subject, content_text, participants, association_status, received_at, observed_at)
+            VALUES (:id, :ws, :mbid, :cid, 'msg-1', 'Demo Inquiry', 'Interested in product demo', :parts, 'MATCHED', :now, :now)
             """
         ),
         {

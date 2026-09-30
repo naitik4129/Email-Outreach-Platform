@@ -549,11 +549,12 @@ class TestReplySync:
         ).fetchone()
         assert row == ("MATCHED", "PROVIDER_THREAD_CORROBORATED")
 
-    def test_reply_from_a_stranger_with_no_identifiers_stays_unresolved(self, session_factory, su):
+    def test_mail_from_a_stranger_with_no_identifiers_is_not_stored(self, session_factory, su):
         w = seed_sent_world(su)
         connect_mailbox(su, w)
         run_sync(session_factory, w, [page(reply_message(in_reply_to=None, sender="stranger@else.test"))])
-        assert su.execute("SELECT association_status FROM public.inbound_messages WHERE mailbox_id=%s", [w.mailbox_id]).fetchone()[0] == "UNRESOLVED"
+        assert scalar(su, "SELECT count(*) FROM public.inbound_messages WHERE mailbox_id=%s", [w.mailbox_id]) == 0
+        assert scalar(su, "SELECT count(*) FROM public.conversations WHERE mailbox_id=%s", [w.mailbox_id]) == 0
         assert su.execute("SELECT state FROM public.campaign_enrollments WHERE id=%s", [w.enrollment_id]).fetchone()[0] == "ACTIVE"
 
     def test_same_lead_in_two_campaigns_is_matched_to_the_replied_email_only(self, session_factory, su):

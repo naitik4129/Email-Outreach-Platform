@@ -99,6 +99,20 @@ _CONVERSATION_CAMPAIGN = (
 )
 
 
+# The inbox is for replies to our outreach, not a mirror of the mailbox. A
+# conversation qualifies once one of its inbound messages was matched to an
+# outbound message or carries an outreach link (including ambiguous
+# candidates). Unrelated mail stored before sync started filtering stays in the
+# database but is not listed.
+_IS_REPLY_CONVERSATION = (
+    "EXISTS (SELECT 1 FROM public.inbound_messages rim "
+    "WHERE rim.workspace_id = c.workspace_id AND rim.conversation_id = c.id "
+    "AND (rim.association_status = 'MATCHED' OR EXISTS ("
+    "SELECT 1 FROM public.inbound_outreach_links rl "
+    "WHERE rl.workspace_id = rim.workspace_id AND rl.inbound_message_id = rim.id)))"
+)
+
+
 class InboxRepository:
     """Repository for workspace-isolated unified inbox queries and conversation operations."""
 
@@ -115,12 +129,13 @@ class InboxRepository:
         _safe_set_workspace(self.session, workspace_id)
 
         query = text(
-            """
+            f"""
             SELECT COUNT(*)
-            FROM public.conversations
-            WHERE workspace_id = :ws
-              AND archived_at IS NULL
-              AND (read_at IS NULL OR read_at < latest_activity_at)
+            FROM public.conversations c
+            WHERE c.workspace_id = :ws
+              AND c.archived_at IS NULL
+              AND (c.read_at IS NULL OR c.read_at < c.latest_activity_at)
+              AND {_IS_REPLY_CONVERSATION}
             """
         )
         val = self.session.execute(query, {"ws": str(workspace_id)}).scalar()
@@ -143,7 +158,7 @@ class InboxRepository:
 
         decoded_cursor = decode_inbox_cursor(cursor)
 
-        where_clauses = ["c.workspace_id = :ws"]
+        where_clauses = ["c.workspace_id = :ws", _IS_REPLY_CONVERSATION]
         params: dict[str, Any] = {"ws": str(workspace_id)}
 
         # Filter mode

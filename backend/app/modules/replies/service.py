@@ -361,6 +361,7 @@ class ReplySyncService:
         stopped_enr = 0
         cancelled_msg = 0
         bounces = 0
+        not_replies = 0
         pages_processed = 0
         finished = False
 
@@ -452,17 +453,6 @@ class ReplySyncService:
                     bounces += 1
                     continue
 
-                # Find or create conversation
-                local_anchor = normalized.rfc_message_id or normalized.provider_message_id
-                conv_id = self.repository.find_or_create_conversation(
-                    workspace_id=workspace_id,
-                    mailbox_id=mailbox_id,
-                    provider_thread_id=normalized.provider_thread_id,
-                    local_anchor_id=local_anchor,
-                    campaign_summary_id=None,
-                    activity_at=normalized.received_at,
-                )
-
                 # Load outbound candidate messages
                 rfc_ids = list(normalized.references)
                 if normalized.in_reply_to:
@@ -474,6 +464,27 @@ class ReplySyncService:
                     rfc_message_ids=rfc_ids,
                     sender_address=normalized.from_address,
                     provider_thread_id=normalized.provider_thread_id,
+                )
+
+                # No candidate means the sender was never emailed by this mailbox,
+                # the message quotes none of our Message-IDs and it is not in a
+                # thread we started: it cannot be a reply to our outreach, so it
+                # must not become an inbox conversation. Anything with a candidate
+                # is kept even if unmatched, so the reconciliation sweep can still
+                # attach it once identifiers arrive.
+                if not candidates:
+                    not_replies += 1
+                    continue
+
+                # Find or create conversation
+                local_anchor = normalized.rfc_message_id or normalized.provider_message_id
+                conv_id = self.repository.find_or_create_conversation(
+                    workspace_id=workspace_id,
+                    mailbox_id=mailbox_id,
+                    provider_thread_id=normalized.provider_thread_id,
+                    local_anchor_id=local_anchor,
+                    campaign_summary_id=None,
+                    activity_at=normalized.received_at,
                 )
 
                 # Match
@@ -610,6 +621,7 @@ class ReplySyncService:
                 "matched": matched,
                 "unresolved": unresolved,
                 "bounces": bounces,
+                "skipped_not_replies": not_replies,
                 "enrollments_stopped": stopped_enr,
                 "pages": pages_processed,
                 "complete": finished,

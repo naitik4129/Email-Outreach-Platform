@@ -1056,6 +1056,82 @@ class TestReplySyncService:
         service.repository.record_reply_outcome_and_stop_campaign.assert_called_once()
         service.repository.release_sync_lease.assert_called_once()
 
+    def test_sync_skips_mail_that_is_not_a_reply_to_outreach(self) -> None:
+        session = MagicMock()
+        mock_provider = MagicMock(spec=EmailProvider)
+        mock_provider.capabilities = {
+            ProviderCapability.REPLY_SYNC,
+            ProviderCapability.CREDENTIAL_REFRESH,
+        }
+        ws_id = uuid.uuid4()
+        mb_id = uuid.uuid4()
+
+        service = ReplySyncService(session, providers={"GMAIL": mock_provider})
+        service.repository = MagicMock()
+        service.repository.get_mailbox_for_sync.return_value = {
+            "id": mb_id,
+            "workspace_id": ws_id,
+            "provider": "GMAIL",
+            "connection_state": "CONNECTED",
+            "current_connection_generation": 1,
+            "original_address": "rep@outreach.com",
+        }
+        service.repository.ensure_sync_state.return_value = {
+            "id": uuid.uuid4(),
+            "connection_generation": 1,
+            "status": "INITIALIZING",
+            "cursor_data": None,
+        }
+        service.repository.acquire_sync_lease.return_value = {
+            "id": uuid.uuid4(),
+            "connection_generation": 1,
+            "status": "CURRENT",
+            "cursor_data": None,
+            "lease_owner": "worker-sync",
+            "lease_generation": 2,
+        }
+        service.repository.get_mailbox_connection.return_value = {
+            "credential_ciphertext": b"dummy",
+            "nonce": b"dummy12345678",
+            "encryption_key_id": "v1",
+            "protected_config": None,
+            "granted_scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            "expires_at": datetime.now(UTC) + timedelta(hours=1),
+        }
+        # Sender never emailed, no quoted Message-ID of ours, unknown thread.
+        service.repository.load_outbound_candidates.return_value = []
+
+        newsletter = ProviderInboundMessage(
+            provider_message_id="gmail_in_news",
+            provider_thread_id="th_news",
+            rfc_message_id="<issue-42@news.example>",
+            in_reply_to=None,
+            references=[],
+            from_address="editor@news.example",
+            to_addresses=["rep@outreach.com"],
+            subject="Weekly digest",
+            body_text="Ten links you should read",
+            body_html=None,
+            received_at=datetime.now(UTC),
+        )
+        mock_provider.sync_inbound_messages.return_value = SyncPageResult(
+            messages=[newsletter],
+            has_more=False,
+            next_cursor="cursor_v2",
+        )
+
+        with patch("app.modules.replies.service.decrypt_credentials", return_value={"access_token": "token"}):
+            result = service.sync_mailbox(workspace_id=ws_id, mailbox_id=mb_id)
+
+        assert result.status == "CURRENT"
+        assert result.messages_discovered == 1
+        assert result.messages_persisted == 0
+        service.repository.find_or_create_conversation.assert_not_called()
+        service.repository.insert_inbound_message.assert_not_called()
+        service.repository.insert_outreach_link.assert_not_called()
+        # The checkpoint still advances so the skipped mail is not re-read forever.
+        service.repository.advance_sync_checkpoint.assert_called_once()
+
     def test_sync_mailbox_resync_handling(self) -> None:
         session = MagicMock()
         mock_provider = MagicMock(spec=EmailProvider)
