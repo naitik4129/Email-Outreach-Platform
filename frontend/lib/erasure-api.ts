@@ -1,5 +1,5 @@
 import { apiRequest } from "@/lib/api-client";
-import type { ErasureResult } from "@/types/domain";
+import type { BulkActionResult, ErasureResult } from "@/types/domain";
 
 // Permanent removal (ADR-0015). Every call is a POST whose body carries the typed
 // confirmation, so a name or an email address never appears in a URL. The server
@@ -23,6 +23,24 @@ export const eraseCampaign = (ws: string, id: string, confirm: string) =>
 /** Erase one person everywhere (an active suppression is kept). */
 export const eraseLead = (ws: string, id: string, confirm: string) =>
   post(ws, `/leads/${id}/erase`, confirm);
+
+/** The one word a bulk permanent delete asks for (the server compares it too). */
+export const BULK_DELETE_PHRASE = "DELETE";
+
+function bulkPost(workspaceId: string, path: string, ids: string[], confirm: string) {
+  return apiRequest<BulkActionResult>(`/api/v1/workspaces/${workspaceId}${path}`, {
+    method: "POST",
+    body: JSON.stringify({ ids, confirm }),
+  }).then((res) => res.data);
+}
+
+/** Erase several ARCHIVED leads at once (up to 100). */
+export const bulkEraseLeads = (ws: string, ids: string[], confirm: string) =>
+  bulkPost(ws, "/leads/bulk-erase", ids, confirm);
+
+/** Delete several ARCHIVED lists at once (up to 100). */
+export const bulkPurgeLeadLists = (ws: string, ids: string[], confirm: string) =>
+  bulkPost(ws, "/lead-lists/bulk-purge", ids, confirm);
 
 export const purgeTemplate = (ws: string, id: string, confirm: string) =>
   post(ws, `/templates/${id}/purge`, confirm);

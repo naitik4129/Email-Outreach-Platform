@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import WorkspaceContext, get_db
 from app.core.permissions import require_permission
 from app.modules.erasure.service import ErasureService
-from app.schemas.erasure import ErasureConfirmIn, ErasureOut
+from app.schemas.bulk import BulkActionOut
+from app.schemas.erasure import ErasureBulkIn, ErasureConfirmIn, ErasureOut
 
 router = APIRouter()
 
@@ -53,6 +54,15 @@ def erase_lead(
     return ErasureService(db).erase_lead(context, lead_id, payload.confirm)
 
 
+@router.post("/leads/bulk-erase", response_model=BulkActionOut)
+def bulk_erase_leads(
+    payload: ErasureBulkIn,
+    context: WorkspaceContext = _Admin,
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    return ErasureService(db).bulk_erase_leads(context, payload.ids, payload.confirm)
+
+
 @router.post("/templates/{template_id}/purge", response_model=ErasureOut)
 def purge_template(
     template_id: UUID,
@@ -71,6 +81,17 @@ def purge_lead_list(
     db: Session = Depends(get_db),
 ) -> ErasureOut:
     return ErasureService(db).purge_lead_list(context, list_id, payload.confirm)
+
+
+@router.post("/lead-lists/bulk-purge", response_model=BulkActionOut)
+def bulk_purge_lead_lists(
+    payload: ErasureBulkIn,
+    context: WorkspaceContext = _Admin,
+    db: Session = Depends(get_db),
+) -> BulkActionOut:
+    return ErasureService(db).bulk_purge_lead_lists(
+        context, payload.ids, payload.confirm
+    )
 
 
 @router.post("/imports/{import_id}/purge", response_model=ErasureOut)

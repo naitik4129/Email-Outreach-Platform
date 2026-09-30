@@ -62,3 +62,13 @@ The project owner asked to be able to remove archived campaigns and mailboxes co
 - **Refusals:** campaign not DRAFT/ARCHIVED; mailbox not DISCONNECTED or used by a campaign that is not DRAFT/ARCHIVED or holding an ACTIVE safety hold; any message in flight or attempt unresolved (`in_flight`); any send attempt in the last 25 hours (`recent_sends`, the rate controller's reconstruction window, so shared rate windows are not under-counted).
 - **Kept:** leads, recipient addresses, all suppressions, other campaigns and mailboxes.
 - **Consequences:** deleting a mailbox deletes the provider receipts and their `suppression_sources` rows (the suppression itself stays ACTIVE), and stamps `erased_at` on archived campaigns that used it (the only marker the campaign-mailbox guard honours), which drops their counts by the deleted messages. Unsubscribe links in already-sent emails stop resolving because their tokens are deleted with the messages. Notification, domain-event and audit rows that only mention the deleted ids are left in place (no recipient data). Attachment files are removed after commit, as for a purge.
+
+## Amendment: bulk permanent delete of archived leads and lists (2026-09-30)
+
+The project owner asked to select several archived leads or lists and delete them together. This **reverses "permanent removal is deliberately single-item" for these two aggregates only**; campaigns, templates, imports and mailboxes stay single-item.
+
+- **Routes:** `POST /leads/bulk-erase` and `POST /lead-lists/bulk-purge`, ADMIN/OWNER only, body `{ids, confirm}`, 1 to 100 unique ids. They call the same database commands as the single routes (`app_erase_lead`, `app_purge_lead_list`), so every refusal (list used by a campaign audience, send in flight, tenant mismatch) applies per item.
+- **Confirmation:** there is no single name to type, so the server compares one fixed word, `DELETE`. This is weaker than typing an email address or list name per item; it is accepted because the action is limited to items that were already archived.
+- **Archived only:** a bulk erase refuses a lead that is not archived (a single erase does not require it). Lists already require it in the database command.
+- **"Delete" for a lead is erasure**, unchanged: personal data is redacted, list memberships are removed, an empty record stays, and an ACTIVE suppression is kept.
+- **Transaction:** one transaction per request with a savepoint per item, like the bulk archive. One refused item is reported and does not undo or block the others. Each item still writes its own audit event.

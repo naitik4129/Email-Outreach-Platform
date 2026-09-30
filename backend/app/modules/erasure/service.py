@@ -15,6 +15,7 @@ from app.core.errors import AppError
 from app.modules.campaigns.attachment_service import default_storage_client
 from app.modules.campaigns.repository import CampaignRepository
 from app.modules.imports.storage import StorageError, SupabaseStorageClient
+from app.schemas.bulk import BulkActionOut, BulkItemResult
 from app.schemas.erasure import ErasureOut
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,8 @@ StorageFactory = Callable[[], SupabaseStorageClient]
 
 #: Imports have no human name, so the confirmation is this fixed word.
 IMPORT_CONFIRMATION = "DELETE"
+#: Same idea for a bulk request: there is no single name to type.
+BULK_CONFIRMATION = "DELETE"
 
 # Message prefix the SQL commands (migration 0033) raise for expected refusals.
 _SQL_PREFIX = "erasure:"
@@ -180,6 +183,38 @@ class ErasureService:
         result = self._run("app_purge_lead_list", context, list_id)
         return self._finish("lead_list.purge", list_id, result.get("deleted", {}))
 
+    def bulk_purge_lead_lists(
+        self, context: WorkspaceContext, list_ids: list[UUID], confirm: str
+    ) -> BulkActionOut:
+        """Delete several archived lists. Each runs the same database command as
+        the single purge, so its refusals (not archived, used by a campaign) apply
+        per item and one refusal doesn't stop the others."""
+        return self._bulk(
+            context,
+            list_ids,
+            confirm,
+            operation="lead_list.purge",
+            command="app_purge_lead_list",
+            table="lead_lists",
+            label="list",
+        )
+
+    def bulk_erase_leads(
+        self, context: WorkspaceContext, lead_ids: list[UUID], confirm: str
+    ) -> BulkActionOut:
+        """Erase several ARCHIVED leads. A single erase doesn't require archiving,
+        but a one-word confirmation over many people does, so nobody is erased in
+        bulk without first having been taken out of use."""
+        return self._bulk(
+            context,
+            lead_ids,
+            confirm,
+            operation="lead.erase",
+            command="app_erase_lead",
+            table="leads",
+            label="lead",
+        )
+
     def purge_import(
         self, context: WorkspaceContext, import_id: UUID, confirm: str
     ) -> ErasureOut:
@@ -274,6 +309,61 @@ class ErasureService:
             raise AppError("not_found", f"{label} not found", status_code=404)
         if confirm.strip() != str(row[0]).strip():
             raise self._mismatch()
+
+    def _bulk(
+        self,
+        context: WorkspaceContext,
+        ids: list[UUID],
+        confirm: str,
+        *,
+        operation: str,
+        command: str,
+        table: str,
+        label: str,
+    ) -> BulkActionOut:
+        if confirm.strip() != BULK_CONFIRMATION:
+            raise self._mismatch()
+        results: list[BulkItemResult] = []
+        for target_id in ids:
+            try:
+                # table is a fixed literal from this module, never request input.
+                row = self.session.execute(
+                    text(
+                        f"SELECT archived_at IS NOT NULL FROM {table} "  # noqa: S608
+                        "WHERE workspace_id = :ws AND id = :id"
+                    ),
+                    {"ws": str(context.workspace_id), "id": str(target_id)},
+                ).first()
+                if row is None:
+                    raise AppError(
+                        "not_found", f"{label.capitalize()} not found", status_code=404
+                    )
+                if not row[0]:
+                    raise AppError(
+                        "state_conflict",
+                        f"Archive the {label} before deleting it.",
+                        status_code=409,
+                    )
+                # One transaction for the request (the role and workspace context
+                # are transaction-local, so committing per item would drop them).
+                # _run gives each item its own savepoint, so a refusal undoes only
+                # that item; the request's commit keeps the rest.
+                self._run(command, context, target_id)
+                logger.info(
+                    "erasure completed",
+                    extra={"operation": operation, "target_id": str(target_id)},
+                )
+                results.append(BulkItemResult(id=target_id, ok=True))
+            except AppError as exc:
+                results.append(
+                    BulkItemResult(
+                        id=target_id, ok=False, code=exc.code, message=exc.message
+                    )
+                )
+        succeeded = sum(1 for r in results if r.ok)
+        return BulkActionOut(
+            results=results, succeeded=succeeded, failed=len(results) - succeeded
+        )
 
     def _run(
         self, function: str, context: WorkspaceContext, target_id: UUID

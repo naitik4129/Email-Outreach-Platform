@@ -39,6 +39,9 @@ vi.mock("@/lib/leads-api", () => ({
   createLeadList,
 }));
 
+const { bulkEraseLeads } = vi.hoisted(() => ({ bulkEraseLeads: vi.fn() }));
+vi.mock("@/lib/erasure-api", () => ({ bulkEraseLeads, BULK_DELETE_PHRASE: "DELETE" }));
+
 const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
 
 vi.mock("@/lib/workspace-context", () => ({ useWorkspace }));
@@ -338,6 +341,46 @@ describe("LeadsPageClient", () => {
           { id: "l1", expected_version: 5 },
         ]),
       );
+    });
+
+    it("deletes selected archived leads after typing DELETE, skipping erased and active ones", async () => {
+      mockWorkspace("ADMIN");
+      listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+      listLeads.mockResolvedValue({
+        items: [
+          lead("l1", "a@x.test", true),
+          lead("l2", "b@x.test", true),
+          lead("l3", "erased-1@erased.invalid", true, true),
+          lead("l4", "d@x.test"),
+        ],
+        next_cursor: null,
+      });
+      bulkEraseLeads.mockResolvedValue({ results: [], succeeded: 2, failed: 0 });
+      const user = userEvent.setup();
+      renderWithClient(<LeadsPageClient />);
+
+      await user.click(await screen.findByRole("checkbox", { name: "Select all leads on this page" }));
+      await user.click(screen.getByRole("button", { name: "Delete selected" }));
+      const dialog = await screen.findByRole("dialog");
+      const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
+      expect(confirm).toBeDisabled();
+      await user.type(within(dialog).getByRole("textbox"), "DELETE");
+      await user.click(confirm);
+
+      await waitFor(() =>
+        expect(bulkEraseLeads).toHaveBeenCalledWith("ws-1", ["l1", "l2"], "DELETE"),
+      );
+    });
+
+    it("offers no permanent delete to a manager", async () => {
+      mockWorkspace("MANAGER");
+      listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+      listLeads.mockResolvedValue({ items: [lead("l1", "a@x.test", true)], next_cursor: null });
+      const user = userEvent.setup();
+      renderWithClient(<LeadsPageClient />);
+      await user.click(await screen.findByRole("checkbox", { name: "Select a@x.test" }));
+      expect(screen.getByRole("button", { name: "Restore selected" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
     });
 
     it("shows no selection controls to a read-only role", async () => {

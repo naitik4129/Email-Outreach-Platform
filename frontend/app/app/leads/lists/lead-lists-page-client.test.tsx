@@ -46,8 +46,15 @@ vi.mock("@/lib/leads-api", () => ({
   bulkUnarchiveLeadLists,
 }));
 
-const { purgeLeadList } = vi.hoisted(() => ({ purgeLeadList: vi.fn() }));
-vi.mock("@/lib/erasure-api", () => ({ purgeLeadList }));
+const { purgeLeadList, bulkPurgeLeadLists } = vi.hoisted(() => ({
+  purgeLeadList: vi.fn(),
+  bulkPurgeLeadLists: vi.fn(),
+}));
+vi.mock("@/lib/erasure-api", () => ({
+  purgeLeadList,
+  bulkPurgeLeadLists,
+  BULK_DELETE_PHRASE: "DELETE",
+}));
 
 const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
 vi.mock("@/lib/workspace-context", () => ({ useWorkspace }));
@@ -232,6 +239,37 @@ describe("LeadListsPageClient", () => {
     await waitFor(() => expect(addLeadListMember).toHaveBeenCalledWith("ws-1", "new-list", "b"));
     expect(addLeadListMember).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(push).toHaveBeenCalledWith("/app/leads/lists/new-list"));
+  });
+
+  it("deletes several archived lists at once after typing DELETE, for admins only", async () => {
+    search.value = "status=ARCHIVED";
+    listLeadLists.mockResolvedValue({
+      items: [list("l1", "Old", true), list("l2", "Older", true), list("l3", "Oldest", true)],
+      next_cursor: null,
+    });
+    bulkPurgeLeadLists.mockResolvedValue({ results: [], succeeded: 2, failed: 0 });
+
+    asRole("MANAGER");
+    const manager = renderPage();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select Old" }));
+    expect(screen.queryByRole("button", { name: "Delete selected" })).not.toBeInTheDocument();
+    manager.unmount();
+
+    asRole("ADMIN");
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("checkbox", { name: "Select Old" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Oldest" }));
+    await user.click(screen.getByRole("button", { name: "Delete selected" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "Delete permanently" });
+    expect(confirm).toBeDisabled();
+    await user.type(within(dialog).getByRole("textbox"), "DELETE");
+    await user.click(confirm);
+
+    await waitFor(() =>
+      expect(bulkPurgeLeadLists).toHaveBeenCalledWith("ws-1", ["l1", "l3"], "DELETE"),
+    );
   });
 
   it("gives a read-only role no selection or actions", async () => {

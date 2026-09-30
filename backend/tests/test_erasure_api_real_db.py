@@ -252,6 +252,76 @@ def test_purge_template_list_and_mailbox_routes(client, su) -> None:
         assert scalar(su, f"SELECT count(*) FROM public.{table} WHERE id=%s", row) == 0
 
 
+def bulk(client, w: World, path: str, ids, confirm: str):
+    return client.post(
+        f"/api/v1/workspaces/{w.ws}{path}", json={"ids": [str(i) for i in ids], "confirm": confirm}
+    )
+
+
+def _lists(su, w: World, *, archived: int, active: int) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+    gone, live = [], []
+    su.execute("SET session_replication_role = replica")
+    for i in range(archived + active):
+        row = uuid.uuid4()
+        is_archived = i < archived
+        _insert(su, "lead_lists", id=row, workspace_id=w.ws, name=f"L{i}",
+                archived_at=datetime.now(UTC) if is_archived else None)
+        (gone if is_archived else live).append(row)
+    su.execute("SET session_replication_role = origin")
+    return gone, live
+
+
+def test_bulk_purge_lists_removes_archived_ones_and_reports_the_rest(client, su) -> None:
+    w = seed_world(su, running=False, enroll_first=False, members=0)
+    other = seed_world(su, running=False, enroll_first=False, members=0)
+    (foreign,), _ = _lists(su, other, archived=1, active=0)
+    gone, live = _lists(su, w, archived=2, active=1)
+    client.holder["as"] = (w, "OWNER")
+
+    refused = bulk(client, w, "/lead-lists/bulk-purge", gone, "delete")
+    assert refused.status_code == 422 and refused.json()["error"]["code"] == "confirmation_mismatch"
+    assert scalar(su, "SELECT count(*) FROM public.lead_lists WHERE workspace_id=%s", w.ws) == 3
+
+    res = bulk(client, w, "/lead-lists/bulk-purge", [*gone, *live, foreign], "DELETE")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["succeeded"], body["failed"]) == (2, 2)
+    by_id = {r["id"]: r for r in body["results"]}
+    assert by_id[str(live[0])]["code"] == "state_conflict"
+    assert by_id[str(foreign)]["code"] == "not_found"
+    assert scalar(su, "SELECT count(*) FROM public.lead_lists WHERE id = ANY(%s)", gone) == 0
+    assert scalar(su, "SELECT count(*) FROM public.lead_lists WHERE id = ANY(%s)", [*live, foreign]) == 2
+
+
+def test_bulk_erase_leads_only_touches_archived_leads(client, su) -> None:
+    w = seed_world(su, running=False, enroll_first=False, members=3)
+    archived, keep = w.lead_ids[:2], w.lead_ids[2]
+    su.execute("UPDATE public.leads SET archived_at = now(), status = 'ARCHIVED' WHERE id = ANY(%s)", [archived])
+    client.holder["as"] = (w, "OWNER")
+
+    res = bulk(client, w, "/leads/bulk-erase", [*archived, keep], "DELETE")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["succeeded"], body["failed"]) == (2, 1)
+    assert {r["id"]: r.get("code") for r in body["results"]}[str(keep)] == "state_conflict"
+    assert "lead0@target0.test" not in res.text
+    assert scalar(su, "SELECT count(*) FROM public.leads WHERE id = ANY(%s) AND first_name IS NULL", archived) == 2
+    assert scalar(su, "SELECT first_name FROM public.leads WHERE id=%s", keep) == "Lead2"
+
+
+def test_bulk_delete_is_admin_only_and_limited_to_one_hundred(client, su) -> None:
+    w = seed_world(su, running=False, enroll_first=False, members=0)
+    gone, _ = _lists(su, w, archived=1, active=0)
+    client.holder["as"] = (w, "MEMBER")
+    assert bulk(client, w, "/lead-lists/bulk-purge", gone, "DELETE").status_code == 403
+    assert bulk(client, w, "/leads/bulk-erase", gone, "DELETE").status_code == 403
+    client.holder["as"] = (w, "OWNER")
+    too_many = [uuid.uuid4() for _ in range(101)]
+    assert bulk(client, w, "/lead-lists/bulk-purge", too_many, "DELETE").status_code == 422
+    assert bulk(client, w, "/lead-lists/bulk-purge", [gone[0], gone[0]], "DELETE").status_code == 422
+    assert scalar(su, "SELECT count(*) FROM public.lead_lists WHERE id=%s", gone[0]) == 1
+
+
 def test_delete_an_archived_campaign_that_sent_and_its_mailbox(client, su) -> None:
     w = settled_world(su, members=1)
     client.holder["as"] = (w, "OWNER")

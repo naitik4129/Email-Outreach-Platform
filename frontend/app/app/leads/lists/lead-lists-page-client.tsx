@@ -19,7 +19,7 @@ import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import { CreateListDialog } from "@/components/leads/create-list-dialog";
 import { summarizeBulk } from "@/lib/bulk-summary";
 import { errorMessage } from "@/lib/errors";
-import { purgeLeadList } from "@/lib/erasure-api";
+import { BULK_DELETE_PHRASE, bulkPurgeLeadLists, purgeLeadList } from "@/lib/erasure-api";
 import {
   archiveLeadList,
   bulkArchiveLeadLists,
@@ -63,6 +63,8 @@ export function LeadListsPageClient() {
     archived: boolean;
   } | null>(null);
   const [purgeError, setPurgeError] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
 
   const listsQuery = useQuery({
     queryKey: ["workspace", activeWorkspaceId, "lead-lists", { cursor, status }],
@@ -142,6 +144,28 @@ export function LeadListsPageClient() {
     },
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: () =>
+      bulkPurgeLeadLists(
+        activeWorkspaceId!,
+        archivedSelected.map((l) => l.id),
+        BULK_DELETE_PHRASE,
+      ),
+    onSuccess: (result) => {
+      invalidateLists();
+      setBulkDeleteOpen(false);
+      selection.clear();
+      toast(
+        summarizeBulk(result, "Deleted"),
+        result.failed > 0 ? "error" : undefined,
+      );
+    },
+    onError: (error) => {
+      invalidateLists();
+      setBulkDeleteError(errorMessage(error));
+    },
+  });
+
   function updateStatus(value: string) {
     const next = new URLSearchParams(params.toString());
     if (value && value !== "ACTIVE") next.set("status", value);
@@ -213,6 +237,21 @@ export function LeadListsPageClient() {
             >
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
               Restore selected
+            </Button>
+          ) : null}
+          {archivedSelected.length > 0 && mayErase ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-red-600 hover:text-red-700"
+              onClick={() => {
+                setBulkDeleteError(null);
+                setBulkDeleteOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Delete selected
             </Button>
           ) : null}
         </SelectionBar>
@@ -355,6 +394,17 @@ export function LeadListsPageClient() {
         loading={bulkMutation.isPending}
         onCancel={() => setConfirmBulkArchive(false)}
         onConfirm={() => bulkMutation.mutate({ restore: false })}
+      />
+      <TypeToConfirmDialog
+        open={bulkDeleteOpen}
+        title={`Delete ${archivedSelected.length} archived list${archivedSelected.length === 1 ? "" : "s"} permanently?`}
+        description="The lists are deleted for good. The leads in them are not deleted. A list that was used to build a campaign audience can't be deleted and stays archived; the others are still deleted. Selected lists that aren't archived are left alone. This can't be undone."
+        phrase={BULK_DELETE_PHRASE}
+        confirmLabel="Delete permanently"
+        loading={bulkDeleteMutation.isPending}
+        error={bulkDeleteError}
+        onCancel={() => setBulkDeleteOpen(false)}
+        onConfirm={() => bulkDeleteMutation.mutate()}
       />
       <CreateListDialog open={createOpen} onOpenChange={setCreateOpen} />
       <TypeToConfirmDialog

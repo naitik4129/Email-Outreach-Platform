@@ -4,7 +4,18 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ListPlus, Loader2, Plus, RotateCcw, Search, ShieldOff, UploadCloud, Users } from "lucide-react";
+import {
+  Archive,
+  ListPlus,
+  Loader2,
+  Plus,
+  RotateCcw,
+  Search,
+  ShieldOff,
+  Trash2,
+  UploadCloud,
+  Users,
+} from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -15,6 +26,7 @@ import { CursorPagination } from "@/components/ui/pagination";
 import { PageHeader } from "@/components/ui/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SelectionBar } from "@/components/ui/selection-bar";
+import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { AddLeadDialog } from "@/components/leads/add-lead-dialog";
 import { CreateListDialog } from "@/components/leads/create-list-dialog";
@@ -22,9 +34,10 @@ import { CreateListFromFilterDialog } from "@/components/leads/create-list-from-
 import { ImportLeadsDialog } from "@/components/leads/import-leads-dialog";
 import { formatLocation } from "@/lib/lead-fields";
 import { summarizeBulk } from "@/lib/bulk-summary";
+import { BULK_DELETE_PHRASE, bulkEraseLeads } from "@/lib/erasure-api";
 import { errorMessage } from "@/lib/errors";
 import { bulkArchiveLeads, bulkUnarchiveLeads, listLeadLists, listLeads } from "@/lib/leads-api";
-import { canManageContacts } from "@/lib/permissions";
+import { canEraseData, canManageContacts } from "@/lib/permissions";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { useSelection } from "@/lib/use-selection";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -58,9 +71,12 @@ export function LeadsPageClient() {
   const status = (params.get("status") as "ACTIVE" | "ARCHIVED" | "ALL" | null) ?? "ACTIVE";
   const listId = params.get("list_id");
   const mayManage = canManageContacts(activeWorkspace?.role_code);
+  const mayErase = canEraseData(activeWorkspace?.role_code);
   const { toast } = useToast();
   const selection = useSelection();
   const [confirmBulkArchive, setConfirmBulkArchive] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     const next = new URLSearchParams(params.toString());
@@ -105,6 +121,9 @@ export function LeadsPageClient() {
     (lead) => selection.selected.has(lead.id) && lead.archived_at,
   );
 
+  // Already-erased leads are archived too, but there is nothing left to delete.
+  const deletableSelected = archivedSelected.filter((lead) => !lead.erased_at);
+
   // A different list (filter, search, page) must never leave hidden rows selected.
   const paramsKey = params.toString();
   const { clear: clearSelection } = selection;
@@ -138,6 +157,28 @@ export function LeadsPageClient() {
     onError: (error) => {
       setConfirmBulkArchive(false);
       toast(errorMessage(error), "error");
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: () =>
+      bulkEraseLeads(
+        activeWorkspaceId!,
+        deletableSelected.map((lead) => lead.id),
+        BULK_DELETE_PHRASE,
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "leads"] });
+      queryClient.invalidateQueries({
+        queryKey: ["workspace", activeWorkspaceId, "lead-lists"],
+      });
+      setBulkDeleteOpen(false);
+      selection.clear();
+      toast(summarizeBulk(result, "Deleted"), result.failed > 0 ? "error" : undefined);
+    },
+    onError: (error) => {
+      queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "leads"] });
+      setBulkDeleteError(errorMessage(error));
     },
   });
 
@@ -272,6 +313,21 @@ export function LeadsPageClient() {
               Restore selected
             </Button>
           ) : null}
+          {deletableSelected.length > 0 && mayErase ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-red-600 hover:text-red-700"
+              onClick={() => {
+                setBulkDeleteError(null);
+                setBulkDeleteOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Delete selected
+            </Button>
+          ) : null}
         </SelectionBar>
       ) : null}
 
@@ -396,6 +452,17 @@ export function LeadsPageClient() {
         loading={bulkMutation.isPending}
         onCancel={() => setConfirmBulkArchive(false)}
         onConfirm={() => bulkMutation.mutate({ restore: false })}
+      />
+      <TypeToConfirmDialog
+        open={bulkDeleteOpen}
+        title={`Delete ${deletableSelected.length} archived lead${deletableSelected.length === 1 ? "" : "s"} permanently?`}
+        description="Everything personal about these people is erased in every campaign, list and conversation, and they are removed from all lists. An empty record remains so campaign statistics still add up, and anyone who unsubscribed stays blocked from future emails. Selected leads that aren't archived are left alone. This can't be undone."
+        phrase={BULK_DELETE_PHRASE}
+        confirmLabel="Delete permanently"
+        loading={bulkDeleteMutation.isPending}
+        error={bulkDeleteError}
+        onCancel={() => setBulkDeleteOpen(false)}
+        onConfirm={() => bulkDeleteMutation.mutate()}
       />
       <AddLeadDialog open={addLeadOpen} onOpenChange={setAddLeadOpen} />
       <ImportLeadsDialog
