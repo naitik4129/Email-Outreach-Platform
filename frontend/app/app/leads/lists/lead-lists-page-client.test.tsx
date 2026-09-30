@@ -17,13 +17,19 @@ vi.mock("next/navigation", () => ({
 
 const {
   listLeadLists,
+  listLeads,
   createLeadList,
+  addLeadListMember,
+  archiveLeadList,
   unarchiveLeadList,
   bulkArchiveLeadLists,
   bulkUnarchiveLeadLists,
 } = vi.hoisted(() => ({
   listLeadLists: vi.fn(),
+  listLeads: vi.fn(),
   createLeadList: vi.fn(),
+  addLeadListMember: vi.fn(),
+  archiveLeadList: vi.fn(),
   unarchiveLeadList: vi.fn(),
   bulkArchiveLeadLists: vi.fn(),
   bulkUnarchiveLeadLists: vi.fn(),
@@ -31,7 +37,10 @@ const {
 
 vi.mock("@/lib/leads-api", () => ({
   listLeadLists,
+  listLeads,
   createLeadList,
+  addLeadListMember,
+  archiveLeadList,
   unarchiveLeadList,
   bulkArchiveLeadLists,
   bulkUnarchiveLeadLists,
@@ -152,6 +161,77 @@ describe("LeadListsPageClient", () => {
     await user.type(within(dialog).getByRole("textbox"), "Old");
     await user.click(confirm);
     await waitFor(() => expect(purgeLeadList).toHaveBeenCalledWith("ws-1", "l1", "Old"));
+  });
+
+  it("deletes an active list by archiving it first, then purging it", async () => {
+    asRole("ADMIN");
+    listLeadLists.mockResolvedValue({ items: [list("l1", "Founders")], next_cursor: null });
+    archiveLeadList.mockResolvedValue({});
+    purgeLeadList.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /delete founders permanently/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "Founders");
+    await user.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+
+    await waitFor(() => expect(purgeLeadList).toHaveBeenCalledWith("ws-1", "l1", "Founders"));
+    expect(archiveLeadList).toHaveBeenCalledWith("ws-1", "l1", 6);
+    expect(archiveLeadList.mock.invocationCallOrder[0]).toBeLessThan(
+      purgeLeadList.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not archive again when retrying a delete the server refused", async () => {
+    asRole("ADMIN");
+    listLeadLists.mockResolvedValue({ items: [list("l1", "Founders")], next_cursor: null });
+    archiveLeadList.mockResolvedValue({});
+    purgeLeadList
+      .mockRejectedValueOnce(new Error("In use"))
+      .mockResolvedValueOnce({});
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /delete founders permanently/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "Founders");
+    await user.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+    await waitFor(() => expect(purgeLeadList).toHaveBeenCalledTimes(1));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete permanently" }));
+
+    await waitFor(() => expect(purgeLeadList).toHaveBeenCalledTimes(2));
+    expect(archiveLeadList).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a list by picking leads, then naming it", async () => {
+    asRole("MEMBER");
+    listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+    listLeads.mockResolvedValue({
+      items: [
+        { id: "a", first_name: "Ada", last_name: "Lovelace", email: "ada@x.test", company: null },
+        { id: "b", first_name: "Grace", last_name: "Hopper", email: "grace@x.test", company: "Navy" },
+      ],
+      next_cursor: null,
+    });
+    createLeadList.mockResolvedValue({ id: "new-list", name: "Pioneers" });
+    addLeadListMember.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /create list/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(await within(dialog).findByText("Grace Hopper"));
+    expect(within(dialog).getByText("1 selected")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Next" }));
+
+    await user.type(within(dialog).getByLabelText(/list name/i), "Pioneers");
+    await user.click(within(dialog).getByRole("button", { name: "Create list" }));
+
+    await waitFor(() => expect(createLeadList).toHaveBeenCalledWith("ws-1", "Pioneers"));
+    await waitFor(() => expect(addLeadListMember).toHaveBeenCalledWith("ws-1", "new-list", "b"));
+    expect(addLeadListMember).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/app/leads/lists/new-list"));
   });
 
   it("gives a read-only role no selection or actions", async () => {

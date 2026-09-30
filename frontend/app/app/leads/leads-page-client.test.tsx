@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,7 @@ const {
   bulkArchiveLeads,
   bulkUnarchiveLeads,
   addLeadListMember,
+  createLeadList,
 } = vi.hoisted(() => ({
   createLead: vi.fn(),
   listLeadLists: vi.fn(),
@@ -25,6 +26,7 @@ const {
   bulkArchiveLeads: vi.fn(),
   bulkUnarchiveLeads: vi.fn(),
   addLeadListMember: vi.fn(),
+  createLeadList: vi.fn(),
 }));
 
 vi.mock("@/lib/leads-api", () => ({
@@ -34,6 +36,7 @@ vi.mock("@/lib/leads-api", () => ({
   bulkArchiveLeads,
   bulkUnarchiveLeads,
   addLeadListMember,
+  createLeadList,
 }));
 
 const { useWorkspace } = vi.hoisted(() => ({ useWorkspace: vi.fn() }));
@@ -285,6 +288,35 @@ describe("LeadsPageClient", () => {
           { id: "l2", expected_version: 5 },
         ]),
       );
+    });
+
+    it("creates a list from the selected leads, skipping archived ones", async () => {
+      mockWorkspace("MEMBER");
+      listLeadLists.mockResolvedValue({ items: [], next_cursor: null });
+      listLeads.mockResolvedValue({
+        items: [lead("l1", "a@x.test"), lead("l2", "b@x.test"), lead("l3", "c@x.test", true)],
+        next_cursor: null,
+      });
+      createLeadList.mockResolvedValue({ id: "new-list", name: "Prospects" });
+      addLeadListMember.mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      renderWithClient(<LeadsPageClient />);
+
+      await user.click(await screen.findByRole("checkbox", { name: "Select a@x.test" }));
+      await user.click(screen.getByRole("checkbox", { name: "Select c@x.test" }));
+      await user.click(screen.getByRole("button", { name: "Create list from selected" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText("1 lead will be added to the new list.")).toBeInTheDocument();
+      await user.type(within(dialog).getByLabelText(/list name/i), "Prospects");
+      await user.click(within(dialog).getByRole("button", { name: "Create list" }));
+
+      await waitFor(() => expect(createLeadList).toHaveBeenCalledWith("ws-1", "Prospects"));
+      await waitFor(() =>
+        expect(addLeadListMember).toHaveBeenCalledWith("ws-1", "new-list", "l1"),
+      );
+      expect(addLeadListMember).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/app/leads/lists/new-list"));
     });
 
     it("restores selected archived leads and labels erased ones", async () => {

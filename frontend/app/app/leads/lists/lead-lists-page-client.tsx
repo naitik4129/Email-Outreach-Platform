@@ -9,8 +9,6 @@ import { Archive, ListChecks, Loader2, Plus, RotateCcw, Trash2 } from "lucide-re
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { CursorPagination } from "@/components/ui/pagination";
 import { PageHeader } from "@/components/ui/page-header";
@@ -18,13 +16,14 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SelectionBar } from "@/components/ui/selection-bar";
 import { useToast } from "@/components/ui/toast";
 import { TypeToConfirmDialog } from "@/components/ui/type-to-confirm-dialog";
+import { CreateListDialog } from "@/components/leads/create-list-dialog";
 import { summarizeBulk } from "@/lib/bulk-summary";
 import { errorMessage } from "@/lib/errors";
 import { purgeLeadList } from "@/lib/erasure-api";
 import {
+  archiveLeadList,
   bulkArchiveLeadLists,
   bulkUnarchiveLeadLists,
-  createLeadList,
   listLeadLists,
   unarchiveLeadList,
 } from "@/lib/leads-api";
@@ -46,9 +45,7 @@ export function LeadListsPageClient() {
   const params = useSearchParams();
   const queryClient = useQueryClient();
   const { activeWorkspaceId, activeWorkspace } = useWorkspace();
-  const [formOpen, setFormOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const cursor = params.get("cursor");
   const status = (params.get("status") as "ACTIVE" | "ARCHIVED" | "ALL" | null) ?? "ACTIVE";
   const mayManage = canManageContacts(activeWorkspace?.role_code);
@@ -57,7 +54,14 @@ export function LeadListsPageClient() {
   const selection = useSelection();
   const [confirmBulkArchive, setConfirmBulkArchive] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [purgeTarget, setPurgeTarget] = useState<{ id: string; name: string } | null>(null);
+  // `version` is the row's version when it was still active; `archived` flips to
+  // true once the archive step succeeded so a retry doesn't archive twice.
+  const [purgeTarget, setPurgeTarget] = useState<{
+    id: string;
+    name: string;
+    version: number;
+    archived: boolean;
+  } | null>(null);
   const [purgeError, setPurgeError] = useState<string | null>(null);
 
   const listsQuery = useQuery({
@@ -117,27 +121,25 @@ export function LeadListsPageClient() {
   });
 
   const purgeMutation = useMutation({
-    mutationFn: (target: { id: string; name: string }) =>
-      purgeLeadList(activeWorkspaceId!, target.id, target.name),
+    mutationFn: async (target: NonNullable<typeof purgeTarget>) => {
+      // The database only deletes archived lists, so an active list is archived
+      // first; both calls are the same single-item endpoints used elsewhere.
+      if (!target.archived) {
+        await archiveLeadList(activeWorkspaceId!, target.id, target.version);
+        setPurgeTarget({ ...target, archived: true });
+      }
+      return purgeLeadList(activeWorkspaceId!, target.id, target.name);
+    },
     onSuccess: () => {
       invalidateLists();
       setPurgeTarget(null);
       toast("List deleted. The leads in it were not deleted.");
     },
-    onError: (error) => setPurgeError(errorMessage(error)),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () => createLeadList(activeWorkspaceId!, name),
-    onSuccess: () => {
-      setName("");
-      setFormOpen(false);
-      setFormError(null);
-      queryClient.invalidateQueries({
-        queryKey: ["workspace", activeWorkspaceId, "lead-lists"],
-      });
+    onError: (error) => {
+      // The list may have been archived before the delete was refused.
+      invalidateLists();
+      setPurgeError(errorMessage(error));
     },
-    onError: (error) => setFormError(errorMessage(error)),
   });
 
   function updateStatus(value: string) {
@@ -165,49 +167,13 @@ export function LeadListsPageClient() {
         back={{ href: "/app/leads", label: "Back to leads" }}
         actions={
           mayManage ? (
-            <Button type="button" onClick={() => setFormOpen((open) => !open)}>
+            <Button type="button" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Create List
             </Button>
           ) : null
         }
       />
-
-      {formOpen && mayManage ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
-          <h2 className="text-lg font-semibold tracking-normal text-slate-900">
-            Create list
-          </h2>
-          {formError ? (
-            <div className="mt-3">
-              <Alert>{formError}</Alert>
-            </div>
-          ) : null}
-          <form
-            className="mt-4 flex max-w-lg items-start gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              setFormError(null);
-              createMutation.mutate();
-            }}
-          >
-            <Field id="list-name" label="Name" required className="flex-1">
-              <Input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                disabled={createMutation.isPending}
-                required
-              />
-            </Field>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : null}
-              Create
-            </Button>
-          </form>
-        </section>
-      ) : null}
 
       {actionError ? <Alert>{actionError}</Alert> : null}
 
@@ -327,8 +293,8 @@ export function LeadListsPageClient() {
                       </td>
                       {mayManage ? (
                         <td className="whitespace-nowrap px-4 py-3 text-right">
-                          {list.archived_at ? (
-                            <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {list.archived_at ? (
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -341,23 +307,28 @@ export function LeadListsPageClient() {
                                 <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                                 <span className="ml-1">Restore</span>
                               </Button>
-                              {mayErase ? (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-red-600 hover:text-red-700"
-                                  onClick={() => {
-                                    setPurgeError(null);
-                                    setPurgeTarget({ id: list.id, name: list.name });
-                                  }}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                  <span className="sr-only">Delete {list.name} permanently</span>
-                                </Button>
-                              ) : null}
-                            </div>
-                          ) : null}
+                            ) : null}
+                            {mayErase ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-red-600 hover:text-red-700"
+                                onClick={() => {
+                                  setPurgeError(null);
+                                  setPurgeTarget({
+                                    id: list.id,
+                                    name: list.name,
+                                    version: list.version,
+                                    archived: Boolean(list.archived_at),
+                                  });
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span className="sr-only">Delete {list.name} permanently</span>
+                              </Button>
+                            ) : null}
+                          </div>
                         </td>
                       ) : null}
                     </tr>
@@ -385,10 +356,11 @@ export function LeadListsPageClient() {
         onCancel={() => setConfirmBulkArchive(false)}
         onConfirm={() => bulkMutation.mutate({ restore: false })}
       />
+      <CreateListDialog open={createOpen} onOpenChange={setCreateOpen} />
       <TypeToConfirmDialog
         open={purgeTarget !== null}
         title={`Delete "${purgeTarget?.name ?? ""}" permanently?`}
-        description="The list is deleted for good. The leads in it are not deleted. A list that was used to build a campaign audience can't be deleted and stays archived. This can't be undone."
+        description="The list is deleted for good. The leads in it are not deleted. A list that was used to build a campaign audience can't be deleted and stays archived instead. This can't be undone."
         phrase={purgeTarget?.name ?? ""}
         confirmLabel="Delete permanently"
         loading={purgeMutation.isPending}

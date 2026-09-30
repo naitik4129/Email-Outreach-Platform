@@ -17,6 +17,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SelectionBar } from "@/components/ui/selection-bar";
 import { useToast } from "@/components/ui/toast";
 import { AddLeadDialog } from "@/components/leads/add-lead-dialog";
+import { CreateListDialog } from "@/components/leads/create-list-dialog";
 import { CreateListFromFilterDialog } from "@/components/leads/create-list-from-filter-dialog";
 import { ImportLeadsDialog } from "@/components/leads/import-leads-dialog";
 import { formatLocation } from "@/lib/lead-fields";
@@ -50,6 +51,7 @@ export function LeadsPageClient() {
   const [addLeadOpen, setAddLeadOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [createListOpen, setCreateListOpen] = useState(false);
+  const [createFromSelectionOpen, setCreateFromSelectionOpen] = useState(false);
 
   const debouncedSearch = useDebouncedValue(searchText, 350);
   const cursor = params.get("cursor");
@@ -241,6 +243,17 @@ export function LeadsPageClient() {
               type="button"
               variant="outline"
               size="sm"
+              onClick={() => setCreateFromSelectionOpen(true)}
+            >
+              <ListPlus className="h-4 w-4" aria-hidden="true" />
+              Create list from selected
+            </Button>
+          ) : null}
+          {activeSelected.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setConfirmBulkArchive(true)}
             >
               <Archive className="h-4 w-4" aria-hidden="true" />
@@ -390,6 +403,12 @@ export function LeadsPageClient() {
         onOpenChange={setImportOpen}
         defaultImportKind="LEADS"
         onImported={(job) => router.push(`/app/leads/imports/${job.id}`)}
+      />
+      <CreateListDialog
+        open={createFromSelectionOpen}
+        onOpenChange={setCreateFromSelectionOpen}
+        preselectedLeadIds={activeSelected.map((lead) => lead.id)}
+        onCreated={selection.clear}
       />
       <CreateListFromFilterDialog
         open={createListOpen}
