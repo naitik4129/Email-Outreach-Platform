@@ -687,6 +687,39 @@ export type CampaignPlanning = {
 export type PersonalizationCapabilities = {
   enabled: boolean;
   model: string | null;
+  // Whether the server can make interactive AI calls (company analysis and email
+  // drafting). Older servers omit it, which the UI treats as "not available".
+  ai_drafting_available?: boolean;
+};
+
+export type EmailFormat = "TEXT" | "HTML";
+export type CompanySource = "WEBSITE" | "MANUAL";
+export type BrandFontKey = "sans" | "humanist" | "serif" | "times" | "modern" | "mono";
+
+// What the company does, from its website or from text the user typed (ADR-0016).
+export type CompanyProfile = {
+  source: CompanySource;
+  url?: string | null;
+  company_name: string;
+  summary: string;
+  services: string[];
+  industries: string[];
+  audience: string;
+  tone_of_voice: string;
+  key_messages: string[];
+};
+
+// Look-and-feel tokens for an HTML email (ADR-0017).
+export type BrandKit = {
+  logo_url: string | null;
+  logo_alt: string;
+  primary: string;
+  accent: string;
+  text: string;
+  background: string;
+  font_key: BrandFontKey;
+  cta_url: string | null;
+  cta_label: string;
 };
 
 export type PersonalizationConfig = {
@@ -698,6 +731,44 @@ export type PersonalizationConfig = {
   tone: string;
   must_mention: string[];
   never_say: string[];
+  // Optional: absent on campaigns saved before AI authoring existed.
+  email_format?: EmailFormat | null;
+  company?: CompanyProfile | null;
+  brand?: BrandKit | null;
+};
+
+export type CompanyAnalysisSuggestions = {
+  objective: string;
+  offer: string;
+  cta: string;
+  tone: string;
+};
+
+export type CompanyAnalysis = {
+  source: CompanySource;
+  final_url: string | null;
+  profile: CompanyProfile;
+  // Only for a website: a typed description has nothing to extract a brand from.
+  brand: BrandKit | null;
+  suggestions: CompanyAnalysisSuggestions;
+  pages_read: number;
+  warnings: string[];
+  brand_warnings: string[];
+  model: string | null;
+};
+
+export type CompanyAnalysisInput =
+  | { url: string }
+  | { business: { company_name: string; description: string } };
+
+export type LayoutPreview = { html: string; warnings: string[] };
+
+export type ReferenceTemplatesResult = {
+  sequence: CampaignSequence;
+  model: string;
+  theme: string;
+  attempts: number;
+  warnings: string[];
 };
 
 export type PersonalizationApproval = {

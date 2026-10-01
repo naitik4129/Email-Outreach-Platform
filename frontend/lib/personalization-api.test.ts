@@ -4,14 +4,17 @@ const apiRequest = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api-client", () => ({ apiRequest }));
 
 import {
+  analyzeCompany,
   approvePersonalization,
   createPersonalizationPreviews,
+  generateReferenceTemplates,
   getGenerationProgress,
   getLatestPersonalizationPreviews,
   getPersonalization,
   getPersonalizationCapabilities,
   getPersonalizationPreviews,
   newBatchId,
+  previewEmailLayout,
   savePersonalization,
 } from "@/lib/personalization-api";
 
@@ -78,5 +81,61 @@ describe("personalization api client", () => {
 
   it("generates distinct batch ids", () => {
     expect(newBatchId()).not.toEqual(newBatchId());
+  });
+
+  describe("AI authoring (ADR-0016)", () => {
+    it("analyzes a website with a POST and the url only", async () => {
+      apiRequest.mockResolvedValue({ data: { source: "WEBSITE" } });
+      await analyzeCompany("ws-1", "c-1", { url: "https://acme.com/" });
+      const [path, init] = apiRequest.mock.calls[0];
+      expect(path).toBe(`${base}/company-analysis`);
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({ url: "https://acme.com/" });
+    });
+
+    it("analyzes typed business info without a url", async () => {
+      apiRequest.mockResolvedValue({ data: { source: "MANUAL" } });
+      await analyzeCompany("ws-1", "c-1", {
+        business: { company_name: "Acme", description: "We make anvils." },
+      });
+      expect(JSON.parse(apiRequest.mock.calls[0][1].body)).toEqual({
+        business: { company_name: "Acme", description: "We make anvils." },
+      });
+    });
+
+    it("previews the email layout through the server renderer", async () => {
+      apiRequest.mockResolvedValue({ data: { html: "<p/>", warnings: [] } });
+      const brand = {
+        logo_url: null,
+        logo_alt: "",
+        primary: "#111111",
+        accent: "#222222",
+        text: "#333333",
+        background: "#ffffff",
+        font_key: "sans" as const,
+        cta_url: null,
+        cta_label: "",
+      };
+      await previewEmailLayout("ws-1", "c-1", { brand, company_name: "Acme", site_url: null });
+      const [path, init] = apiRequest.mock.calls[0];
+      expect(path).toBe(`${base}/email-layout-preview`);
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({ brand, company_name: "Acme", site_url: null });
+    });
+
+    it("drafts every email, or one, with a POST", async () => {
+      apiRequest.mockResolvedValue({ data: {} });
+      await generateReferenceTemplates("ws-1", "c-1", { scope: "ALL", follow_up_count: 2 });
+      await generateReferenceTemplates("ws-1", "c-1", { scope: "STEP", step_id: "s-1" });
+      expect(apiRequest.mock.calls.map((c) => c[0])).toEqual([
+        `${base}/reference-templates`,
+        `${base}/reference-templates`,
+      ]);
+      expect(apiRequest.mock.calls.map((c) => JSON.parse(c[1].body))).toEqual([
+        { scope: "ALL", follow_up_count: 2 },
+        { scope: "STEP", step_id: "s-1" },
+      ]);
+      expect(apiRequest.mock.calls.every((c) => c[1].method === "POST")).toBe(true);
+    });
   });
 });

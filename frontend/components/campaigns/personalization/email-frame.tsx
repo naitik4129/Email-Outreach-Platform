@@ -10,13 +10,25 @@ p{margin:0 0 .75em}
 </style></head><body>${bodyHtml}</body></html>`;
 }
 
-export function EmailFrame({ html, title }: { html: string; title: string }) {
+// A designed (table-based, branded) email is much taller than a plain one.
+const isDesigned = (html: string) => /<table/i.test(html);
+
+export function EmailFrame({
+  html,
+  title,
+  className,
+}: {
+  html: string;
+  title: string;
+  className?: string;
+}) {
+  const height = className ?? (isDesigned(html) ? "h-[38rem]" : "h-56");
   return (
     <iframe
       title={title}
       sandbox=""
       srcDoc={buildSrcDoc(html)}
-      className="h-56 w-full rounded-md border border-slate-200 bg-white"
+      className={`${height} w-full rounded-md border border-slate-200 bg-white`}
     />
   );
 }

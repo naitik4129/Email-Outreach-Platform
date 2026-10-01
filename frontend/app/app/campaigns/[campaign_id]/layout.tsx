@@ -84,16 +84,9 @@ export default function CampaignLayout({ children }: { children: React.ReactNode
   }
 
   const campaign = campaignQuery.data;
-  // Hyper-personalized campaigns get an extra tab for the objective, samples and
-  // approval; standard campaigns are unchanged.
-  const tabs =
-    campaign.campaign_type === "HYPER_PERSONALIZED"
-      ? [
-          ...TABS.slice(0, 4),
-          { href: "personalization", label: "Personalization" },
-          ...TABS.slice(4),
-        ]
-      : TABS;
+  // Hyper-personalized campaigns author their objective, emails, samples and
+  // approval on the Sequence tab (ADR-0016), so every campaign has the same tabs.
+  const tabs = TABS;
   const errorCount = preflightQuery.data?.errors.length ?? 0;
 
   return (

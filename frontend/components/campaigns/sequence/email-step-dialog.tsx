@@ -62,6 +62,10 @@ type Props = {
   // Hyper-personalized campaign: this email is the reference every lead's version
   // is written from, not the text that is sent (ADR-0011).
   referenceMode?: boolean;
+  // The campaign's emails use the brand layout (HTML style, ADR-0017). The
+  // visual editor can't represent that layout and would flatten it, so this
+  // email is edited as source only.
+  designedEmail?: boolean;
   mailboxes: CampaignMailbox[];
   onClose: () => void;
   // Called with the server's copy of whatever was saved.
@@ -92,6 +96,7 @@ export function EmailStepDialog({
   readOnly,
   canTestSend,
   referenceMode = false,
+  designedEmail = false,
   mailboxes,
   onClose,
   onSaved,
@@ -100,16 +105,30 @@ export function EmailStepDialog({
 }: Props) {
   const initial = React.useMemo(() => draftFromStep(step, day), [step, day]);
   const { draft, baseline, dirty, update, reset, markSaved } = useStepDraft(initial);
-  const [mode, setMode] = React.useState<EditorMode>(() =>
-    roundTripsCleanly(step.email_body_html ?? "") ? "visual" : "source",
+  const [mode, setModeState] = React.useState<EditorMode>(() =>
+    !designedEmail && roundTripsCleanly(step.email_body_html ?? "") ? "visual" : "source",
+  );
+  // A designed email stays in source mode: switching to visual would silently
+  // rewrite the layout (tables, colours, button) into plain paragraphs.
+  const setMode = React.useCallback(
+    (next: EditorMode) => {
+      if (designedEmail) return;
+      setModeState(next);
+    },
+    [designedEmail],
   );
   const [showPreheader, setShowPreheader] = React.useState(Boolean(step.email_preheader));
   const [rightTab, setRightTab] = React.useState("preview");
   const [saving, setSaving] = React.useState(false);
   const [banner, setBanner] = React.useState<Banner>(() =>
-    roundTripsCleanly(step.email_body_html ?? "")
-      ? null
-      : {
+    designedEmail
+      ? {
+          kind: "info",
+          text: "This is a designed email in your brand's style, so it opens as source. Edit the text inside the HTML, or regenerate it from the email list. The visual editor can't show this layout.",
+        }
+      : roundTripsCleanly(step.email_body_html ?? "")
+        ? null
+        : {
           kind: "info",
           text: "This email uses HTML the visual editor can’t reproduce exactly, so it opened as source. Switching to the visual editor may simplify it.",
         },
@@ -484,7 +503,7 @@ export function EmailStepDialog({
               This is your reference email: the message, offer and call to action you want to
               communicate. Each lead receives a version personalized to them, written just before
               it is sent. Variables like {"{{first_name}}"} are filled in first. Review generated
-              samples on the Personalization tab.
+              samples in the Preview and approve section of the Sequence tab.
             </Alert>
           ) : null}
           {banner ? <Alert variant={banner.kind}>{banner.text}</Alert> : null}
@@ -652,7 +671,7 @@ export function EmailStepDialog({
             {referenceMode ? (
               <p className="text-xs text-slate-500">
                 Test sends are not available for a reference email: it is not what your leads
-                receive. Generate samples on the Personalization tab instead.
+                receive. Generate samples in the Preview and approve section instead.
               </p>
             ) : (
             <TestSendControl

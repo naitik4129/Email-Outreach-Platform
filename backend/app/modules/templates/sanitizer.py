@@ -154,7 +154,32 @@ _EMAIL_STYLE_PROPERTIES: dict[str, re.Pattern[str]] = {
 }
 
 
-def _filter_email_style(style: str) -> str:
+# The "branded" profile (ADR-0017) is selected server-side, only for a
+# hyper-personalized campaign whose email format is HTML. It adds just what a
+# table-based branded layout needs. No value pattern admits url(), expression,
+# '@', backslash or !important, so it cannot load resources or run script.
+_PX = r"(?:0|\d{1,3}(?:\.\d{1,2})?(?:px|%|em|rem))"
+_BRANDED_STYLE_PROPERTIES: dict[str, re.Pattern[str]] = {
+    "padding": re.compile(rf"^{_PX}(?: {_PX}){{0,3}}$"),
+    "margin": re.compile(rf"^(?:{_PX}|auto)(?: (?:{_PX}|auto)){{0,3}}$"),
+    "border": re.compile(r"^(?:0|none|\d{1,2}px (?:solid|dashed) #[0-9a-fA-F]{3,8})$"),
+    "border-radius": re.compile(rf"^{_PX}(?: {_PX}){{0,3}}$"),
+    "width": re.compile(r"^(?:\d{1,4}px|\d{1,3}%|auto)$"),
+    "max-width": re.compile(r"^(?:\d{1,4}px|\d{1,3}%|auto)$"),
+    "display": re.compile(r"^(?:block|inline-block)$"),
+}
+
+_BRANDED_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_BRANDED_SMALL_INT_RE = re.compile(r"^\d{1,2}$")
+_BRANDED_VALIGN_RE = re.compile(r"^(?:top|middle|bottom)$", re.IGNORECASE)
+_BRANDED_TABLE_TAGS = frozenset({"table", "tr", "td", "th"})
+
+EmailProfile = str  # "default" | "branded"
+DEFAULT_PROFILE = "default"
+BRANDED_PROFILE = "branded"
+
+
+def _filter_email_style(style: str, profile: EmailProfile = DEFAULT_PROFILE) -> str:
     kept: list[str] = []
     for declaration in style.split(";"):
         prop, sep, value = declaration.partition(":")
@@ -163,6 +188,8 @@ def _filter_email_style(style: str) -> str:
         prop = prop.strip().lower()
         value = value.strip()
         pattern = _EMAIL_STYLE_PROPERTIES.get(prop)
+        if pattern is None and profile == BRANDED_PROFILE:
+            pattern = _BRANDED_STYLE_PROPERTIES.get(prop)
         if pattern is not None and pattern.match(value):
             kept.append(f"{prop}: {value}")
     return "; ".join(kept)
@@ -188,10 +215,26 @@ class _EmailHTMLParser(HTMLParser):
     neutralise schemes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, profile: EmailProfile = DEFAULT_PROFILE) -> None:
         super().__init__(convert_charrefs=True)
         self.output: list[str] = []
         self._skip_depth = 0
+        self._profile = profile
+
+    def _branded_attr(self, tag: str, name: str, value: str) -> str | None:
+        """The extra attributes of the branded profile, or None if not allowed."""
+        value = value.strip()
+        if tag in {"table", "td", "th"} and name == "width":
+            return value if _EMAIL_DIMENSION_RE.match(value) else None
+        if tag == "table" and name in {"cellpadding", "cellspacing", "border"}:
+            return value if _BRANDED_SMALL_INT_RE.match(value) else None
+        if tag in _BRANDED_TABLE_TAGS and name == "bgcolor":
+            return value.lower() if _BRANDED_HEX_RE.match(value) else None
+        if tag in {"tr", "td", "th"} and name == "valign":
+            return value.lower() if _BRANDED_VALIGN_RE.match(value) else None
+        if tag == "table" and name == "role":
+            return value if value == "presentation" else None
+        return None
 
     def _safe_attrs(self, tag: str, attrs: list[tuple[str, str | None]]) -> str:
         parts: list[str] = []
@@ -200,7 +243,7 @@ class _EmailHTMLParser(HTMLParser):
             value = raw or ""
             compact = re.sub(r"[\x00-\x1f\s]+", "", value)
             if name == "style":
-                filtered = _filter_email_style(value)
+                filtered = _filter_email_style(value, self._profile)
                 if filtered:
                     parts.append(f'style="{_escape_attr(filtered)}"')
             elif tag == "a" and name == "href":
@@ -221,6 +264,10 @@ class _EmailHTMLParser(HTMLParser):
             elif tag in {"td", "th"} and name in {"colspan", "rowspan"}:
                 if _EMAIL_SPAN_RE.match(value.strip()):
                     parts.append(f'{name}="{value.strip()}"')
+            elif self._profile == BRANDED_PROFILE:
+                extra = self._branded_attr(tag, name, value)
+                if extra is not None:
+                    parts.append(f'{name}="{extra}"')
         if tag == "img" and not any(p.startswith("src=") for p in parts):
             # An <img> without a permitted src is meaningless and would render
             # as a broken/unsafe element.
@@ -268,15 +315,21 @@ class _EmailHTMLParser(HTMLParser):
         )
 
 
-def sanitize_email_html(html_content: str) -> str:
+def sanitize_email_html(
+    html_content: str, *, profile: EmailProfile = DEFAULT_PROFILE
+) -> str:
     """Sanitize authored email body HTML for storage and sending (allow-list).
 
     Applied when a step's body is written, never to legacy rows on unrelated
-    saves. See _EmailHTMLParser for the policy.
+    saves. See _EmailHTMLParser for the policy. `profile="branded"` (ADR-0017) is
+    chosen by the server, never by a client, and only widens the CSS and table
+    attributes a branded layout needs.
     """
     if not html_content:
         return ""
-    parser = _EmailHTMLParser()
+    if profile not in {DEFAULT_PROFILE, BRANDED_PROFILE}:
+        raise ValueError(f"unknown sanitizer profile: {profile!r}")
+    parser = _EmailHTMLParser(profile)
     parser.feed(html_content)
     parser.close()
     return "".join(parser.output)

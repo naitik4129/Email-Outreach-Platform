@@ -21,7 +21,11 @@ from app.modules.campaigns.schemas import (
     SequenceStepsReorderIn,
     SequenceStepUpdateIn,
 )
-from app.modules.templates.sanitizer import sanitize_email_html
+from app.modules.templates.sanitizer import (
+    BRANDED_PROFILE,
+    DEFAULT_PROFILE,
+    sanitize_email_html,
+)
 from app.modules.templates.variables import validate_template_content
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -67,6 +71,21 @@ class SequenceService:
             )
         return campaign
 
+    @staticmethod
+    def _sanitizer_profile(
+        campaign: RowMapping, sequence: RowMapping | None
+    ) -> str:
+        """The branded sanitizer profile (ADR-0017) applies only to a
+        hyper-personalized campaign whose saved configuration chose HTML. It is
+        decided here, from stored state -- never from the request -- so a client
+        cannot opt in."""
+        if campaign.get("campaign_type") != "HYPER_PERSONALIZED" or sequence is None:
+            return DEFAULT_PROFILE
+        config = sequence.get("personalization_config")
+        if isinstance(config, dict) and config.get("email_format") == "HTML":
+            return BRANDED_PROFILE
+        return DEFAULT_PROFILE
+
     def _ensure_sequence(
         self, context: WorkspaceContext, campaign_id: UUID
     ) -> RowMapping:
@@ -109,6 +128,7 @@ class SequenceService:
         email_body_html: str | None,
         email_preheader: str | None = None,
         sanitize_body: bool = True,
+        profile: str = DEFAULT_PROFILE,
     ) -> tuple[str, str, str | None, dict[str, Any]]:
         """Return (subject, body, preheader, variable_schema) for an EMAIL step.
 
@@ -144,7 +164,11 @@ class SequenceService:
                 "template reference",
                 status_code=422,
             )
-        clean_body = sanitize_email_html(body or "") if sanitize_body else (body or "")
+        clean_body = (
+            sanitize_email_html(body or "", profile=profile)
+            if sanitize_body
+            else (body or "")
+        )
         clean_preheader = _normalize_preheader(preheader)
         variable_schema = validate_template_content(
             subject, clean_body, clean_preheader
@@ -260,7 +284,7 @@ class SequenceService:
         campaign_id: UUID,
         payload: SequenceStepCreateIn,
     ) -> SequenceStepOut:
-        self._require_draft_campaign(context, campaign_id)
+        campaign = self._require_draft_campaign(context, campaign_id)
         sequence = self._ensure_sequence(context, campaign_id)
 
         if payload.kind == "EMAIL":
@@ -276,6 +300,7 @@ class SequenceService:
                 email_subject=payload.email_subject,
                 email_body_html=payload.email_body_html,
                 email_preheader=payload.email_preheader,
+                profile=self._sanitizer_profile(campaign, sequence),
             )
             # A brand-new step has no uploaded images yet.
             self._validate_cid_references(context, None, body)
@@ -353,7 +378,7 @@ class SequenceService:
         step_id: UUID,
         payload: SequenceStepUpdateIn,
     ) -> SequenceStepOut:
-        self._require_draft_campaign(context, campaign_id)
+        campaign = self._require_draft_campaign(context, campaign_id)
         existing = self.repo.get_step(
             workspace_id=context.workspace_id, step_id=step_id
         )
@@ -390,6 +415,15 @@ class SequenceService:
                         if payload.email_preheader is not None
                         else existing["email_preheader"]
                     )
+                profile = DEFAULT_PROFILE
+                if campaign.get("campaign_type") == "HYPER_PERSONALIZED":
+                    profile = self._sanitizer_profile(
+                        campaign,
+                        self.repo.get_sequence(
+                            workspace_id=context.workspace_id,
+                            campaign_id=campaign_id,
+                        ),
+                    )
                 subject, body, preheader, variable_schema = (
                     self._resolve_email_content(
                         context,
@@ -403,6 +437,7 @@ class SequenceService:
                             payload.email_body_html is not None
                             or payload.source_template_version_id is not None
                         ),
+                        profile=profile,
                     )
                 )
                 self._validate_cid_references(context, step_id, body)

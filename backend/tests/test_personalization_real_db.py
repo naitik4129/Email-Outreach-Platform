@@ -1361,3 +1361,360 @@ def test_objective_samples_and_approval_flow_under_row_level_security(
         stranger.get_batch(octx, w.campaign_id, batch)  # someone else's campaign id
     assert info.value.status_code == 404
     session.close()
+
+
+# ---------------------------------------------------------------------------
+# AI authoring (ADR-0016): connection release, tenant isolation, in-place writes
+# ---------------------------------------------------------------------------
+
+from app.core.config import Settings  # noqa: E402
+from app.core.errors import AppError  # noqa: E402
+from app.db.context import enter_api_scope  # noqa: E402
+from app.modules.personalization.schemas import (  # noqa: E402
+    BusinessInfoIn,
+    CompanyAnalysisIn,
+    ReferenceTemplatesIn,
+)
+
+
+def _ai_settings() -> Settings:
+    return Settings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://x",
+        supabase_url="https://x.supabase.co",
+        personalization_enabled=True,
+        personalization_model="test-model",
+        personalization_openai_api_key="sk-test-not-real",
+        sequence_progression_enabled=True,
+    )
+
+
+def _api_session(session_factory, user, ws) -> Session:
+    """Exactly what `get_db` + the workspace dependency do for a request."""
+    session = session_factory()
+    session.execute(text("SET LOCAL ROLE app_api"))
+    set_transaction_context(session, user_id=user, workspace_id=ws)
+    return session
+
+
+def _ai_service(session, model=None) -> PersonalizationApiService:
+    model = model or FakeModel()
+    return PersonalizationApiService(
+        session, _ai_settings(), drafting_model_factory=lambda: model
+    )
+
+
+def _member_ctx(w: World) -> WorkspaceContext:
+    return WorkspaceContext(workspace_id=w.ws, user_id=w.member, role_code="MEMBER")
+
+
+def _step_rows(su, w: World) -> list[tuple]:
+    return su.execute(
+        "SELECT id, kind, position, version, email_subject, email_body_html, "
+        "wait_duration_minutes FROM public.sequence_steps "
+        "WHERE campaign_id=%s ORDER BY position",
+        [w.campaign_id],
+    ).fetchall()
+
+
+def test_api_scope_must_be_re_entered_after_the_request_commits(
+    session_factory, su
+) -> None:
+    """The reason enter_api_scope exists: after commit() the next transaction is on
+    a pooled connection with the DEFAULT role, not app_api."""
+    w = seed_world(su, running=False, enroll_first=False)
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        assert session.execute(text("SELECT current_user")).scalar() == "app_api"
+        session.commit()
+        assert session.execute(text("SELECT current_user")).scalar() != "app_api"
+        session.rollback()
+        enter_api_scope(session, user_id=w.member, workspace_id=w.ws)
+        assert session.execute(text("SELECT current_user")).scalar() == "app_api"
+        role = session.execute(
+            text("SELECT public.app_current_workspace_role()")
+        ).scalar()
+        assert role == "MEMBER"
+    finally:
+        session.rollback()
+        session.close()
+
+
+def test_rewrite_all_updates_steps_in_place_and_leaves_waits(
+    session_factory, su
+) -> None:
+    w = seed_world(su, running=False, enroll_first=False)
+    before = _step_rows(su, w)
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        out = _ai_service(session).generate_reference_templates(
+            _member_ctx(w), w.campaign_id, ReferenceTemplatesIn(scope="ALL")
+        )
+        session.commit()
+    finally:
+        session.close()
+    after = _step_rows(su, w)
+    # same ids: preview rows reference step ids with ON DELETE RESTRICT
+    assert [r[0] for r in after] == [r[0] for r in before]
+    assert [r[1] for r in after] == ["EMAIL", "WAIT", "EMAIL"]
+    assert after[1][6] == before[1][6] and after[1][3] == before[1][3]  # wait untouched
+    assert after[0][3] == before[0][3] + 1 and after[2][3] == before[2][3] + 1
+    assert after[0][4] != before[0][4] and "{{first_name|there}}" in after[0][5]
+    assert out.model == "fake-model" and len(out.sequence.steps) == 3
+    audits = one(
+        su,
+        "SELECT count(*) FROM public.audit_events WHERE target_id=%s AND action=%s",
+        w.campaign_id,
+        "campaign.reference_templates_generated",
+    )[0]
+    assert audits == 1
+
+
+def test_create_builds_a_valid_alternating_sequence(session_factory, su) -> None:
+    w = seed_world(su, running=False, enroll_first=False)
+    su.execute("DELETE FROM public.sequence_steps WHERE campaign_id=%s", [w.campaign_id])
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        _ai_service(session).generate_reference_templates(
+            _member_ctx(w),
+            w.campaign_id,
+            ReferenceTemplatesIn(scope="ALL", follow_up_count=2),
+        )
+        session.commit()
+    finally:
+        session.close()
+    rows = _step_rows(su, w)
+    assert [(r[1], r[2]) for r in rows] == [
+        ("EMAIL", 1),
+        ("WAIT", 2),
+        ("EMAIL", 3),
+        ("WAIT", 4),
+        ("EMAIL", 5),
+    ]
+    assert [r[6] for r in rows if r[1] == "WAIT"] == [4320, 4320]
+
+
+def test_html_campaign_stores_the_branded_layout_through_the_real_sanitizer(
+    session_factory, su
+) -> None:
+    config = {
+        **CONFIG,
+        "email_format": "HTML",
+        "company": {"source": "MANUAL", "company_name": "Acme"},
+        "brand": {
+            "logo_url": "https://acme.example/logo.png",
+            "primary": "#123456",
+            "cta_url": "https://acme.example/demo",
+            "cta_label": "Book a demo",
+        },
+    }
+    w = seed_world(su, running=False, enroll_first=False, config=config)
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        _ai_service(session).generate_reference_templates(
+            _member_ctx(w), w.campaign_id, ReferenceTemplatesIn(scope="ALL")
+        )
+        session.commit()
+    finally:
+        session.close()
+    emails = [row for row in _step_rows(su, w) if row[1] == "EMAIL"]
+    assert emails
+    for row in emails:
+        body = row[5]
+        # survived the write: the branded profile was applied server-side
+        assert 'bgcolor="#123456"' in body and "border-radius: 6px" in body
+        assert "padding: 12px 24px" in body
+
+
+def test_a_text_format_campaign_never_gets_the_branded_profile(
+    session_factory, su
+) -> None:
+    """The profile comes from stored state only: layout markup sent by a client to
+    a campaign that is not HTML is stripped like any other."""
+    from app.modules.campaigns.schemas import SequenceStepUpdateIn
+    from app.modules.campaigns.sequence_service import SequenceService
+
+    w = seed_world(su, running=False, enroll_first=False)
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        version = one(
+            su, "SELECT version FROM public.sequence_steps WHERE id=%s", w.step1
+        )[0]
+        SequenceService(session).update_step(
+            _member_ctx(w),
+            w.campaign_id,
+            w.step1,
+            SequenceStepUpdateIn(
+                expected_version=version,
+                email_body_html=(
+                    '<table width="600" bgcolor="#123456"><tr>'
+                    '<td style="padding: 9px">x</td></tr></table>'
+                ),
+            ),
+        )
+        session.commit()
+    finally:
+        session.close()
+    body = one(
+        su, "SELECT email_body_html FROM public.sequence_steps WHERE id=%s", w.step1
+    )[0]
+    assert "padding" not in body and "bgcolor" not in body
+
+
+def test_other_tenants_cannot_draft_or_analyze_for_a_campaign_they_do_not_own(
+    session_factory, su
+) -> None:
+    victim = seed_world(su, running=False, enroll_first=False)
+    attacker = seed_world(su, running=False, enroll_first=False)
+    before = _step_rows(su, victim)
+    session = _api_session(session_factory, attacker.member, attacker.ws)
+    try:
+        service = _ai_service(session)
+        with pytest.raises(AppError) as info:
+            service.generate_reference_templates(
+                _member_ctx(attacker),
+                victim.campaign_id,
+                ReferenceTemplatesIn(scope="ALL"),
+            )
+        assert info.value.status_code == 404
+        session.rollback()
+        enter_api_scope(session, user_id=attacker.member, workspace_id=attacker.ws)
+        with pytest.raises(AppError) as info:
+            service.analyze_company(
+                _member_ctx(attacker),
+                victim.campaign_id,
+                CompanyAnalysisIn(
+                    business=BusinessInfoIn(company_name="Acme", description="x" * 60)
+                ),
+            )
+        assert info.value.status_code == 404
+    finally:
+        session.rollback()
+        session.close()
+    assert _step_rows(su, victim) == before
+
+
+def test_step_id_from_another_campaign_is_not_found(session_factory, su) -> None:
+    mine = seed_world(su, running=False, enroll_first=False)
+    other = seed_world(su, running=False, enroll_first=False)
+    session = _api_session(session_factory, mine.member, mine.ws)
+    try:
+        with pytest.raises(AppError) as info:
+            _ai_service(session).generate_reference_templates(
+                _member_ctx(mine),
+                mine.campaign_id,
+                ReferenceTemplatesIn(scope="STEP", step_id=other.step1),
+            )
+        assert info.value.status_code == 404
+    finally:
+        session.rollback()
+        session.close()
+
+
+def test_a_real_concurrent_edit_is_a_conflict_and_is_not_overwritten(
+    session_factory, su
+) -> None:
+    w = seed_world(su, running=False, enroll_first=False)
+    model = FakeModel()
+    original = model.draft_sequence
+
+    def concurrent_edit(request):
+        su.execute(
+            "UPDATE public.sequence_steps SET email_subject='Edited by someone else' "
+            "WHERE id=%s",
+            [w.step1],
+        )
+        return original(request)
+
+    model.draft_sequence = concurrent_edit  # type: ignore[method-assign]
+    untouched = _step_rows(su, w)[2][4]
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        with pytest.raises(AppError) as info:
+            _ai_service(session, model).generate_reference_templates(
+                _member_ctx(w), w.campaign_id, ReferenceTemplatesIn(scope="ALL")
+            )
+        assert info.value.code == "conflict" and info.value.status_code == 409
+        session.rollback()
+    finally:
+        session.close()
+    rows = _step_rows(su, w)
+    assert rows[0][4] == "Edited by someone else"
+    assert rows[2][4] == untouched  # nothing was partially written
+
+
+def test_a_frozen_campaign_cannot_be_drafted(session_factory, su) -> None:
+    w = seed_world(su, running=True, enroll_first=False)
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        with pytest.raises(AppError) as info:
+            _ai_service(session).generate_reference_templates(
+                _member_ctx(w), w.campaign_id, ReferenceTemplatesIn(scope="ALL")
+            )
+        assert info.value.code == "state_conflict"
+    finally:
+        session.rollback()
+        session.close()
+
+
+def test_analysis_releases_its_connection_and_writes_nothing(
+    session_factory, su
+) -> None:
+    w = seed_world(su, running=False, enroll_first=False)
+    read_config = "SELECT personalization_config FROM public.campaign_sequences WHERE id=%s"
+    before = (_step_rows(su, w), one(su, read_config, w.sequence_id)[0])
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        out = _ai_service(session).analyze_company(
+            _member_ctx(w),
+            w.campaign_id,
+            CompanyAnalysisIn(
+                business=BusinessInfoIn(
+                    company_name="Acme Anvils",
+                    description=(
+                        "We make heavy duty anvils for professional blacksmiths "
+                        "and film studios."
+                    ),
+                )
+            ),
+        )
+        assert out.source == "MANUAL"
+        # The pooled connection was handed back before the model ran.
+        assert not session.in_transaction()
+    finally:
+        session.close()
+    assert (_step_rows(su, w), one(su, read_config, w.sequence_id)[0]) == before
+
+
+def test_config_with_company_and_brand_round_trips_and_changes_the_digest(
+    session_factory, su
+) -> None:
+    """The new keys fit the existing 16 KiB check, and changing them changes the
+    approval digest (a config saved without them keeps its old digest)."""
+    w = seed_world(su, running=False, enroll_first=False)
+    session = _api_session(session_factory, w.member, w.ws)
+    try:
+        service = _ai_service(session)
+        state = service.get_state(_member_ctx(w), w.campaign_id)
+        legacy_digest = state.config_digest
+        payload = PersonalizationConfigIn(
+            config={
+                **CONFIG,
+                "email_format": "HTML",
+                "company": {"source": "MANUAL", "company_name": "Acme"},
+                "brand": {"primary": "#123456"},
+            },
+            expected_version=state.config_version,
+        )
+        updated = service.put_config(_member_ctx(w), w.campaign_id, payload)
+        session.commit()
+        assert updated.config is not None and updated.config.brand is not None
+        assert updated.config_digest != legacy_digest
+    finally:
+        session.close()
+    stored = one(
+        su,
+        "SELECT personalization_config FROM public.campaign_sequences WHERE id=%s",
+        w.sequence_id,
+    )[0]
+    assert stored["email_format"] == "HTML" and stored["brand"]["primary"] == "#123456"

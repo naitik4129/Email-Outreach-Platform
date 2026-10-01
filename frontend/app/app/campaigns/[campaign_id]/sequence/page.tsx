@@ -4,9 +4,15 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { GenerationProgressPanel } from "@/components/campaigns/personalization/generation-progress-panel";
+import { PreviewAndApprovalSection } from "@/components/campaigns/personalization/preview-and-approval-section";
+import { usePersonalizationState } from "@/components/campaigns/personalization/use-personalization-state";
+import { AiDraftBar } from "@/components/campaigns/sequence/ai-draft-bar";
 import { computeTimings } from "@/components/campaigns/sequence/duration";
 import { EmailStepDialog } from "@/components/campaigns/sequence/email-step-dialog";
 import { SequenceTimeline } from "@/components/campaigns/sequence/sequence-timeline";
+import { CampaignSetupPanel } from "@/components/campaigns/sequence/setup/campaign-setup-panel";
+import { useReferenceGeneration } from "@/components/campaigns/sequence/use-reference-generation";
 import { Alert } from "@/components/ui/alert";
 import { ApiError } from "@/lib/api-client";
 import {
@@ -61,6 +67,10 @@ export default function CampaignSequencePage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [openStepId, setOpenStepId] = useState<string | null>(null);
   const [savingWaitId, setSavingWaitId] = useState<string | null>(null);
+  // An email waiting for the user to confirm that AI may rewrite it.
+  const [regenerateTarget, setRegenerateTarget] = useState<{ id: string; number: number } | null>(
+    null,
+  );
 
   const campaignKey = ["workspace", activeWorkspaceId, "campaigns", campaignId];
   const sequenceKey = [...campaignKey, "sequence"];
@@ -91,6 +101,14 @@ export default function CampaignSequencePage() {
   });
 
   const isHyper = campaignQuery.data?.campaign_type === "HYPER_PERSONALIZED";
+  // Objective, company, email style, previews and approval live on this tab for a
+  // hyper-personalized campaign (ADR-0016); nothing is fetched for a standard one.
+  const personalization = usePersonalizationState(activeWorkspaceId, campaignId, isHyper);
+  const generation = useReferenceGeneration(activeWorkspaceId, campaignId);
+  const capabilities = personalization.capabilitiesQuery.data;
+  const aiAvailable = capabilities?.ai_drafting_available === true;
+  const personalizationState = personalization.stateQuery.data;
+  const designedEmail = isHyper && personalizationState?.config?.email_format === "HTML";
   const sequence = sequenceQuery.data;
   const steps = sequence?.steps ?? [];
   const campaignStatus = campaignQuery.data?.status;
@@ -108,6 +126,10 @@ export default function CampaignSequencePage() {
     void queryClient.invalidateQueries({ queryKey: sequenceKey });
     // The campaign header shows "N items left before ready" from preflight.
     void queryClient.invalidateQueries({ queryKey: [...campaignKey, "preflight"] });
+    // Editing an email changes what a sample approval vouches for.
+    if (isHyper) {
+      void queryClient.invalidateQueries({ queryKey: [...campaignKey, "personalization"] });
+    }
   }
 
   function onMutationError(error: unknown) {
@@ -235,6 +257,7 @@ export default function CampaignSequencePage() {
         readOnly={readOnly}
         canTestSend={canExecuteCampaign(activeWorkspace?.role_code)}
         referenceMode={isHyper}
+        designedEmail={designedEmail}
         mailboxes={(mailboxesQuery.data ?? []).filter((mb) => mb.active)}
         onClose={() => setOpenStepId(null)}
         onSaved={() => afterChange()}
@@ -272,6 +295,39 @@ export default function CampaignSequencePage() {
         <Alert variant="error">{errorMessage(sequenceQuery.error)}</Alert>
       ) : null}
 
+      {isHyper && capabilities && !capabilities.enabled ? (
+        <Alert variant="warning">
+          Hyper-personalized campaigns are not enabled for this deployment, so this campaign
+          can&apos;t be launched. Ask your administrator to enable them.
+        </Alert>
+      ) : null}
+      {isHyper && personalization.stateQuery.isError ? (
+        <Alert variant="error">{errorMessage(personalization.stateQuery.error)}</Alert>
+      ) : null}
+      {isHyper && personalizationState ? (
+        <CampaignSetupPanel
+          workspaceId={activeWorkspaceId ?? ""}
+          campaignId={campaignId}
+          state={personalizationState}
+          readOnly={readOnly}
+          aiAvailable={aiAvailable}
+          saving={personalization.saveMutation.isPending}
+          saveError={personalization.saveError}
+          onSave={(config) => personalization.saveMutation.mutateAsync(config)}
+        />
+      ) : null}
+      {isHyper ? (
+        <AiDraftBar
+          emailCount={emailSteps.length}
+          readOnly={readOnly}
+          hasObjective={Boolean(personalizationState?.config)}
+          aiAvailable={aiAvailable}
+          generation={generation}
+          confirmStep={regenerateTarget}
+          onConfirmStepDone={() => setRegenerateTarget(null)}
+        />
+      ) : null}
+
       {sequenceQuery.isLoading ? (
         <LoadingBlock />
       ) : steps.length === 0 ? (
@@ -306,8 +362,37 @@ export default function CampaignSequencePage() {
           onAddEmail={() =>
             addMutation.mutate({ position: steps.length + 1, withWait: steps.length > 0 })
           }
+          onRegenerateEmail={
+            isHyper && aiAvailable && personalizationState?.config
+              ? (step, number) => setRegenerateTarget({ id: step.id, number })
+              : undefined
+          }
+          regeneratingStepId={
+            generation.pendingRequest?.scope === "STEP"
+              ? (generation.pendingRequest.step_id ?? null)
+              : null
+          }
+          generating={generation.isPending}
         />
       )}
+
+      {isHyper && personalizationState && campaignStatus === "DRAFT" ? (
+        <PreviewAndApprovalSection
+          state={personalizationState}
+          personalization={personalization}
+          role={activeWorkspace?.role_code}
+          mayDraft={mayDraft}
+          readOnly={readOnly}
+          changedSinceApproval={personalizationState.approval.status === "STALE"}
+        />
+      ) : null}
+      {isHyper && campaignStatus && campaignStatus !== "DRAFT" ? (
+        <GenerationProgressPanel
+          workspaceId={activeWorkspaceId ?? ""}
+          campaignId={campaignId}
+          active={ready}
+        />
+      ) : null}
 
       {dialog}
     </div>

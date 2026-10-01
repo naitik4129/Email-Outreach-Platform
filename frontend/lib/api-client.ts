@@ -8,18 +8,23 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string | null;
   readonly requestId: string | null;
+  // The server's structured detail for the error (for example the failed check
+  // codes, or the company name found on a website); null when there is none.
+  readonly details: Record<string, unknown> | null;
 
   constructor(
     message: string,
     status: number,
     code: string | null,
     requestId: string | null,
+    details: Record<string, unknown> | null = null,
   ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 
@@ -182,17 +187,23 @@ export async function apiRequest<T>(
   if (!response.ok) {
     let message = "Request failed";
     let code: string | null = null;
+    let details: Record<string, unknown> | null = null;
     try {
       const body = await response.json();
       message = body?.error?.message ?? message;
       code = body?.error?.code ?? null;
+      const rawDetails = body?.error?.details;
+      details =
+        rawDetails && typeof rawDetails === "object" && !Array.isArray(rawDetails)
+          ? (rawDetails as Record<string, unknown>)
+          : null;
     } catch {
       message = response.statusText || message;
     }
     if (response.status === 401) {
       void redirectToLogin();
     }
-    throw new ApiError(message, response.status, code, requestId);
+    throw new ApiError(message, response.status, code, requestId, details);
   }
 
   if (response.status === 204) {

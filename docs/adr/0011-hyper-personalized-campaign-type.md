@@ -4,6 +4,8 @@
 
 Accepted for implementation — 2026-09-26 (owner approved the plan and M0 documentation set). No implementation may deviate without amending this ADR. **Amends [PROJECT_CONTEXT §4](../product/PROJECT_CONTEXT.md)** ("no separate AI Outreach campaign type") and moves "Advanced Personalization" from *V1.1 / Later* to *planned V1.1* in [MVP](../product/MVP.md).
 
+**Update (2026-09-30, [ADR-0016](0016-api-process-ai-drafting-and-company-analysis.md), [ADR-0017](0017-branded-email-layout-and-sanitizer-profile.md)):** the objective and the reference emails no longer have to be hand-written. The Sequence tab now holds the whole authoring flow (company, email style, objective, AI-drafted reference emails, sample previews and approval); the separate Personalization tab is a redirect. The data model and everything decided below about per-lead generation, freezing, fallback and approval are unchanged.
+
 ## Context
 
 Every campaign email is mail-merge: variables from the frozen lead snapshot are rendered into the authored subject/body when the message is planned ([CAMPAIGN_ENGINE](../architecture/CAMPAIGN_ENGINE.md)). The product owner wants a *Hyper-Personalized* campaign: the user defines one objective and one **reference template** per email step, and the platform writes an individual email per lead shortly before it is due, preserving the core offer, CTA and claims.

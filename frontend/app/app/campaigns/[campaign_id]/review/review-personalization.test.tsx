@@ -60,7 +60,7 @@ const state = (status: string) => ({
 describe("Review page for a hyper-personalized campaign", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("sends preflight personalization issues to the Personalization tab", async () => {
+  it("sends preflight personalization issues to the Sequence tab, where they are fixed", async () => {
     campaignsApi.getReview.mockResolvedValue(
       review(
         {},
@@ -82,7 +82,7 @@ describe("Review page for a hyper-personalized campaign", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Fix" })).toHaveAttribute(
       "href",
-      "/app/campaigns/camp-1/personalization",
+      "/app/campaigns/camp-1/sequence",
     );
   });
 

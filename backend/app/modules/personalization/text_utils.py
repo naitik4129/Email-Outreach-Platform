@@ -166,3 +166,13 @@ def find_urls_with_spans(text: str) -> list[tuple[int, int, str]]:
         url = strip_trailing_punct(raw)
         found.append((m.start(), m.start() + len(url), url))
     return found
+
+
+def redact_contacts(text: str) -> str:
+    """Remove email addresses, phone numbers and web addresses. Applied to
+    scraped website text before a model sees it (ADR-0016), so generated copy
+    cannot quote scraped contact details."""
+    text = _EMAIL_RE.sub(" ", text)
+    text = _URL_RE.sub(" ", text)
+    text = _PHONE_RE.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()

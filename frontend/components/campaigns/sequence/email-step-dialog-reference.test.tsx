@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const campaignsApi = vi.hoisted(() => ({
@@ -56,7 +57,7 @@ const mailboxes: CampaignMailbox[] = [
   },
 ];
 
-function setup(referenceMode: boolean) {
+function setup(referenceMode: boolean, designedEmail = false, body?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -64,7 +65,7 @@ function setup(referenceMode: boolean) {
         open
         workspaceId="ws-1"
         campaignId="camp-1"
-        step={step}
+        step={body ? { ...step, email_body_html: body } : step}
         stepNumber={1}
         day={1}
         previousEmailDay={null}
@@ -72,6 +73,7 @@ function setup(referenceMode: boolean) {
         readOnly={false}
         canTestSend
         referenceMode={referenceMode}
+        designedEmail={designedEmail}
         mailboxes={mailboxes}
         onClose={vi.fn()}
         onSaved={vi.fn()}
@@ -108,7 +110,11 @@ describe("EmailStepDialog reference mode", () => {
     expect(
       screen.getByText(/Each lead receives a version personalized to them/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Review generated samples on the Personalization tab/i)).toBeInTheDocument();
+    // The Personalization tab no longer exists; samples are on the Sequence tab.
+    expect(
+      screen.getByText(/Preview and approve section of the Sequence tab/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Personalization tab/i)).not.toBeInTheDocument();
   });
 
   it("does not offer test sends, because the reference is not what leads receive", async () => {
@@ -135,5 +141,41 @@ describe("EmailStepDialog reference mode", () => {
     expect(screen.queryByText("Reference email")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /send test email/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Insert an image" })).toBeEnabled();
+  });
+
+  describe("designed (HTML) emails", () => {
+    const designed =
+      '<table role="presentation" width="600"><tr><td style="padding: 32px">' +
+      "<p>Hi {{first_name|there}},</p></td></tr></table>";
+
+    it("opens as source with an explanation, never the visual editor", async () => {
+      setup(true, true, designed);
+      await screen.findByText("Reference email");
+      expect(screen.getByText(/designed email in your brand.s style/i)).toBeInTheDocument();
+      expect(screen.getByLabelText("HTML source")).toHaveValue(designed);
+    });
+
+    it("stays in source mode when the user tries to switch, so the layout is not flattened", async () => {
+      const user = userEvent.setup();
+      setup(true, true, designed);
+      await screen.findByText("Reference email");
+      await user.click(screen.getByRole("button", { name: /source|html|visual/i }));
+      expect(screen.getByLabelText("HTML source")).toHaveValue(designed);
+      expect(screen.queryByText(/was simplified/i)).not.toBeInTheDocument();
+    });
+
+    it("opens a plain email in the visual editor as before", async () => {
+      setup(true, false);
+      await screen.findByText("Reference email");
+      expect(screen.queryByLabelText("HTML source")).not.toBeInTheDocument();
+      expect(screen.queryByText(/designed email in your brand/i)).not.toBeInTheDocument();
+    });
+
+    it("still tells a non-designed table email that it opened as source, without the designed copy", async () => {
+      setup(true, false, designed);
+      await screen.findByText("Reference email");
+      expect(screen.getByText(/uses HTML the visual editor can.t reproduce/i)).toBeInTheDocument();
+      expect(screen.queryByText(/designed email in your brand/i)).not.toBeInTheDocument();
+    });
   });
 });

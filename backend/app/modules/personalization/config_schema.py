@@ -7,10 +7,23 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
+from app.modules.personalization.brand_kit import (
+    MAX_URL_CHARS,
+    BrandKit,
+    clean_display_text,
+    clean_url,
+)
 from app.modules.personalization.version import PROMPT_VERSION
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -19,6 +32,27 @@ Phrase = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
 
+EmailFormat = Literal["TEXT", "HTML"]
+CompanySource = Literal["WEBSITE", "MANUAL"]
+
+# The database CHECK is 16384 bytes of the jsonb text form. Stay well under it so
+# a valid-looking save is never rejected by the database with an opaque error.
+MAX_CONFIG_BYTES = 15_000
+
+# The fields the per-lead prompt has always received. The company profile, brand
+# kit and email format must never reach that prompt, so its bytes (and
+# PROMPT_VERSION, and every existing approval) stay unchanged (ADR-0016).
+_OBJECTIVE_CORE_FIELDS = (
+    "objective",
+    "offer",
+    "cta",
+    "target",
+    "problem_solved",
+    "tone",
+    "must_mention",
+    "never_say",
+)
+
 
 def _clean(value: str) -> str:
     if _CONTROL_RE.search(value):
@@ -26,8 +60,51 @@ def _clean(value: str) -> str:
     return value.strip()
 
 
+class CompanyProfile(BaseModel):
+    """What the company does, from its website or from text the user typed.
+
+    Reviewed and editable by the user before it is saved; it grounds reference
+    drafting (ADR-0016)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: CompanySource
+    url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    company_name: str = Field(min_length=1, max_length=120)
+    summary: str = Field(default="", max_length=1000)
+    services: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=8
+    )
+    industries: list[Annotated[str, Field(min_length=1, max_length=60)]] = Field(
+        default_factory=list, max_length=6
+    )
+    audience: str = Field(default="", max_length=400)
+    tone_of_voice: str = Field(default="", max_length=200)
+    key_messages: list[Annotated[str, Field(min_length=1, max_length=150)]] = Field(
+        default_factory=list, max_length=5
+    )
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return clean_url(value)
+
+    @field_validator("company_name", "summary", "audience", "tone_of_voice")
+    @classmethod
+    def _text(cls, value: str) -> str:
+        return clean_display_text(value)
+
+    @field_validator("services", "industries", "key_messages")
+    @classmethod
+    def _lists(cls, value: list[str]) -> list[str]:
+        return [clean_display_text(item) for item in value]
+
+
 class PersonalizationConfig(BaseModel):
-    """What the user is trying to achieve. Deliberately small (ADR-0011)."""
+    """What the user is trying to achieve (ADR-0011), plus the optional company
+    profile, email format and brand kit that AI drafting uses (ADR-0016/0017)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -39,6 +116,9 @@ class PersonalizationConfig(BaseModel):
     tone: str = Field(default="", max_length=200)
     must_mention: list[Phrase] = Field(default_factory=list, max_length=10)
     never_say: list[Phrase] = Field(default_factory=list, max_length=10)
+    email_format: EmailFormat | None = None
+    company: CompanyProfile | None = None
+    brand: BrandKit | None = None
 
     @field_validator("objective", "offer", "cta", "target", "problem_solved", "tone")
     @classmethod
@@ -53,8 +133,34 @@ class PersonalizationConfig(BaseModel):
             raise ValueError("must not contain duplicates")
         return cleaned
 
+    @model_validator(mode="after")
+    def _within_size_budget(self) -> PersonalizationConfig:
+        if config_size_bytes(self.canonical()) > MAX_CONFIG_BYTES:
+            raise ValueError(
+                "the objective, company details and brand settings are too large"
+            )
+        return self
+
     def canonical(self) -> dict[str, Any]:
-        return self.model_dump(mode="json")
+        """The stored form. Unset optional keys are omitted, so a configuration
+        saved before those keys existed, and one saved again unchanged, is
+        byte-identical and therefore keeps its approval digest."""
+        return self.model_dump(mode="json", exclude_none=True)
+
+    def objective_core(self) -> dict[str, Any]:
+        """Only the fields the per-lead prompt is built from."""
+        full = self.canonical()
+        return {name: full[name] for name in _OBJECTIVE_CORE_FIELDS}
+
+
+def config_size_bytes(canonical: Mapping[str, Any]) -> int:
+    """Size in the database's jsonb text form (", " and ": " separators, raw
+    UTF-8), which is what the 16 KiB CHECK measures."""
+    return len(
+        json.dumps(canonical, ensure_ascii=False, separators=(", ", ": ")).encode(
+            "utf-8"
+        )
+    )
 
 
 def parse_config(raw: Mapping[str, Any] | None) -> PersonalizationConfig | None:

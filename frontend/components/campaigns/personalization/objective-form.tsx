@@ -173,9 +173,22 @@ type Props = {
   saving: boolean;
   error: string | null;
   onSave: (config: PersonalizationConfig) => void;
+  // The setup flow prefills this form from the company review and saves the
+  // company, style and objective together, so saving must be possible even when
+  // the objective fields themselves were not edited.
+  saveLabel?: string;
+  alwaysAllowSave?: boolean;
 };
 
-export function ObjectiveForm({ initial, readOnly, saving, error, onSave }: Props) {
+export function ObjectiveForm({
+  initial,
+  readOnly,
+  saving,
+  error,
+  onSave,
+  saveLabel = "Save objective",
+  alwaysAllowSave = false,
+}: Props) {
   const server = initial ?? EMPTY_OBJECTIVE;
   const [config, setConfig] = React.useState<PersonalizationConfig>(server);
   // The server copy the form was last synced to; "dirty" means edits on top of it.
@@ -314,9 +327,9 @@ export function ObjectiveForm({ initial, readOnly, saving, error, onSave }: Prop
       {!readOnly ? (
         <div className="flex items-center justify-end gap-3">
           {dirty ? <span className="text-xs text-slate-500">Unsaved changes</span> : null}
-          <Button type="submit" disabled={saving || !dirty}>
+          <Button type="submit" disabled={saving || (!dirty && !alwaysAllowSave)}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Save objective
+            {saveLabel}
           </Button>
         </div>
       ) : null}

@@ -143,6 +143,11 @@ class _PageParser(HTMLParser):
         self._flush()
 
 
+def looks_like_injection(text: str) -> bool:
+    """True for instruction-like lines that must never reach a model as content."""
+    return bool(_INJECTION_RE.search(text))
+
+
 def _clean_block(text: str) -> str | None:
     text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()

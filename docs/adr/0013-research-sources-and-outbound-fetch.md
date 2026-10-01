@@ -4,6 +4,8 @@
 
 Accepted for implementation — 2026-09-26, together with [ADR-0011](0011-hyper-personalized-campaign-type.md). Satisfies the requirement in [SECURITY_ARCHITECTURE](../security/SECURITY_ARCHITECTURE.md) that any "enrichment integration requires its own URL/egress policy".
 
+**Amended by [ADR-0016](0016-api-process-ai-drafting-and-company-analysis.md):** the API process may fetch a user-supplied company website for company analysis under this same egress policy (plus same-host stylesheets, a size-capped logo image and, only when the homepage has almost no text because the site renders in the browser, the same host's `/sitemap.xml` to find up to two pages with real text), never inside a database transaction.
+
 ## Context
 
 Personalization quality depends on facts about the lead's company. The lead snapshot already carries company fields and a website URL. The owner wants v1 to also read the company website. That is an outbound fetch to a user-supplied URL, which the security architecture forbids doing implicitly (SSRF, internal scanning, data leakage, resource exhaustion).

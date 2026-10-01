@@ -79,14 +79,31 @@ class Settings(BaseSettings):
     # Enabling it is the operator's assertion that lead data (never email,
     # phone or LinkedIn) may be sent to the model provider as a subprocessor.
     personalization_enabled: bool = False
-    # Only the personalization worker needs these; the key never appears in task
-    # payloads, logs or database rows.
+    # The personalization worker and (ADR-0016) the API process hold the key for
+    # interactive AI drafting; it never appears in task payloads, logs or
+    # database rows.
     personalization_openai_api_key: SecretStr = SecretStr("")
     personalization_openai_base_url: str = "https://api.openai.com/v1"
     # No baked-in default model: it must be chosen explicitly.
     personalization_model: str = ""
     personalization_request_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
     personalization_max_output_tokens: int = Field(default=1200, ge=100, le=8000)
+    # Interactive authoring calls made from the API process (ADR-0016): company
+    # analysis and reference-email drafting. The deadline bounds one model call;
+    # a request may make a few (see personalization_draft_deadline_seconds).
+    personalization_draft_timeout_seconds: float = Field(default=45.0, gt=0, le=120)
+    personalization_draft_max_output_tokens: int = Field(
+        default=4000, ge=500, le=16_000
+    )
+    personalization_analysis_max_output_tokens: int = Field(
+        default=1500, ge=300, le=8000
+    )
+    # Hard ceiling on one whole drafting request, across its attempts.
+    personalization_draft_deadline_seconds: float = Field(default=60.0, gt=0, le=180)
+    # Overall ceiling for fetching and reading a company website.
+    personalization_analysis_fetch_deadline_seconds: float = Field(
+        default=20.0, gt=0, le=60
+    )
     # Generate this long before a message's intended due time.
     personalization_lead_time_seconds: int = Field(default=3600, ge=0, le=86_400)
     personalization_max_attempts: int = Field(default=3, ge=1, le=10)
@@ -213,9 +230,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_personalization(self) -> Settings:
-        # The API process needs the flag and the model name (approvals are bound to
-        # the model) but must NOT hold the API key, so the key is checked by the
-        # personalization worker only (require_personalization_worker_ready).
+        # The key is checked where it is used: at personalization worker start
+        # (require_personalization_worker_ready) and when an AI drafting request
+        # arrives in the API (personalization_drafting_ready), so an API without
+        # the key still serves everything else.
         if self.personalization_enabled and not self.personalization_model.strip():
             raise ValueError("PERSONALIZATION_ENABLED requires PERSONALIZATION_MODEL")
         return self
@@ -229,6 +247,15 @@ class Settings(BaseSettings):
                 "PERSONALIZATION_ENABLED requires PERSONALIZATION_OPENAI_API_KEY "
                 "in the personalization worker environment"
             )
+
+    @property
+    def personalization_drafting_ready(self) -> bool:
+        """Whether this process may make interactive AI drafting calls (ADR-0016)."""
+        return bool(
+            self.personalization_enabled
+            and self.personalization_model.strip()
+            and self.personalization_openai_api_key.get_secret_value()
+        )
 
     @property
     def cors_origins(self) -> list[str]:

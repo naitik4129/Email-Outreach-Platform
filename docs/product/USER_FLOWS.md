@@ -2822,6 +2822,8 @@ The names of those options and their precise behavior should be frozen in the re
 
 The campaign engine should ultimately consume validated content without needing an entirely separate "AI campaign" state machine.
 
+**Superseded in part (2026-09-30):** personalization was built as a campaign-level type ([ADR-0011](../adr/0011-hyper-personalized-campaign-type.md)), not as a template-level mode, and its authoring flow is defined by [ADR-0016](../adr/0016-api-process-ai-drafting-and-company-analysis.md): Company (website or typed business info) → Text or HTML email → Objective → AI-drafted reference emails → sample previews → manager approval → activation. The template-level sketch above is not implemented.
+
 ---
 
 # 57. User Flow Requirements Before Architecture

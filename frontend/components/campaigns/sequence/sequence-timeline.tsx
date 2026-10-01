@@ -6,9 +6,11 @@ import {
   ArrowUp,
   Clock,
   Copy,
+  Loader2,
   Mail,
   Pencil,
   Plus,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 
@@ -38,11 +40,18 @@ type Props = {
   onSaveWait: (step: SequenceStep, minutes: number) => void;
   onInsertAfter: (step: SequenceStep) => void;
   onAddEmail: () => void;
+  // Hyper-personalized campaigns with AI drafting only: rewrite one email.
+  onRegenerateEmail?: (step: SequenceStep, number: number) => void;
+  regeneratingStepId?: string | null;
+  // Any AI drafting request is running, so every Regenerate button waits.
+  generating?: boolean;
 };
 
 function plainText(html: string | null): string {
   if (!html) return "";
-  const doc = new DOMParser().parseFromString(html, "text/html");
+  // Keep paragraphs apart: textContent alone would run "Hi Sam," into the next line.
+  const spaced = html.replace(/<\/(p|div|li|h[1-6]|tr|td|table)>|<br\s*\/?>/gi, " ");
+  const doc = new DOMParser().parseFromString(spaced, "text/html");
   return (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
@@ -59,6 +68,9 @@ export function SequenceTimeline({
   onSaveWait,
   onInsertAfter,
   onAddEmail,
+  onRegenerateEmail,
+  regeneratingStepId = null,
+  generating = false,
 }: Props) {
   const timings = React.useMemo(() => computeTimings(steps), [steps]);
   const problems = sequenceProblems(steps);
@@ -120,6 +132,29 @@ export function SequenceTimeline({
                       </Button>
                       {!readOnly ? (
                         <>
+                          {onRegenerateEmail ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Regenerate step ${number}`}
+                              title="Rewrite this email with AI"
+                              disabled={busy || generating}
+                              onClick={() => onRegenerateEmail(step, number)}
+                            >
+                              {regeneratingStepId === step.id ? (
+                                <Loader2
+                                  className="h-3.5 w-3.5 animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <Sparkles
+                                  className="h-3.5 w-3.5 text-violet-600"
+                                  aria-hidden="true"
+                                />
+                              )}
+                              Regenerate
+                            </Button>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="icon"

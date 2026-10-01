@@ -1,10 +1,15 @@
 import { apiRequest } from "@/lib/api-client";
 import type {
+  BrandKit,
+  CompanyAnalysis,
+  CompanyAnalysisInput,
   GenerationProgress,
+  LayoutPreview,
   PersonalizationCapabilities,
   PersonalizationConfig,
   PersonalizationState,
   PreviewBatch,
+  ReferenceTemplatesResult,
 } from "@/types/domain";
 
 // Hyper-personalized campaigns (ADR-0011). Authorization is enforced by the
@@ -94,5 +99,53 @@ export async function approvePersonalization(
 export async function getGenerationProgress(workspaceId: string, campaignId: string) {
   return (
     await apiRequest<GenerationProgress>(campaignPath(workspaceId, campaignId, "/progress"))
+  ).data;
+}
+
+// --- AI authoring (ADR-0016). These spend model tokens, so they are POSTs that
+// api-client never retries; the caller decides when to try again. ---
+
+export async function analyzeCompany(
+  workspaceId: string,
+  campaignId: string,
+  input: CompanyAnalysisInput,
+) {
+  return (
+    await apiRequest<CompanyAnalysis>(campaignPath(workspaceId, campaignId, "/company-analysis"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    })
+  ).data;
+}
+
+export async function previewEmailLayout(
+  workspaceId: string,
+  campaignId: string,
+  payload: {
+    brand: BrandKit;
+    company_name?: string;
+    site_url?: string | null;
+    cta_label?: string | null;
+  },
+) {
+  return (
+    await apiRequest<LayoutPreview>(
+      campaignPath(workspaceId, campaignId, "/email-layout-preview"),
+      { method: "POST", body: JSON.stringify(payload) },
+    )
+  ).data;
+}
+
+// `follow_up_count` is only used when the sequence has no emails yet.
+export async function generateReferenceTemplates(
+  workspaceId: string,
+  campaignId: string,
+  payload: { scope: "ALL" | "STEP"; step_id?: string; follow_up_count?: number },
+) {
+  return (
+    await apiRequest<ReferenceTemplatesResult>(
+      campaignPath(workspaceId, campaignId, "/reference-templates"),
+      { method: "POST", body: JSON.stringify(payload) },
+    )
   ).data;
 }

@@ -1057,6 +1057,21 @@ The exact semantics must come from the campaign architecture.
 
 The UI must not silently permit modifications that the backend considers invalid.
 
+## Hyper-personalized campaigns
+
+For a `HYPER_PERSONALIZED` campaign this page also hosts the whole authoring flow ([ADR-0016](../adr/0016-api-process-ai-drafting-and-company-analysis.md)), so there is no separate Personalization page (`/personalization` redirects here):
+
+```text
+Setup panel
+    Company: website OR business info (name + description)
+    Email style: Text | HTML (brand kit: logo, colours, font, optional CTA button)
+    Objective (prefilled from the company review)
+Timeline: Generate emails / Regenerate all / per-email Regenerate
+Preview & approve: sample previews, manager approval
+```
+
+If AI drafting is unavailable in the deployment the AI actions are hidden and the manual objective and email editor keep working. In a non-draft campaign the panel is read-only.
+
 ---
 
 # 36. `/app/campaigns/[campaign_id]/senders`

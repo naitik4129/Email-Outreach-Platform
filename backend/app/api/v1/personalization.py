@@ -10,12 +10,18 @@ from app.core.permissions import require_permission
 from app.modules.personalization.api_service import PersonalizationApiService
 from app.modules.personalization.schemas import (
     ApproveIn,
+    CompanyAnalysisIn,
+    CompanyAnalysisOut,
     GenerationProgressOut,
+    LayoutPreviewIn,
+    LayoutPreviewOut,
     PersonalizationCapabilitiesOut,
     PersonalizationConfigIn,
     PersonalizationStateOut,
     PreviewBatchOut,
     PreviewCreateIn,
+    ReferenceTemplatesIn,
+    ReferenceTemplatesOut,
 )
 
 router = APIRouter()
@@ -121,3 +127,48 @@ def get_generation_progress(
     db: Session = Depends(get_db),
 ) -> GenerationProgressOut:
     return PersonalizationApiService(db).progress(context, campaign_id)
+
+
+@router.post(
+    "/campaigns/{campaign_id}/personalization/company-analysis",
+    response_model=CompanyAnalysisOut,
+)
+def analyze_company(
+    campaign_id: UUID,
+    payload: CompanyAnalysisIn,
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> CompanyAnalysisOut:
+    """Study a website or a typed description (ADR-0016). Writes nothing."""
+    return PersonalizationApiService(db).analyze_company(context, campaign_id, payload)
+
+
+@router.post(
+    "/campaigns/{campaign_id}/personalization/email-layout-preview",
+    response_model=LayoutPreviewOut,
+)
+def email_layout_preview(
+    campaign_id: UUID,
+    payload: LayoutPreviewIn,
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> LayoutPreviewOut:
+    """The branded layout around sample text. No model call, no write."""
+    return PersonalizationApiService(db).layout_preview(context, campaign_id, payload)
+
+
+@router.post(
+    "/campaigns/{campaign_id}/personalization/reference-templates",
+    response_model=ReferenceTemplatesOut,
+)
+def generate_reference_templates(
+    campaign_id: UUID,
+    payload: ReferenceTemplatesIn,
+    context: WorkspaceContext = Depends(require_permission("campaigns.draft")),
+    db: Session = Depends(get_db),
+) -> ReferenceTemplatesOut:
+    """Draft the reference emails from the saved objective (ADR-0016). Writes all
+    of them in one transaction or none."""
+    return PersonalizationApiService(db).generate_reference_templates(
+        context, campaign_id, payload
+    )

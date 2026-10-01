@@ -4,6 +4,7 @@ enforced by the route's capability dependency AND by RLS, never by the UI."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -17,16 +18,29 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.campaigns.repository import CampaignRepository
 from app.modules.personalization.api_repository import PersonalizationApiRepository
+from app.modules.personalization.brand_kit import brand_warnings
+from app.modules.personalization.brand_layout import render_layout_preview
+from app.modules.personalization.company_analysis import (
+    AnalysisOutcome,
+    CompanyAnalyzer,
+)
 from app.modules.personalization.config_schema import (
     PersonalizationConfig,
     compute_approval_digest,
     parse_config,
 )
+from app.modules.personalization.ports import DraftingModel
+from app.modules.personalization.reference_templates import ReferenceTemplateService
+from app.modules.personalization.research.egress import SafeFetcher
 from app.modules.personalization.schemas import (
     ApprovalOut,
     ApproveIn,
     BudgetOut,
+    CompanyAnalysisIn,
+    CompanyAnalysisOut,
     GenerationProgressOut,
+    LayoutPreviewIn,
+    LayoutPreviewOut,
     PersonalizationCapabilitiesOut,
     PersonalizationConfigIn,
     PersonalizationStateOut,
@@ -34,6 +48,9 @@ from app.modules.personalization.schemas import (
     PreviewCreateIn,
     PreviewItemOut,
     PreviewRecipientOut,
+    ReferenceTemplatesIn,
+    ReferenceTemplatesOut,
+    SuggestionsOut,
 )
 from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 
@@ -46,11 +63,21 @@ def _draft_email_steps(steps: list[RowMapping]) -> list[RowMapping]:
 
 
 class PersonalizationApiService:
-    def __init__(self, session: Session, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings | None = None,
+        *,
+        drafting_model_factory: Callable[[], DraftingModel] | None = None,
+        fetcher: SafeFetcher | None = None,
+    ) -> None:
         self.session = session
         self.settings = settings or Settings.current()
         self.campaigns = CampaignRepository(session)
         self.repo = PersonalizationApiRepository(session)
+        # Injectable so tests never build the real adapter (no network in tests).
+        self._drafting_model_factory = drafting_model_factory
+        self._fetcher = fetcher
 
     # ------------------------------------------------------------------
     # helpers
@@ -141,7 +168,153 @@ class PersonalizationApiService:
         return PersonalizationCapabilitiesOut(
             enabled=enabled,
             model=self.settings.personalization_model if enabled else None,
+            ai_drafting_available=self.settings.personalization_drafting_ready,
         )
+
+    # ------------------------------------------------------------------
+    # AI authoring (ADR-0016): company analysis and layout preview
+    # ------------------------------------------------------------------
+
+    def _require_drafting_ready(self) -> None:
+        if not self.settings.personalization_drafting_ready:
+            raise AppError(
+                "personalization_not_configured",
+                "AI drafting isn't available in this environment. You can still "
+                "write the objective and emails by hand.",
+                status_code=503,
+            )
+
+    def _build_drafting_model(self) -> DraftingModel:
+        if self._drafting_model_factory is not None:
+            return self._drafting_model_factory()
+        # Imported here so importing this module never constructs an adapter.
+        from app.modules.personalization.factory import build_drafting_model
+
+        return build_drafting_model(self.settings)
+
+    def _release_connection(self) -> None:
+        """End the request's transaction so the pooled connection is free while we
+        wait on the network or the model (a person is waiting, and the pool is
+        small and shared). Nothing after this may touch the database without
+        `enter_api_scope`."""
+        self.session.commit()
+
+    def analyze_company(
+        self,
+        context: WorkspaceContext,
+        campaign_id: UUID,
+        payload: CompanyAnalysisIn,
+    ) -> CompanyAnalysisOut:
+        """Study a website, or a typed description. Reads the campaign to authorize,
+        then releases the connection and does everything else without one. Writes
+        nothing: the user reviews the result and saves it themselves."""
+        self._campaign(context, campaign_id, require_draft=True, require_enabled=True)
+        has_url = bool(payload.url and payload.url.strip())
+        if has_url == (payload.business is not None):
+            raise AppError(
+                "company_source_required",
+                "Provide either a website or your business details.",
+                status_code=422,
+            )
+        self._require_drafting_ready()
+        workspace_ref = str(context.workspace_id)
+        self._release_connection()
+
+        model = self._build_drafting_model()
+        try:
+            analyzer = CompanyAnalyzer(
+                model=model,
+                fetcher=self._fetcher,
+                fetch_deadline_seconds=(
+                    self.settings.personalization_analysis_fetch_deadline_seconds
+                ),
+            )
+            if has_url:
+                outcome = analyzer.analyze_website(
+                    workspace_ref=workspace_ref, raw_url=str(payload.url)
+                )
+            else:
+                assert payload.business is not None
+                outcome = analyzer.analyze_business(
+                    workspace_ref=workspace_ref,
+                    company_name=payload.business.company_name,
+                    description=payload.business.description,
+                )
+        finally:
+            close = getattr(model, "close", None)
+            if callable(close):
+                close()
+        return self._analysis_out(outcome)
+
+    @staticmethod
+    def _analysis_out(outcome: AnalysisOutcome) -> CompanyAnalysisOut:
+        return CompanyAnalysisOut(
+            source=outcome.source,  # type: ignore[arg-type]
+            final_url=outcome.final_url,
+            profile=outcome.profile,
+            brand=outcome.brand,
+            suggestions=SuggestionsOut(**outcome.suggestions),
+            pages_read=outcome.pages_read,
+            warnings=list(outcome.warnings),
+            brand_warnings=brand_warnings(outcome.brand) if outcome.brand else [],
+            model=outcome.model,
+        )
+
+    def generate_reference_templates(
+        self,
+        context: WorkspaceContext,
+        campaign_id: UUID,
+        payload: ReferenceTemplatesIn,
+    ) -> ReferenceTemplatesOut:
+        """Draft every reference email (or regenerate one) from the saved
+        objective. See ReferenceTemplateService for the three phases."""
+        service = ReferenceTemplateService(
+            self.session,
+            self.settings,
+            campaign_guard=self._campaign,
+            sequence_reader=self._sequence_and_steps,
+            drafting_model_factory=self._build_drafting_model,
+            audit=self.campaigns.record_audit_event,
+        )
+        sequence, outcome, warnings = service.generate(
+            context,
+            campaign_id,
+            scope=payload.scope,
+            step_id=payload.step_id,
+            follow_up_count=payload.follow_up_count,
+        )
+        return ReferenceTemplatesOut(
+            sequence=sequence,
+            model=outcome.model,
+            theme=outcome.theme,
+            attempts=outcome.attempts,
+            warnings=warnings,
+        )
+
+    def layout_preview(
+        self,
+        context: WorkspaceContext,
+        campaign_id: UUID,
+        payload: LayoutPreviewIn,
+    ) -> LayoutPreviewOut:
+        """The brand layout around sample text, from the real renderer. No model,
+        no fetch and no write, so it works even when AI drafting is unavailable."""
+        self._campaign(context, campaign_id, require_draft=True, require_enabled=True)
+        try:
+            html = render_layout_preview(
+                payload.brand,
+                company_name=payload.company_name,
+                site_url=payload.site_url,
+                cta_label=payload.cta_label,
+            )
+        except ValueError as exc:
+            raise AppError(
+                "invalid_brand",
+                "Some brand settings aren't valid. Check the colours and web "
+                "addresses.",
+                status_code=422,
+            ) from exc
+        return LayoutPreviewOut(html=html, warnings=brand_warnings(payload.brand))
 
     def get_state(
         self, context: WorkspaceContext, campaign_id: UUID

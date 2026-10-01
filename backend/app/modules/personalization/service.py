@@ -18,6 +18,7 @@ from app.modules.campaigns.message_rendering import (
     compute_content_digest,
     render_step_content,
 )
+from app.modules.personalization.brand_layout import render_for_config
 from app.modules.personalization.config_schema import PersonalizationConfig
 from app.modules.personalization.context_builder import build_context
 from app.modules.personalization.ports import (
@@ -162,7 +163,7 @@ class PersonalizationService:
 
         request = GenerationRequest(
             workspace_ref=str(inputs.workspace_id),
-            objective=inputs.objective.canonical(),
+            objective=inputs.objective.objective_core(),
             reference_subject=rendered_subject,
             reference_paragraphs=split_paragraphs(reference_text),
             recipient=context.recipient,
@@ -216,8 +217,11 @@ class PersonalizationService:
 
         # The pre-header is authored on the step and rendered deterministically,
         # exactly as for standard content, before the digest is computed.
+        # An HTML campaign wraps the validated, sanitized paragraphs in the brand
+        # layout here -- the same seam previews use, so a preview is exactly what
+        # will be sent -- before the preheader and the digest (ADR-0017).
         body = inject_preheader(
-            validation.body_html,
+            render_for_config(inputs.objective, validation.body_html),
             render_preheader(inputs.reference_preheader, inputs.frozen_variables),
         )
         return AttemptOutcome(

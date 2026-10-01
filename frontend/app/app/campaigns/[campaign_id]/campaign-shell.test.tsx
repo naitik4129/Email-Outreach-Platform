@@ -45,23 +45,20 @@ async function tabLabels() {
 describe("Campaign shell", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("adds a Personalization tab after Sequence for hyper-personalized campaigns", async () => {
+  it("has no separate Personalization tab: hyper-personalized campaigns author it on Sequence", async () => {
     renderLayout("HYPER_PERSONALIZED");
+    // Same tabs as any campaign (ADR-0016 merged Personalization into Sequence).
     expect(await tabLabels()).toEqual([
       "Overview",
       "Analytics",
       "Audience",
       "Sequence",
-      "Personalization",
       "Senders",
       "Schedule",
       "Review",
     ]);
     expect(screen.getByText("Hyper-Personalized")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Personalization" })).toHaveAttribute(
-      "href",
-      "/app/campaigns/camp-1/personalization",
-    );
+    expect(screen.queryByRole("link", { name: "Personalization" })).not.toBeInTheDocument();
   });
 
   it("leaves standard campaigns unchanged", async () => {

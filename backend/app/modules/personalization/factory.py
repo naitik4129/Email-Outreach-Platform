@@ -16,7 +16,11 @@ from app.core.config import Settings
 from app.modules.personalization.budget import RedisRpmLimiter, RpmLimiter
 from app.modules.personalization.jit import GenerationRunner, RunnerConfig
 from app.modules.personalization.openai_model import OpenAIModel
-from app.modules.personalization.ports import PersonalizationModel, ResearchSource
+from app.modules.personalization.ports import (
+    DraftingModel,
+    PersonalizationModel,
+    ResearchSource,
+)
 from app.modules.personalization.previews import PreviewRunner
 from app.modules.personalization.repository import GenerationDb
 from app.modules.personalization.research.cached import CachedWebsiteResearch
@@ -40,6 +44,30 @@ def build_model(
         base_url=settings.personalization_openai_base_url,
         timeout_seconds=settings.personalization_request_timeout_seconds,
         max_output_tokens=settings.personalization_max_output_tokens,
+        transport=transport,
+    )
+
+
+def build_drafting_model(
+    settings: Settings, *, transport: httpx.BaseTransport | None = None
+) -> DraftingModel:
+    """The model for interactive authoring calls made from the API process
+    (ADR-0016). Same test-time rule as build_model: no network in tests without
+    an injected transport."""
+    if settings.app_env == "test" and transport is None:
+        raise RuntimeError(
+            "The OpenAI adapter must not be constructed in tests without an "
+            "injected transport"
+        )
+    return OpenAIModel(
+        api_key=settings.personalization_openai_api_key.get_secret_value(),
+        model=settings.personalization_model,
+        base_url=settings.personalization_openai_base_url,
+        # A dedicated, shorter deadline than the worker's: a person is waiting.
+        timeout_seconds=settings.personalization_draft_timeout_seconds,
+        max_output_tokens=settings.personalization_max_output_tokens,
+        draft_max_output_tokens=settings.personalization_draft_max_output_tokens,
+        analysis_max_output_tokens=settings.personalization_analysis_max_output_tokens,
         transport=transport,
     )
 

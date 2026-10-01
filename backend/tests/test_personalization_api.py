@@ -223,13 +223,30 @@ class TestState:
         )
         assert approved != edited_cta and approved != edited_step
 
-    def test_capabilities_expose_only_flag_and_model(self) -> None:
+    def test_capabilities_expose_only_flag_model_and_availability(self) -> None:
         caps = _service(campaign=_campaign()).capabilities()
-        assert caps.model_dump() == {"enabled": True, "model": MODEL}
+        # No key in this environment, so AI drafting is not available (ADR-0016).
+        assert caps.model_dump() == {
+            "enabled": True,
+            "model": MODEL,
+            "ai_drafting_available": False,
+        }
         off = PersonalizationApiService(
             MagicMock(), _settings(personalization_enabled=False)
         )
-        assert off.capabilities().model_dump() == {"enabled": False, "model": None}
+        assert off.capabilities().model_dump() == {
+            "enabled": False,
+            "model": None,
+            "ai_drafting_available": False,
+        }
+
+    def test_capabilities_report_availability_without_leaking_the_key(self) -> None:
+        secret = "sk-test-secret-value"
+        service = PersonalizationApiService(
+            MagicMock(), _settings(personalization_openai_api_key=secret)
+        )
+        dumped = service.capabilities().model_dump_json()
+        assert '"ai_drafting_available":true' in dumped and secret not in dumped
 
 
 class TestPutConfig:

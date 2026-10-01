@@ -4,6 +4,8 @@
 
 Accepted for implementation — 2026-09-26, together with [ADR-0011](0011-hyper-personalized-campaign-type.md).
 
+**Amended by [ADR-0016](0016-api-process-ai-drafting-and-company-analysis.md):** the API process may also hold `PERSONALIZATION_OPENAI_API_KEY` and call the model, for interactive authoring only (company analysis and reference drafting), never with lead data. The per-lead pipeline below is unchanged and still runs only in the personalization worker.
+
 ## Context
 
 Hyper-personalized campaigns ([ADR-0011](0011-hyper-personalized-campaign-type.md)) need a language model to write per-lead email. Nothing in the repository calls an LLM: no SDK, configuration, secrets, budget control or data-handling rule exists, and [WORKERS](../architecture/WORKERS.md) says personalization workers have "no MVP queues or secrets". Lead data is customer PII; model output is untrusted text that will be sent to third parties under a workspace's sender identity.

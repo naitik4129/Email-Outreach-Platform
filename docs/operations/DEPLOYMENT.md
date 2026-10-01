@@ -601,8 +601,11 @@ or LinkedIn URLs.
 
 Do this only after real sending works (above), and after migrations 0026–0029 are applied.
 
-1. Put the key in its **own** file so only one container can read it (`.env` is loaded by every
-   service):
+1. Put the key in its **own** file so only the containers that need it can read it (`.env` is
+   loaded by every service). Those are `worker-personalization` and, since
+   [ADR-0016](../adr/0016-api-process-ai-drafting-and-company-analysis.md), `backend` (interactive
+   AI drafting and company analysis; without the file the API reports AI drafting as unavailable
+   and everything else works):
 
    ```bash
    cd ~/outly
@@ -616,7 +619,8 @@ Do this only after real sending works (above), and after migrations 0026–0029 
    you want (there is deliberately no default). Optional limits and their defaults are listed in
    `.env.example` (`PERSONALIZATION_DAILY_GENERATION_CAP`, `_DAILY_PREVIEW_CAP`,
    `_DAILY_FETCH_CAP`, `_RPM`, `_LEAD_TIME_SECONDS`, ...). Do **not** put the key in `.env`.
-3. Rebuild and start (the API and scheduler need the flag; only the new worker has the key):
+3. Rebuild and start (the API and scheduler need the flag; the API and the new worker have the
+   key; the compose file changed, so the backend must be rebuilt):
 
    ```bash
    docker compose up -d --build backend scheduler worker-general worker-personalization

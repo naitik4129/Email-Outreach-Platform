@@ -49,6 +49,14 @@ const DESCRIPTIONS: Record<string, string> = {
   objective_invalid: "The campaign objective is missing or invalid.",
   work_item_unavailable: "The message could not be prepared.",
   daily_cap_reached: "The daily generation limit was reached; it will retry.",
+  // Reference drafting (the AI writing your emails from the objective)
+  subject_invalid: "A subject line was missing, too long or not a single line.",
+  unknown_variable: "An email used a merge field we don't support.",
+  variable_without_fallback: "A merge field had no fallback for when a lead's data is missing.",
+  malformed_placeholder: "An email had a broken merge field.",
+  markup_in_text: "An email contained formatting marks instead of plain text.",
+  missing_cta: "An email left out your call to action.",
+  wrong_step_count: "The AI didn't write the number of emails that was asked for.",
   // Previews
   previous_step_failed: "An earlier email for this lead failed, so this one was skipped.",
   preview_budget_exhausted: "The daily limit for sample generation was reached.",

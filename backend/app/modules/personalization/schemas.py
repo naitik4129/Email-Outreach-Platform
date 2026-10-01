@@ -8,7 +8,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.modules.personalization.config_schema import PersonalizationConfig
+from app.modules.campaigns.schemas import SequenceOut
+from app.modules.personalization.brand_kit import BrandKit
+from app.modules.personalization.config_schema import (
+    CompanyProfile,
+    PersonalizationConfig,
+)
 
 ApprovalStatus = Literal["NONE", "APPROVED", "STALE"]
 
@@ -22,6 +27,10 @@ class ApprovalOut(BaseModel):
 class PersonalizationCapabilitiesOut(BaseModel):
     enabled: bool
     model: str | None = None
+    # Whether this API process can make interactive AI calls (company analysis and
+    # reference drafting): the flag, the model and the key are all present. When
+    # false the manual objective and step editor keep working (ADR-0016).
+    ai_drafting_available: bool = False
 
 
 class PersonalizationStateOut(BaseModel):
@@ -109,3 +118,66 @@ class GenerationProgressOut(BaseModel):
     oldest_pending_at: datetime | None = None
     failure_codes: dict[str, int] = Field(default_factory=dict)
     budget: BudgetOut
+
+
+class BusinessInfoIn(BaseModel):
+    """Bounds only guard the payload size; the precise rules (and their error
+    code) are applied by the analyzer so they exist once."""
+
+    company_name: str = Field(max_length=500)
+    description: str = Field(max_length=10_000)
+
+
+class CompanyAnalysisIn(BaseModel):
+    # Exactly one of the two; enforced by the service so the error code is stable.
+    url: str | None = Field(default=None, max_length=4096)
+    business: BusinessInfoIn | None = None
+
+
+class SuggestionsOut(BaseModel):
+    objective: str = ""
+    offer: str = ""
+    cta: str = ""
+    tone: str = ""
+
+
+class CompanyAnalysisOut(BaseModel):
+    source: Literal["WEBSITE", "MANUAL"]
+    final_url: str | None = None
+    profile: CompanyProfile
+    # Only for a website: a business description has nothing to extract a brand from.
+    brand: BrandKit | None = None
+    suggestions: SuggestionsOut
+    pages_read: int
+    warnings: list[str] = Field(default_factory=list)
+    brand_warnings: list[str] = Field(default_factory=list)
+    model: str | None = None
+
+
+class LayoutPreviewIn(BaseModel):
+    brand: BrandKit
+    company_name: str = Field(default="", max_length=120)
+    site_url: str | None = Field(default=None, max_length=1000)
+    cta_label: str | None = Field(default=None, max_length=40)
+
+
+class LayoutPreviewOut(BaseModel):
+    html: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ReferenceTemplatesIn(BaseModel):
+    scope: Literal["ALL", "STEP"] = "ALL"
+    # STEP only: the email step to regenerate.
+    step_id: UUID | None = None
+    # Only used when the sequence has no email steps yet: how many follow-ups to
+    # create after the first email.
+    follow_up_count: int | None = Field(default=None, ge=1, le=5)
+
+
+class ReferenceTemplatesOut(BaseModel):
+    sequence: SequenceOut
+    model: str
+    theme: str = ""
+    attempts: int = 1
+    warnings: list[str] = Field(default_factory=list)

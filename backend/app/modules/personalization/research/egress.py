@@ -39,9 +39,11 @@ class FetchBlocked(Exception):
     """Refused by policy (unsafe destination, bad scheme/port, off-site
     redirect, wrong content type). Safe to cache negatively."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, detail: str | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        # A safe-to-show hint (for an off-site redirect: the target host).
+        self.detail = detail
 
 
 class FetchFailed(Exception):
@@ -157,7 +159,19 @@ class SafeFetcher:
         assert pinned is not None
         return pinned
 
-    def fetch(self, url: str) -> FetchResponse:
+    def fetch(
+        self,
+        url: str,
+        *,
+        content_types: tuple[str, ...] | None = None,
+        max_bytes: int | None = None,
+    ) -> FetchResponse:
+        """`content_types` and `max_bytes` override the HTML defaults for one call
+        (a stylesheet, or a logo image with a much smaller cap). Every other
+        policy rule -- https/443, public addresses, pinning, same-host redirects,
+        deadline -- applies unchanged."""
+        allowed = content_types or _ALLOWED_CONTENT_TYPES
+        byte_cap = max_bytes or self._max_bytes
         started = self._clock()
         current_url = url
         original_host: str | None = None
@@ -166,12 +180,14 @@ class SafeFetcher:
             if original_host is None:
                 original_host = host
             elif _registrable_key(host) != _registrable_key(original_host):
-                raise FetchBlocked("offsite_redirect")
+                raise FetchBlocked("offsite_redirect", detail=host)
             remaining = self._deadline - (self._clock() - started)
             if remaining <= 0:
                 raise FetchFailed("deadline_exceeded")
             ip = self._pin_address(host)
-            response = self._request_once(host, path, ip, remaining, started)
+            response = self._request_once(
+                host, path, ip, remaining, started, allowed, byte_cap
+            )
             if response.status_code in (301, 302, 303, 307, 308):
                 location = response.location
                 if not location:
@@ -189,7 +205,14 @@ class SafeFetcher:
         raise FetchBlocked("too_many_redirects")  # pragma: no cover
 
     def _request_once(
-        self, host: str, path: str, ip: str, remaining: float, started: float
+        self,
+        host: str,
+        path: str,
+        ip: str,
+        remaining: float,
+        started: float,
+        allowed: tuple[str, ...],
+        byte_cap: int,
     ) -> _RawResponse:
         target_host = f"[{ip}]" if ":" in ip else ip
         timeout = httpx.Timeout(
@@ -203,7 +226,12 @@ class SafeFetcher:
                 follow_redirects=False,
                 headers={
                     "User-Agent": USER_AGENT,
-                    "Accept": "text/html,text/plain;q=0.9",
+                    # Unchanged for the default (worker research) call.
+                    "Accept": (
+                        "text/html,text/plain;q=0.9"
+                        if allowed is _ALLOWED_CONTENT_TYPES
+                        else ",".join(allowed)
+                    ),
                 },
             ) as client:
                 with client.stream(
@@ -224,13 +252,13 @@ class SafeFetcher:
                     )
                     if status in (301, 302, 303, 307, 308):
                         return _RawResponse(status, content_type, b"", location)
-                    if status == 200 and content_type not in _ALLOWED_CONTENT_TYPES:
+                    if status == 200 and content_type not in allowed:
                         raise FetchBlocked("unsupported_content_type")
                     body = bytearray()
                     for chunk in response.iter_bytes():
                         body.extend(chunk)
-                        if len(body) >= self._max_bytes:
-                            del body[self._max_bytes :]
+                        if len(body) >= byte_cap:
+                            del body[byte_cap:]
                             break
                         if self._clock() - started > self._deadline:
                             raise FetchFailed("deadline_exceeded")

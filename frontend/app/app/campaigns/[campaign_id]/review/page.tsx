@@ -35,7 +35,8 @@ const TAB_FOR_FIELD: Record<string, string> = {
   mailboxes: "senders",
   audience: "audience",
   settings: "schedule",
-  personalization: "personalization",
+  // The Personalization tab was merged into Sequence (ADR-0016).
+  personalization: "sequence",
 };
 
 function tabForIssue(issue: PreflightIssue): string {

@@ -178,6 +178,39 @@ describe("apiRequest", () => {
     expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe("abc-123");
   });
 
+  it("carries the server's structured details on an ApiError", async () => {
+    getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(422, {
+        error: {
+          code: "website_thin",
+          message: "Not enough to read",
+          details: { company_name: "Acme" },
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const error = (await apiRequest("/x", { method: "POST" }).catch((e) => e)) as ApiError;
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.details).toEqual({ company_name: "Acme" });
+  });
+
+  it.each([
+    ["no details", { error: { code: "x", message: "m" } }],
+    ["null details", { error: { code: "x", message: "m", details: null } }],
+    ["a list of details", { error: { code: "x", message: "m", details: [1, 2] } }],
+    ["a string", { error: { code: "x", message: "m", details: "oops" } }],
+  ])("reports null details for %s", async (_label, body) => {
+    getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, body)));
+    const error = (await apiRequest("/x", { method: "POST" }).catch((e) => e)) as ApiError;
+    expect(error.details).toBeNull();
+  });
+
+  it("keeps constructing an ApiError the old way (details default to null)", () => {
+    expect(new ApiError("m", 500, "c", "r").details).toBeNull();
+  });
+
   it("surfaces a 403 as an ApiError without throwing on missing token", async () => {
     getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
     const fetchMock = vi
