@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.core.config import Settings
 
@@ -24,23 +25,30 @@ def get_engine(
     if database_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        kwargs.update(
-            {
-                "pool_size": pool_size,
-                "max_overflow": max_overflow,
-                "pool_timeout": pool_timeout,
-                # A connect that stalls must fail (and be retried by the client)
-                # rather than block a request indefinitely; keepalives let a
-                # connection silently dropped by the pooler/NAT be noticed.
-                "connect_args": {
-                    "connect_timeout": connect_timeout,
-                    "keepalives": 1,
-                    "keepalives_idle": 30,
-                    "keepalives_interval": 10,
-                    "keepalives_count": 3,
-                },
-            }
-        )
+        if pool_size == 0:
+            # No idle connections: each use opens one and closes it on release.
+            # For background processes that touch the database in short, infrequent
+            # bursts, so they hold a Session-pooler client slot only while working
+            # instead of for their whole lifetime (the pooler caps total clients).
+            kwargs["poolclass"] = NullPool
+        else:
+            kwargs.update(
+                {
+                    "pool_size": pool_size,
+                    "max_overflow": max_overflow,
+                    "pool_timeout": pool_timeout,
+                }
+            )
+        kwargs["connect_args"] = {
+            # A connect that stalls must fail (and be retried by the client)
+            # rather than block a request indefinitely; keepalives let a
+            # connection silently dropped by the pooler/NAT be noticed.
+            "connect_timeout": connect_timeout,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 3,
+        }
     engine = create_engine(database_url, **kwargs)
     _created_engines.append(engine)
     return engine

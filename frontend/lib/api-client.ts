@@ -51,7 +51,12 @@ function isReadMethod(method: string | undefined): boolean {
 function retryDelayMs(attempt: number, response: Response | null): number {
   const retryAfterSeconds = Number(response?.headers.get("retry-after"));
   if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    return Math.min(retryAfterSeconds, 5) * 1000 + Math.random() * 250;
+    // A page fires about ten reads at once, and they all fail together when the
+    // database is out of connections. A fixed delay would send them back in the same
+    // instant and fail them again, so spread them across 0.5x to 1.5x, growing with
+    // each attempt.
+    const base = Math.min(retryAfterSeconds, 5) * 1000 * (attempt + 1);
+    return base * (0.5 + Math.random());
   }
   return 300 * 3 ** attempt + Math.random() * 200;
 }

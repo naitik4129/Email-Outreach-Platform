@@ -259,6 +259,37 @@ describe("apiRequest", () => {
       expect(result.data).toEqual({ ok: true });
     });
 
+    it("spreads 503 retries across a window that grows with each attempt", async () => {
+      const delays: number[] = [];
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
+        // The 30 s read timeout is not a retry delay.
+        if (ms !== 30_000) delays.push(ms ?? 0);
+        fn();
+        return 0;
+      }) as unknown as typeof setTimeout);
+      getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });
+      const busy = () =>
+        jsonResponse(503, { error: { code: "service_unavailable", message: "busy" } }, {
+          "Retry-After": "2",
+        });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValueOnce(busy()).mockResolvedValueOnce(busy()).mockResolvedValueOnce(
+          jsonResponse(200, { ok: true }),
+        ),
+      );
+
+      await apiRequest("/api/v1/workspaces");
+
+      // Retry-After 2 s: 0.5x-1.5x first, then doubled. A fixed delay would send
+      // every parallel read back in the same instant.
+      expect(delays).toHaveLength(2);
+      expect(delays[0]).toBeGreaterThanOrEqual(1000);
+      expect(delays[0]).toBeLessThanOrEqual(3000);
+      expect(delays[1]).toBeGreaterThanOrEqual(2000);
+      expect(delays[1]).toBeLessThanOrEqual(6000);
+    });
+
     it("retries a GET on a network error and then succeeds", async () => {
       instantTimers();
       getSession.mockResolvedValue({ data: { session: { access_token: "t" } } });

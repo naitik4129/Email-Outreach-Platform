@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     log_format: Literal["json", "text"] = "json"
     service_name: str = "backend"
 
-    db_pool_size: int = Field(default=5, ge=1, le=50)
+    # 0 = keep no idle connections (NullPool); see app/db/session.py.
+    db_pool_size: int = Field(default=5, ge=0, le=50)
     db_max_overflow: int = Field(default=5, ge=0, le=50)
     # How long a request waits for a free pooled connection before failing. Long
     # enough to ride out a burst (page load + polling), short enough to fail

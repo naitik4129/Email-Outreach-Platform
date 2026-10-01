@@ -25,19 +25,21 @@ x-app-env: &app-env
     # (a local-dev .env commonly points at localhost).
     REDIS_URL: redis://redis:6379/0
 
-# Same as x-app-env plus a small database connection cap. Every process keeps its
-# own pool, and all of them (plus the API and any local dev stack) share the
-# Supabase Session pooler's limited client slots (docs/operations/DEPLOYMENT.md,
-# "Database connection budget"). A worker rarely needs more than one connection:
-# 1 kept open, up to 2 more during a burst (released afterwards). Override with
-# WORKER_DB_POOL_SIZE / WORKER_DB_MAX_OVERFLOW in .env. The API keeps DB_POOL_SIZE
-# / DB_MAX_OVERFLOW from .env.
+# Same as x-app-env plus a database connection policy. Every process keeps its own
+# pool, and all of them (plus the API and any local dev stack) share the Supabase
+# Session pooler's limited client slots (docs/operations/DEPLOYMENT.md, "Database
+# connection budget"). There are nine worker processes (Celery --concurrency counts
+# one each), so even one idle connection apiece used most of a 15-slot pooler and
+# left the API unable to open connections (EMAXCONNSESSION). Workers therefore keep
+# NO idle connection by default (pool size 0 = open on use, close on release).
+# Override with WORKER_DB_POOL_SIZE / WORKER_DB_MAX_OVERFLOW in .env. The API keeps
+# DB_POOL_SIZE / DB_MAX_OVERFLOW from .env.
 x-worker-env: &worker-env
   env_file:
     - .env
   environment:
     REDIS_URL: redis://redis:6379/0
-    DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-1}
+    DB_POOL_SIZE: ${WORKER_DB_POOL_SIZE:-0}
     DB_MAX_OVERFLOW: ${WORKER_DB_MAX_OVERFLOW:-2}
 
 # Cap container logs: this stack shares a server, and unbounded json-file logs
