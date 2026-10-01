@@ -136,11 +136,17 @@ export async function previewEmailLayout(
   ).data;
 }
 
-// `follow_up_count` is only used when the sequence has no emails yet.
+// `follow_up_count` is only used when the sequence has no emails yet;
+// `instructions` only when regenerating one email (scope STEP).
 export async function generateReferenceTemplates(
   workspaceId: string,
   campaignId: string,
-  payload: { scope: "ALL" | "STEP"; step_id?: string; follow_up_count?: number },
+  payload: {
+    scope: "ALL" | "STEP";
+    step_id?: string;
+    follow_up_count?: number;
+    instructions?: string;
+  },
 ) {
   return (
     await apiRequest<ReferenceTemplatesResult>(

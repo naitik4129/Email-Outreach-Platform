@@ -11,6 +11,8 @@ export type GenerationRequest = {
   scope: "ALL" | "STEP";
   step_id?: string;
   follow_up_count?: number;
+  // STEP only: what the user wants changed in the regenerated email.
+  instructions?: string;
 };
 
 export type GenerationFailure = {

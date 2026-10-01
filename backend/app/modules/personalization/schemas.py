@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.modules.campaigns.schemas import SequenceOut
 from app.modules.personalization.brand_kit import BrandKit
@@ -16,6 +16,8 @@ from app.modules.personalization.config_schema import (
 )
 
 ApprovalStatus = Literal["NONE", "APPROVED", "STALE"]
+
+MAX_REGEN_INSTRUCTIONS = 1000
 
 
 class ApprovalOut(BaseModel):
@@ -175,6 +177,16 @@ class ReferenceTemplatesIn(BaseModel):
     # Only used when the sequence has no email steps yet: how many follow-ups to
     # create after the first email.
     follow_up_count: int | None = Field(default=None, ge=1, le=5)
+    # STEP only: what the user wants changed in the regenerated email.
+    instructions: str | None = Field(default=None, max_length=MAX_REGEN_INSTRUCTIONS)
+
+    @model_validator(mode="after")
+    def _instructions_only_for_step(self) -> ReferenceTemplatesIn:
+        if self.instructions is not None:
+            self.instructions = self.instructions.strip() or None
+        if self.instructions is not None and self.scope != "STEP":
+            raise ValueError("instructions apply only when regenerating one email")
+        return self
 
 
 class ReferenceTemplatesOut(BaseModel):

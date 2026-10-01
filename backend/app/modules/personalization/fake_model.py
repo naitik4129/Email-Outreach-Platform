@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+from app.modules.personalization.email_style import step_brief
 from app.modules.personalization.ports import (
     CompanyAnalysisOutput,
     CompanyAnalysisRequest,
@@ -112,6 +113,8 @@ class FakeModel:
                 p for p in reference if not p.lower().startswith(("hi ", "hello "))
             ]
         body.extend(reference)
+        if "?" not in " ".join(body[-2:]):
+            body.append("Is that worth a quick look?")  # the ask is a question
         subject = request.reference_subject
         if request.previous is not None:
             subject = f"Another idea: {request.reference_subject}"
@@ -200,21 +203,31 @@ class FakeModel:
         must = [str(p) for p in objective.get("must_mention", []) or []]  # type: ignore[union-attr]
         steps: list[DraftedStep] = []
         last = len(request.steps) - 1
+        # getattr: some tests hand in a bare namespace with only objective + steps.
+        total = getattr(request, "email_count", 0) or len(request.steps) + len(
+            getattr(request, "context_emails", ())
+        )
         for index, blueprint in enumerate(request.steps):
             subject, angle = _ANGLES[min(blueprint.position - 1, len(_ANGLES) - 1)]
+            closing = (
+                step_brief(blueprint.position, total).job == "close"
+            )  # the short last note leaves the pitch out
             paragraphs = [
                 "Hi {{first_name|there}},",
                 f"{angle}",
-                f"What we offer: {offer}." if offer else "",
+                f"What we offer: {offer}." if offer and not closing else "",
                 f"{'; '.join(must)}." if must else "",
                 cta,
             ]
+            paragraphs = [p for p in paragraphs if p]
+            if "?" not in " ".join(paragraphs[-2:]):
+                paragraphs.append("Is that worth a quick look?")
             steps.append(
                 DraftedStep(
                     position=blueprint.position,
                     role=blueprint.role,
                     subject=subject,
-                    paragraphs=tuple(p for p in paragraphs if p),
+                    paragraphs=tuple(paragraphs),
                     preheader="",
                     wait_days_after=0 if index == last else 3,
                 )

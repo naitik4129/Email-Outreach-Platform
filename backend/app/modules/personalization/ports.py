@@ -198,7 +198,14 @@ class SequenceDraftRequest:
     allowed_variables: tuple[str, ...]
     # STEP mode: the neighbouring emails, so a regenerated step fits the sequence.
     context_emails: tuple[Mapping[str, object], ...] = ()
+    # STEP mode, only when the user asked for specific changes: what they wrote and
+    # the email as it stands now, so the change is applied to it.
+    user_instructions: str | None = None
+    current_email: Mapping[str, object] | None = None
     retry_codes: tuple[str, ...] = ()
+    # Emails in the whole sequence (0 = steps + context_emails); the length
+    # decides which email is the closing one.
+    email_count: int = 0
 
 
 @dataclass(frozen=True)

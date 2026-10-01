@@ -921,7 +921,7 @@ class TestGenerationSql:
             None,
             "fake",
             "fake-model",
-            "hp-1",
+            "hp-2",
             False,
             "fake personalization",
             1,

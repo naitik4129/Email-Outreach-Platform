@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -32,6 +33,10 @@ from app.modules.personalization.ports import (
 from app.modules.personalization.reference_templates import (
     ReferenceTemplateService,
     role_for,
+)
+from app.modules.personalization.schemas import (
+    MAX_REGEN_INSTRUCTIONS,
+    ReferenceTemplatesIn,
 )
 from app.modules.templates.variables import validate_template_content
 from tests.support.personalization_fakes import CONFIG, WS
@@ -168,9 +173,16 @@ def _service(
     )
 
 
-def _generate(env, *, scope="ALL", step_id=None, follow_up_count=None):
+def _generate(
+    env, *, scope="ALL", step_id=None, follow_up_count=None, instructions=None
+):
     return env.service.generate(
-        CTX, CAMPAIGN_ID, scope=scope, step_id=step_id, follow_up_count=follow_up_count
+        CTX,
+        CAMPAIGN_ID,
+        scope=scope,
+        step_id=step_id,
+        follow_up_count=follow_up_count,
+        instructions=instructions,
     )
 
 
@@ -294,6 +306,31 @@ class TestRewrite:
             and request.context_emails[0]["subject"] == "old one"
         )
 
+    def test_change_request_reaches_the_model_with_the_current_email(self) -> None:
+        world = self._world()
+        env = _service(world)
+        target = world.steps[2]
+        _generate(
+            env,
+            scope="STEP",
+            step_id=target["id"],
+            instructions="make it shorter and friendlier",
+        )
+        request = env.model.draft_requests[0]
+        assert request.user_instructions == "make it shorter and friendlier"
+        assert request.current_email == {
+            "position": 2,
+            "subject": "old two",
+            "text": "old",
+        }
+
+    def test_without_a_change_request_the_current_email_is_not_sent(self) -> None:
+        world = self._world()
+        env = _service(world)
+        _generate(env, scope="STEP", step_id=world.steps[2]["id"])
+        request = env.model.draft_requests[0]
+        assert request.user_instructions is None and request.current_email is None
+
     def test_step_scope_needs_a_step_id_that_is_an_email_in_this_sequence(self) -> None:
         env = _service(self._world())
         with pytest.raises(AppError) as info:
@@ -304,6 +341,27 @@ class TestRewrite:
                 _generate(env, scope="STEP", step_id=bad)
             assert info.value.code == "not_found" and info.value.status_code == 404
         assert env.model.draft_requests == []
+
+
+class TestChangeRequestPayload:
+    def test_blank_request_is_dropped_and_text_is_trimmed(self) -> None:
+        step = uuid.uuid4()
+        blank = ReferenceTemplatesIn(scope="STEP", step_id=step, instructions="   ")
+        assert blank.instructions is None
+        padded = ReferenceTemplatesIn(scope="STEP", step_id=step, instructions=" hi ")
+        assert padded.instructions == "hi"
+
+    def test_only_allowed_when_regenerating_one_email(self) -> None:
+        with pytest.raises(ValidationError):
+            ReferenceTemplatesIn(scope="ALL", instructions="shorter")
+
+    def test_length_is_bounded(self) -> None:
+        with pytest.raises(ValidationError):
+            ReferenceTemplatesIn(
+                scope="STEP",
+                step_id=uuid.uuid4(),
+                instructions="x" * (MAX_REGEN_INSTRUCTIONS + 1),
+            )
 
 
 class TestGuardsAndPlanning:

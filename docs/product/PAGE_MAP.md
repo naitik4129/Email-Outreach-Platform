@@ -1066,7 +1066,7 @@ Setup panel
     Company: website OR business info (name + description)
     Email style: Text | HTML (brand kit: logo, colours, font, optional CTA button)
     Objective (prefilled from the company review)
-Timeline: Generate emails / Regenerate all / per-email Regenerate
+Timeline: Generate emails / Regenerate all / per-email Regenerate (with an optional "what should change?" note)
 Preview & approve: sample previews, manager approval
 ```
 

@@ -150,12 +150,38 @@ class TestPrompts:
             retry_codes=("missing_cta", "not_a_known_code"),
         )
         data = draft_prompt.build_data(request)
-        assert data["emails_to_write"] == [{"position": 2, "role": "follow_up_1"}]
+        (email,) = data["emails_to_write"]
+        assert (email["position"], email["role"]) == (2, "follow_up_1")
+        # The step's job and length come from the shared playbook, not the model.
+        assert email["job"] == "new_angle" and email["word_range"] == [25, 80]
+        assert email["instruction"]
         assert data["neighbouring_emails"][0]["subject"] == "S"
         assert "company" not in data
         assert len(data["fix_these_problems"]) == 2
         assert "call to action" in data["fix_these_problems"][0].lower()
         assert data["fix_these_problems"][1] == "Fix the problem and try again."
+
+    def test_change_request_is_sent_with_current_email_only_when_given(self) -> None:
+        base = dict(
+            workspace_ref="ws",
+            objective={"objective": "o"},
+            company=None,
+            steps=(StepBlueprint(2, "follow_up_1"),),
+            allowed_variables=("first_name",),
+        )
+        plain = draft_prompt.build_data(SequenceDraftRequest(**base))
+        assert "user_instructions" not in plain and "current_email" not in plain
+
+        data = draft_prompt.build_data(
+            SequenceDraftRequest(
+                **base,
+                user_instructions="shorter please",
+                current_email={"position": 2, "subject": "S", "text": "T"},
+            )
+        )
+        assert data["user_instructions"] == "shorter please"
+        assert data["current_email"]["subject"] == "S"
+        assert "user_instructions" in draft_prompt.SYSTEM_PROMPT
 
     def test_every_validator_code_has_guidance(self) -> None:
         """Codes are read from the validator's own source, so adding a code without

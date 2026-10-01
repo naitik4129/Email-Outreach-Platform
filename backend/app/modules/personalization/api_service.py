@@ -280,6 +280,7 @@ class PersonalizationApiService:
             scope=payload.scope,
             step_id=payload.step_id,
             follow_up_count=payload.follow_up_count,
+            instructions=payload.instructions,
         )
         return ReferenceTemplatesOut(
             sequence=sequence,

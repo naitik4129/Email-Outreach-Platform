@@ -84,7 +84,11 @@ def _bad_number(model: FakeModel):
         good = model.default_output(request)
         return GenerationOutput(
             subject=good.subject,
-            paragraphs=(*good.paragraphs, "We grew revenue 847% last year."),
+            paragraphs=(
+                *good.paragraphs[:-1],
+                "We grew revenue 847% last year.",
+                good.paragraphs[-1],
+            ),
             facts_used=good.facts_used,
             angle=good.angle,
         )
@@ -191,7 +195,11 @@ class TestValidationRetries:
             good = model.default_output(request)
             return GenerationOutput(
                 subject=good.subject,
-                paragraphs=(*good.paragraphs, "Results are guaranteed."),
+                paragraphs=(
+                    *good.paragraphs[:-1],
+                    "Results are guaranteed.",
+                    good.paragraphs[-1],
+                ),
                 facts_used=good.facts_used,
                 angle=good.angle,
             )

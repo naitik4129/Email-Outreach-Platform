@@ -19,6 +19,7 @@ from app.modules.personalization.config_schema import (
     CompanyProfile,
     PersonalizationConfig,
 )
+from app.modules.personalization.email_style import shape_codes, step_brief
 from app.modules.personalization.ports import DraftedStep, SequenceDraftOutput
 from app.modules.personalization.text_utils import (
     containment,
@@ -45,8 +46,6 @@ from app.modules.templates.sanitizer import sanitize_email_html
 
 MAX_SUBJECT_CHARS = 100
 MAX_PREHEADER_CHARS = 100
-MIN_BODY_WORDS = 30
-MAX_BODY_WORDS = 180
 MAX_PARAGRAPHS = 10
 MIN_WAIT_DAYS = 1
 MAX_WAIT_DAYS = 14
@@ -157,6 +156,9 @@ def validate_draft(output: SequenceDraftOutput, ctx: DraftContext) -> DraftValid
         return DraftValidation(codes=tuple(codes))
 
     objective = ctx.objective
+    # The sequence length decides each email's job (and so its length limits);
+    # neighbours that are not being rewritten still count.
+    total_emails = len(ctx.expected_positions) + len(ctx.context_emails)
     grounding = "\n".join([objective_text(objective), _company_text(ctx.company)])
     allowed_numbers = extract_numbers(grounding)
     allowed_urls = frozenset(extract_urls(grounding))
@@ -200,10 +202,13 @@ def validate_draft(output: SequenceDraftOutput, ctx: DraftContext) -> DraftValid
 
         readable = _render_placeholders(body_text)
         words = len(readable.split())
-        if words < MIN_BODY_WORDS:
+        brief = step_brief(step.position, total_emails)
+        if words < brief.min_words:
             flag("body_too_short")
-        if words > MAX_BODY_WORDS:
+        if words > brief.max_words:
             flag("body_too_long")
+        for code in shape_codes([_render_placeholders(p) for p in paragraphs]):
+            flag(code)
 
         readable_all = _render_placeholders(combined)
         if extract_numbers(readable_all) - allowed_numbers:

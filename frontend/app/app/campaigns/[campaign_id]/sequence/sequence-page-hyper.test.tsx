@@ -851,6 +851,38 @@ describe("Sequence tab: hyper-personalized campaigns", () => {
       );
     });
 
+    it("sends the optional change request with a single-email regeneration", async () => {
+      api.generateReferenceTemplates.mockResolvedValue(draftResult(threeEmails()));
+      const { user } = setup({ ai: true });
+      await user.click(await screen.findByRole("button", { name: "Regenerate step 2" }));
+      await user.type(
+        await screen.findByLabelText(/What should change/i),
+        "  make it shorter and friendlier  ",
+      );
+      await user.click(screen.getByRole("button", { name: "Regenerate" }));
+      await waitFor(() =>
+        expect(api.generateReferenceTemplates).toHaveBeenCalledWith("ws-1", "camp-1", {
+          scope: "STEP",
+          step_id: "e2",
+          instructions: "make it shorter and friendlier",
+        }),
+      );
+      // The note does not carry over to the next email.
+      await screen.findByText(/Your emails are ready/i);
+      await user.click(await screen.findByRole("button", { name: "Regenerate step 1" }));
+      expect(await screen.findByLabelText(/What should change/i)).toHaveValue("");
+    });
+
+    it("discards the change request when the dialog is cancelled", async () => {
+      const { user } = setup({ ai: true });
+      await user.click(await screen.findByRole("button", { name: "Regenerate step 2" }));
+      await user.type(await screen.findByLabelText(/What should change/i), "shorter");
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      await user.click(await screen.findByRole("button", { name: "Regenerate step 2" }));
+      expect(await screen.findByLabelText(/What should change/i)).toHaveValue("");
+      expect(api.generateReferenceTemplates).not.toHaveBeenCalled();
+    });
+
     it("shows a spinner while writing and disables the other Regenerate buttons", async () => {
       let finish: (value: unknown) => void = () => undefined;
       api.generateReferenceTemplates.mockReturnValue(new Promise((resolve) => (finish = resolve)));

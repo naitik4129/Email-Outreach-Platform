@@ -24,6 +24,8 @@ type Props = {
 };
 
 const FOLLOW_UP_OPTIONS = [1, 2, 3, 4, 5];
+// Matches the API limit on `instructions`.
+const MAX_CHANGE_REQUEST = 1000;
 
 /**
  * Writes the reference emails with AI: the whole sequence (asking how many
@@ -41,7 +43,15 @@ export function AiDraftBar({
 }: Props) {
   const [followUps, setFollowUps] = React.useState(2);
   const [confirmAll, setConfirmAll] = React.useState(false);
+  // Optional note for the single email being regenerated; cleared on every close
+  // so one email's request never carries over to the next.
+  const [changes, setChanges] = React.useState("");
   if (!aiAvailable || readOnly) return null;
+
+  const closeStepDialog = () => {
+    setChanges("");
+    onConfirmStepDone();
+  };
 
   const { isPending, failure, succeeded, warnings } = generation;
   const empty = emailCount === 0;
@@ -166,15 +176,40 @@ export function AiDraftBar({
       <ConfirmDialog
         open={confirmStep !== null}
         title={`Regenerate email ${confirmStep?.number ?? ""}?`}
-        description="This replaces the subject and text of this email with a new one written by AI. Your current text will be lost."
+        description={
+          <div className="space-y-3">
+            <p>
+              This replaces the subject and text of this email with a new one written by AI. Your
+              current text will be lost.
+            </p>
+            <label className="block text-xs font-medium text-slate-700">
+              What should change? (optional)
+              <textarea
+                value={changes}
+                maxLength={MAX_CHANGE_REQUEST}
+                rows={3}
+                onChange={(event) => setChanges(event.target.value)}
+                placeholder="For example: make it shorter, friendlier, and lead with the pricing offer."
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-normal text-slate-900 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+              />
+            </label>
+          </div>
+        }
         confirmLabel="Regenerate"
         tone="danger"
         onConfirm={() => {
           const target = confirmStep;
-          onConfirmStepDone();
-          if (target) generation.generate({ scope: "STEP", step_id: target.id });
+          const instructions = changes.trim();
+          closeStepDialog();
+          if (target) {
+            generation.generate({
+              scope: "STEP",
+              step_id: target.id,
+              ...(instructions ? { instructions } : {}),
+            });
+          }
         }}
-        onCancel={onConfirmStepDone}
+        onCancel={closeStepDialog}
       />
     </section>
   );

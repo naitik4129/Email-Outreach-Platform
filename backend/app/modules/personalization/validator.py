@@ -14,6 +14,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.modules.personalization.config_schema import PersonalizationConfig
+from app.modules.personalization.email_style import (
+    SHAPE_GUIDANCE,
+    max_words_for_reference,
+    shape_codes,
+)
 from app.modules.personalization.ports import Fact, GenerationOutput, PreviousEmail
 from app.modules.personalization.text_utils import (
     containment,
@@ -98,6 +103,7 @@ CODE_GUIDANCE: dict[str, str] = {
     "filler_followup": (
         "Avoid filler such as 'just following up'; add new value instead."
     ),
+    **SHAPE_GUIDANCE,
 }
 
 
@@ -199,6 +205,15 @@ def validate_generation(
         flag("body_too_short")
     if _PLACEHOLDER_MARK_RE.search(body_text):
         flag("body_placeholder")
+    # Craft rules shared with reference drafting (email_style): structure, a
+    # question as the ask, no pleasantry openers, and a length tied to the
+    # reference being personalized.
+    for code in shape_codes(paragraphs):
+        flag(code)
+    if paragraphs and len(body_text.split()) > max_words_for_reference(
+        len(ctx.reference_text.split())
+    ):
+        flag("body_too_long")
 
     combined = f"{subject}\n{body_text}"
     allowed_corpus = "\n".join(

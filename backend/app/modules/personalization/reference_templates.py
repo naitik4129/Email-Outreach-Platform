@@ -84,6 +84,9 @@ class _Plan:
     targets: dict[int, tuple[UUID, int]]
     context_emails: tuple[ContextEmail, ...]
     email_count: int
+    # STEP only: the user's requested changes and the email they apply to.
+    instructions: str | None = None
+    current_email: ContextEmail | None = None
 
 
 @dataclass(frozen=True)
@@ -171,8 +174,11 @@ class ReferenceTemplateService:
         scope: str,
         step_id: UUID | None,
         follow_up_count: int | None,
+        instructions: str | None = None,
     ) -> tuple[SequenceOut, DraftOutcome, list[str]]:
-        plan = self._plan(context, campaign_id, scope, step_id, follow_up_count)
+        plan = self._plan(
+            context, campaign_id, scope, step_id, follow_up_count, instructions
+        )
         workspace_ref = str(context.workspace_id)
         # Phase A ends: free the pooled connection before any model call.
         self.session.commit()
@@ -204,6 +210,7 @@ class ReferenceTemplateService:
         scope: str,
         step_id: UUID | None,
         follow_up_count: int | None,
+        instructions: str | None,
     ) -> _Plan:
         self._campaign_guard(
             context, campaign_id, require_draft=True, require_enabled=True
@@ -256,6 +263,15 @@ class ReferenceTemplateService:
                 if i != index
             )
             target = email_steps[index - 1]
+            current_email = (
+                ContextEmail(
+                    position=index,
+                    subject=str(target["email_subject"] or ""),
+                    body_text=html_to_text(str(target["email_body_html"] or "")),
+                )
+                if instructions
+                else None
+            )
             return _Plan(
                 scope="STEP",
                 config=config,
@@ -265,6 +281,8 @@ class ReferenceTemplateService:
                 targets={index: (UUID(str(target["id"])), int(target["version"]))},
                 context_emails=context_emails,
                 email_count=len(email_steps),
+                instructions=instructions or None,
+                current_email=current_email,
             )
 
         if not email_steps:
@@ -336,6 +354,15 @@ class ReferenceTemplateService:
             }
             for e in plan.context_emails
         )
+        current = (
+            {
+                "position": plan.current_email.position,
+                "subject": plan.current_email.subject,
+                "text": plan.current_email.body_text[:_CONTEXT_TEXT_CHARS],
+            }
+            if plan.current_email
+            else None
+        )
         deadline = self._clock() + self.settings.personalization_draft_deadline_seconds
         max_attempts = self.settings.personalization_max_attempts
         retry_codes: tuple[str, ...] = ()
@@ -359,7 +386,10 @@ class ReferenceTemplateService:
                     steps=plan.blueprint,
                     allowed_variables=ALLOWED_VARIABLES,
                     context_emails=neighbours,
+                    user_instructions=plan.instructions,
+                    current_email=current,
                     retry_codes=retry_codes,
+                    email_count=plan.email_count,
                 )
                 try:
                     result = model.draft_sequence(request)
