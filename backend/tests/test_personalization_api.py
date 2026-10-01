@@ -302,25 +302,33 @@ class TestPutConfig:
 
 
 class TestCreatePreviews:
-    def _members(self, n=3):
-        return [{"id": uuid.uuid4(), "lead_id": uuid.uuid4()} for _ in range(n)]
+    def _member(self):
+        return {"id": uuid.uuid4(), "lead_id": uuid.uuid4()}
 
-    def test_creates_one_row_per_member_and_email_step_and_dispatches_once(
+    def test_creates_one_row_per_email_step_for_the_chosen_lead_and_dispatches_once(
         self,
     ) -> None:
         service = _service(campaign=_campaign())
-        service.repo.list_batch.side_effect = [[], _full_batch(3)]
-        service.campaigns.list_accepted_audience_members.return_value = self._members()
+        service.repo.list_batch.side_effect = [[], _full_batch(1)]
+        member = self._member()
+        service.campaigns.get_accepted_audience_member.return_value = member
         producer = MagicMock()
         with patch(
             "app.services.task_dispatch.get_task_producer", return_value=producer
         ):
             batch = uuid.uuid4()
             out = service.create_previews(
-                CTX, CAMPAIGN_ID, PreviewCreateIn(batch_id=batch)
+                CTX,
+                CAMPAIGN_ID,
+                PreviewCreateIn(batch_id=batch, audience_member_ids=[member["id"]]),
             )
+        service.campaigns.get_accepted_audience_member.assert_called_once_with(
+            workspace_id=WS, campaign_id=CAMPAIGN_ID, member_id=member["id"]
+        )
+        service.campaigns.list_accepted_audience_members.assert_not_called()
         rows = service.repo.insert_previews.call_args.kwargs["rows"]
-        assert len(rows) == 3 * 2  # 3 leads x 2 email steps (the WAIT is skipped)
+        assert len(rows) == 2  # 1 lead x 2 email steps (the WAIT is skipped)
+        assert {r["audience_member_id"] for r in rows} == {str(member["id"])}
         assert (
             service.repo.insert_previews.call_args.kwargs["config_digest"] == _digest()
         )
@@ -333,14 +341,18 @@ class TestCreatePreviews:
             "batch_id": str(batch),
         }
         assert kwargs["queue"] == "personalization"
-        assert len(out.items) == 6
+        assert len(out.items) == 2
 
     def test_a_retried_request_returns_the_same_batch_without_spending(self) -> None:
         service = _service(campaign=_campaign())
         service.repo.list_batch.return_value = _full_batch(1)
         with patch("app.services.task_dispatch.get_task_producer") as producer:
             service.create_previews(
-                CTX, CAMPAIGN_ID, PreviewCreateIn(batch_id=uuid.uuid4())
+                CTX,
+                CAMPAIGN_ID,
+                PreviewCreateIn(
+                    batch_id=uuid.uuid4(), audience_member_ids=[uuid.uuid4()]
+                ),
             )
         service.repo.insert_previews.assert_not_called()
         producer.assert_not_called()
@@ -359,35 +371,42 @@ class TestCreatePreviews:
             service.repo.list_batch.return_value = []
             with pytest.raises(AppError) as info:
                 service.create_previews(
-                    CTX, CAMPAIGN_ID, PreviewCreateIn(batch_id=uuid.uuid4())
+                    CTX,
+                    CAMPAIGN_ID,
+                    PreviewCreateIn(
+                        batch_id=uuid.uuid4(), audience_member_ids=[uuid.uuid4()]
+                    ),
                 )
             assert info.value.code == code
 
     def test_daily_preview_budget_is_enforced_before_any_work(self) -> None:
         service = _service(campaign=_campaign(), personalization_daily_preview_cap=5)
         service.repo.list_batch.return_value = []
-        service.campaigns.list_accepted_audience_members.return_value = self._members()
-        service.repo.usage_today.return_value = {"PREVIEW": 0}
+        service.campaigns.get_accepted_audience_member.return_value = self._member()
+        service.repo.usage_today.return_value = {"PREVIEW": 4}
         with pytest.raises(AppError) as info:
             service.create_previews(
-                CTX, CAMPAIGN_ID, PreviewCreateIn(batch_id=uuid.uuid4())
+                CTX,
+                CAMPAIGN_ID,
+                PreviewCreateIn(
+                    batch_id=uuid.uuid4(), audience_member_ids=[uuid.uuid4()]
+                ),
             )
-        assert info.value.status_code == 429  # 6 needed > cap 5
+        assert info.value.status_code == 429  # 2 needed + 4 used > cap 5
         service.repo.insert_previews.assert_not_called()
 
-    def test_sample_size_is_capped_by_the_schema(self) -> None:
+    def test_exactly_one_lead_must_be_chosen(self) -> None:
+        # No lead -> no server-side default fan-out; two leads -> refused.
+        for ids in ([], [uuid.uuid4(), uuid.uuid4()]):
+            with pytest.raises(ValidationError):
+                PreviewCreateIn(batch_id=uuid.uuid4(), audience_member_ids=ids)
         with pytest.raises(ValidationError):
-            PreviewCreateIn(
-                batch_id=uuid.uuid4(), audience_member_ids=[uuid.uuid4()] * 6
-            )
+            PreviewCreateIn(batch_id=uuid.uuid4())
 
 
 class TestApprove:
-    def _approve(self, service, rows, *, digest=None, accepted=10):
+    def _approve(self, service, rows, *, digest=None):
         service.repo.list_batch.return_value = rows
-        service.campaigns.get_audience_member_counts.return_value = {
-            "accepted": accepted
-        }
         return service.approve(
             CTX,
             CAMPAIGN_ID,
@@ -396,7 +415,7 @@ class TestApprove:
 
     def test_approves_a_complete_current_batch_and_audits(self) -> None:
         service = _service(campaign=_campaign())
-        self._approve(service, _full_batch(3))
+        self._approve(service, _full_batch(1))
         kwargs = service.repo.insert_approval.call_args.kwargs
         assert kwargs["config_digest"] == _digest() and kwargs["approved_by"] == USER
         assert kwargs["workspace_id"] == WS
@@ -417,7 +436,11 @@ class TestApprove:
                 "previews_failed",
                 409,
             ),
-            (lambda rows: rows[:2], "previews_insufficient", 409),  # one lead only
+            (
+                lambda rows: [r for r in rows if r["step_position"] == 1],
+                "previews_insufficient",  # the lead's later email is missing
+                409,
+            ),
             (
                 lambda rows: [{**r, "config_digest": "0" * 64} for r in rows],
                 "approval_stale",
@@ -427,7 +450,7 @@ class TestApprove:
     )
     def test_refuses_unsafe_approvals(self, mutate, code, status) -> None:
         service = _service(campaign=_campaign())
-        rows = mutate(_full_batch(3))
+        rows = mutate(_full_batch(1))
         with pytest.raises(AppError) as info:
             self._approve(service, rows)
         assert info.value.code == code and info.value.status_code == status
@@ -436,28 +459,14 @@ class TestApprove:
     def test_a_digest_that_is_not_the_current_one_is_stale(self) -> None:
         service = _service(campaign=_campaign())
         with pytest.raises(AppError) as info:
-            self._approve(service, _full_batch(3), digest="1" * 64)
+            self._approve(service, _full_batch(1), digest="1" * 64)
         assert info.value.code == "approval_stale"
         service.repo.insert_approval.assert_not_called()
-
-    def test_a_small_audience_needs_only_as_many_leads_as_it_has(self) -> None:
-        service = _service(campaign=_campaign())
-        self._approve(service, _full_batch(1), accepted=1)
-        service.repo.insert_approval.assert_called_once()
-
-    def test_every_email_step_of_a_lead_must_be_covered(self) -> None:
-        service = _service(campaign=_campaign())
-        rows = _full_batch(3)
-        # Drop each lead's second-step sample.
-        rows = [r for r in rows if r["step_position"] == 1]
-        with pytest.raises(AppError) as info:
-            self._approve(service, rows)
-        assert info.value.code == "previews_insufficient"
 
     def test_only_a_draft_campaign_can_be_approved(self) -> None:
         with pytest.raises(AppError) as info:
             self._approve(
-                _service(campaign=_campaign(status="RUNNING")), _full_batch(3)
+                _service(campaign=_campaign(status="RUNNING")), _full_batch(1)
             )
         assert info.value.code == "state_conflict"
 

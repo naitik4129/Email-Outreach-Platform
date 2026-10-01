@@ -54,8 +54,6 @@ from app.modules.personalization.schemas import (
 )
 from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 
-_DEFAULT_SAMPLE_SIZE = 3
-_MIN_APPROVAL_LEADS = 3
 
 
 def _draft_email_steps(steps: list[RowMapping]) -> list[RowMapping]:
@@ -481,34 +479,20 @@ class PersonalizationApiService:
                 "Select and commit an audience before generating samples",
                 status_code=422,
             )
-        if payload.audience_member_ids:
-            members = []
-            for member_id in dict.fromkeys(payload.audience_member_ids):
-                member = self.campaigns.get_accepted_audience_member(
-                    workspace_id=context.workspace_id,
-                    campaign_id=campaign_id,
-                    member_id=member_id,
-                )
-                if member is None:
-                    # Another tenant's or campaign's id resolves to nothing.
-                    raise AppError(
-                        "not_found", "Audience member not found", status_code=404
-                    )
-                members.append(member)
-            return members
-        members = self.campaigns.list_accepted_audience_members(
-            workspace_id=context.workspace_id,
-            audience_id=UUID(str(audience_id)),
-            after_ordinal=None,
-            limit=_DEFAULT_SAMPLE_SIZE,
-        )
-        if not members:
-            raise AppError(
-                "audience_zero_eligible",
-                "The selected audience has no eligible recipients",
-                status_code=422,
+        members = []
+        for member_id in dict.fromkeys(payload.audience_member_ids):
+            member = self.campaigns.get_accepted_audience_member(
+                workspace_id=context.workspace_id,
+                campaign_id=campaign_id,
+                member_id=member_id,
             )
-        return list(members)
+            if member is None:
+                # Another tenant's or campaign's id resolves to nothing.
+                raise AppError(
+                    "not_found", "Audience member not found", status_code=404
+                )
+            members.append(member)
+        return members
 
     def get_batch(
         self, context: WorkspaceContext, campaign_id: UUID, batch_id: UUID
@@ -584,9 +568,7 @@ class PersonalizationApiService:
     def approve(
         self, context: WorkspaceContext, campaign_id: UUID, payload: ApproveIn
     ) -> PersonalizationStateOut:
-        campaign = self._campaign(
-            context, campaign_id, require_draft=True, require_enabled=True
-        )
+        self._campaign(context, campaign_id, require_draft=True, require_enabled=True)
         digest, _, steps = self.current_digest(context, campaign_id)
         if payload.config_digest != digest:
             raise AppError(
@@ -628,20 +610,10 @@ class PersonalizationApiService:
             key = str(row["audience_member_id"])
             per_member[key] = per_member.get(key, 0) + 1
         covered = sum(1 for n in per_member.values() if n >= email_step_count)
-        audience_id = campaign["draft_audience_id"]
-        accepted = (
-            self.campaigns.get_audience_member_counts(
-                workspace_id=context.workspace_id, audience_id=UUID(str(audience_id))
-            )["accepted"]
-            if audience_id is not None
-            else 0
-        )
-        required = min(_MIN_APPROVAL_LEADS, max(accepted, 1))
-        if covered < required:
+        if covered < 1:
             raise AppError(
                 "previews_insufficient",
-                f"Review samples for at least {required} leads, covering every "
-                "email in the sequence.",
+                "Review a sample that covers every email in the sequence.",
                 status_code=409,
             )
 

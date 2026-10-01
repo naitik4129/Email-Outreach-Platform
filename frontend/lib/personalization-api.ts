@@ -52,7 +52,7 @@ export async function savePersonalization(
 export async function createPersonalizationPreviews(
   workspaceId: string,
   campaignId: string,
-  payload: { batch_id: string; audience_member_ids?: string[] },
+  payload: { batch_id: string; audience_member_ids: [string] },
 ) {
   return (
     await apiRequest<PreviewBatch>(campaignPath(workspaceId, campaignId, "/previews"), {

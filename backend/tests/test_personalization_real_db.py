@@ -1278,7 +1278,7 @@ def test_objective_samples_and_approval_flow_under_row_level_security(
     session.close()
     assert state.config is not None and state.approval.status == "NONE"
 
-    # 2. a member requests samples for two leads (worker dispatch is captured)
+    # 2. a member requests samples for one chosen lead (worker dispatch is captured)
     batch = uuid.uuid4()
     service, session, ctx = api("MEMBER", w.member)
     producer = MagicMock()
@@ -1286,10 +1286,10 @@ def test_objective_samples_and_approval_flow_under_row_level_security(
         out = service.create_previews(
             ctx,
             w.campaign_id,
-            PreviewCreateIn(batch_id=batch, audience_member_ids=w.member_ids[:3]),
+            PreviewCreateIn(batch_id=batch, audience_member_ids=w.member_ids[:1]),
         )
     session.close()
-    assert len(out.items) == 3 * 2 and not out.complete
+    assert len(out.items) == 1 * 2 and not out.complete
     producer.send_task.assert_called_once()
     digest = out.current_digest
 
@@ -1307,7 +1307,7 @@ def test_objective_samples_and_approval_flow_under_row_level_security(
     summary = runner.run_batch(
         workspace_id=w.ws, campaign_id=w.campaign_id, batch_id=batch
     )
-    assert summary.ok == 6 and summary.failed == 0
+    assert summary.ok == 2 and summary.failed == 0
 
     # 5. the generated content is readable through the API, per tenant
     service, session, ctx = api("MEMBER", w.member)

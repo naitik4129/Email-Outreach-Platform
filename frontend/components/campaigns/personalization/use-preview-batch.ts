@@ -30,9 +30,11 @@ export function usePreviewBatch(
   });
 
   const generate = useMutation({
-    mutationFn: () =>
+    // One lead per batch: every sample is a model call per email step.
+    mutationFn: (audienceMemberId: string) =>
       createPersonalizationPreviews(workspaceId as string, campaignId, {
         batch_id: newBatchId(),
+        audience_member_ids: [audienceMemberId],
       }),
     onSuccess: (batch) => {
       queryClient.setQueryData(batchKey, batch);

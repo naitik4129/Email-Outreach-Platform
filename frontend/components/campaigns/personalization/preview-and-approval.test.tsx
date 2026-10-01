@@ -1,6 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+
+const campaignsApi = vi.hoisted(() => ({ listSequencePreviewRecipients: vi.fn() }));
+vi.mock("@/lib/campaigns-api", () => campaignsApi);
 
 import {
   ApprovalBar,
@@ -71,8 +75,12 @@ const stale: PersonalizationApproval = { status: "STALE", approved_at: null, app
 
 function panel(props: Partial<React.ComponentProps<typeof SamplePreviewPanel>> = {}) {
   const onGenerate = vi.fn();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
+    <QueryClientProvider client={client}>
     <SamplePreviewPanel
+      workspaceId="ws-1"
+      campaignId="camp-1"
       batch={null}
       loading={false}
       loadError={null}
@@ -82,27 +90,49 @@ function panel(props: Partial<React.ComponentProps<typeof SamplePreviewPanel>> =
       generateError={null}
       onGenerate={onGenerate}
       {...props}
-    />,
+    />
+    </QueryClientProvider>,
   );
   return { onGenerate };
 }
 
 describe("SamplePreviewPanel", () => {
   it("offers to generate the first samples", async () => {
+    campaignsApi.listSequencePreviewRecipients.mockResolvedValue({
+      source: "AUDIENCE",
+      items: [
+        { audience_member_id: "m1", lead_id: "l1", email: "sarah@acme.test", first_name: "Sarah", last_name: "Johnson", company: "Acme", variables: {} },
+        { audience_member_id: "m2", lead_id: "l2", email: "james@nova.test", first_name: "James", last_name: null, company: "Nova", variables: {} },
+      ],
+      total: 2,
+      next_cursor: null,
+    });
     const { onGenerate } = panel();
     expect(screen.getByText("No samples yet.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Generate samples" }));
+    // Asks which lead first; nothing is generated until one is chosen.
+    const confirm = await screen.findByRole("button", { name: "Generate sample" });
+    expect(confirm).toBeDisabled();
+    expect(onGenerate).not.toHaveBeenCalled();
+    await userEvent.type(screen.getByLabelText("Search leads"), "nova");
+    expect(screen.queryByRole("radio", { name: /Sarah/ })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("radio", { name: /James/ }));
+    await userEvent.click(confirm);
     expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(onGenerate).toHaveBeenCalledWith("m2");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Generate sample" })).not.toBeInTheDocument(),
+    );
   });
 
-  it("shows the generated email, the subject and what it was personalized with", () => {
+  it("shows the generated email and subject, without the facts or website research", () => {
     panel({ batch: batch() });
     expect(screen.getByText("Sarah Johnson")).toBeInTheDocument();
     expect(screen.getByText("VP Sales — Acme")).toBeInTheDocument();
     expect(screen.getByText("Quick idea for Acme")).toBeInTheDocument();
-    expect(screen.getByText("Job title: VP Sales")).toBeInTheDocument();
-    expect(screen.getByText("Website")).toBeInTheDocument();
-    expect(screen.getByText(/Website research \(https:\/\/acme\.test\/\)/)).toBeInTheDocument();
+    expect(screen.queryByText("Personalized using")).not.toBeInTheDocument();
+    expect(screen.queryByText("Job title: VP Sales")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Website research/)).not.toBeInTheDocument();
     expect(screen.getByText("All samples were generated.")).toBeInTheDocument();
   });
 

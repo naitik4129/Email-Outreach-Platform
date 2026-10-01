@@ -1,9 +1,11 @@
 "use client";
 
+import * as React from "react";
 import { AlertTriangle, Loader2, RefreshCw, Sparkles } from "lucide-react";
 
 import { EmailFrame } from "@/components/campaigns/personalization/email-frame";
 import { describeFailureCode } from "@/components/campaigns/personalization/failure-codes";
+import { SampleLeadPicker } from "@/components/campaigns/personalization/sample-lead-picker";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
@@ -20,7 +22,10 @@ type Props = {
   blockedReason: string | null;
   generating: boolean;
   generateError: unknown;
-  onGenerate: () => void;
+  workspaceId: string | null | undefined;
+  campaignId: string;
+  // Generates the sample for the one lead the user picked.
+  onGenerate: (audienceMemberId: string) => Promise<unknown> | void;
 };
 
 function errorMessage(error: unknown) {
@@ -82,31 +87,6 @@ function SampleCard({ item, emailNumber }: { item: PreviewItem; emailNumber: num
             <span className="text-slate-900">{item.subject}</span>
           </p>
           <EmailFrame html={item.body_html} title={`Email ${emailNumber} for ${item.recipient.first_name ?? "lead"}`} />
-          {item.facts.length > 0 ? (
-            <div>
-              <p className="text-xs font-medium text-slate-600">Personalized using</p>
-              <ul className="mt-1 flex flex-wrap gap-1.5">
-                {item.facts.map((fact) => (
-                  <li
-                    key={fact.id}
-                    className="rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-800"
-                  >
-                    <span className="mr-1 font-semibold">
-                      {fact.source === "WEBSITE" ? "Website" : "Lead data"}
-                    </span>
-                    {fact.text}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {item.research_summary?.excerpt ? (
-            <p className="text-xs text-slate-500">
-              Website research
-              {item.research_summary.source_url ? ` (${item.research_summary.source_url})` : ""}
-              : {item.research_summary.excerpt}
-            </p>
-          ) : null}
         </>
       ) : null}
     </div>
@@ -121,8 +101,11 @@ export function SamplePreviewPanel({
   blockedReason,
   generating,
   generateError,
+  workspaceId,
+  campaignId,
   onGenerate,
 }: Props) {
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   const groups = batch ? groupByRecipient(batch.items) : [];
   const failed = batch ? batch.items.filter((i) => i.state === "FAILED").length : 0;
   const blocked = !canGenerate || Boolean(blockedReason);
@@ -139,15 +122,15 @@ export function SamplePreviewPanel({
             Sample emails
           </h3>
           <p className="mt-1 text-sm text-slate-500">
-            See what your recipients will receive. We write a personalized version of every email
-            in the sequence for a few of your leads.
+            See what your recipients will receive. Choose a lead and we write a personalized
+            version of every email in the sequence for them.
           </p>
         </div>
         {canGenerate ? (
           <Button
             variant={batch ? "outline" : "primary"}
             disabled={blocked || generating || (batch ? !batch.complete : false)}
-            onClick={onGenerate}
+            onClick={() => setPickerOpen(true)}
             title={blockedReason ?? undefined}
           >
             {generating ? (
@@ -159,6 +142,23 @@ export function SamplePreviewPanel({
           </Button>
         ) : null}
       </div>
+
+      <SampleLeadPicker
+        open={pickerOpen}
+        workspaceId={workspaceId}
+        campaignId={campaignId}
+        submitting={generating}
+        onCancel={() => setPickerOpen(false)}
+        onConfirm={async (audienceMemberId) => {
+          try {
+            await onGenerate(audienceMemberId);
+          } catch {
+            // The failure is shown by `generateError` in this panel.
+          } finally {
+            setPickerOpen(false);
+          }
+        }}
+      />
 
       {blockedReason && canGenerate ? <Alert variant="info">{blockedReason}</Alert> : null}
       {generateError ? <Alert variant="error">{errorMessage(generateError)}</Alert> : null}

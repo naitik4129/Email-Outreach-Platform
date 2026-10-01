@@ -56,7 +56,9 @@ class PreviewCreateIn(BaseModel):
     # Client-generated: makes a retried request return the same batch instead of
     # spending more of the daily preview budget.
     batch_id: UUID
-    audience_member_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    # Exactly one lead, chosen by the user: every sample is a model call per
+    # email step, so the server never fans out to leads the user did not pick.
+    audience_member_ids: list[UUID] = Field(min_length=1, max_length=1)
 
 
 class PreviewRecipientOut(BaseModel):

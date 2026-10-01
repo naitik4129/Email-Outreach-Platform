@@ -378,6 +378,8 @@ export default function CampaignSequencePage() {
 
       {isHyper && personalizationState && campaignStatus === "DRAFT" ? (
         <PreviewAndApprovalSection
+          workspaceId={activeWorkspaceId}
+          campaignId={campaignId}
           state={personalizationState}
           personalization={personalization}
           role={activeWorkspace?.role_code}

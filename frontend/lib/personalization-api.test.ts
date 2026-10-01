@@ -64,11 +64,14 @@ describe("personalization api client", () => {
 
   it("creates samples with a caller-supplied batch id so retries are idempotent", async () => {
     apiRequest.mockResolvedValue({ data: {} });
-    await createPersonalizationPreviews("ws-1", "c-1", { batch_id: "b-9" });
+    await createPersonalizationPreviews("ws-1", "c-1", {
+      batch_id: "b-9",
+      audience_member_ids: ["m-1"],
+    });
     const [path, init] = apiRequest.mock.calls[0];
     expect(path).toBe(`${base}/previews`);
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ batch_id: "b-9" });
+    expect(JSON.parse(init.body)).toEqual({ batch_id: "b-9", audience_member_ids: ["m-1"] });
   });
 
   it("approves a batch bound to its digest", async () => {

@@ -15,6 +15,7 @@ const campaignsApi = vi.hoisted(() => ({
   duplicateSequenceStep: vi.fn(),
   reorderSequenceSteps: vi.fn(),
   updateSequenceStep: vi.fn(),
+  listSequencePreviewRecipients: vi.fn(),
 }));
 vi.mock("@/lib/campaigns-api", () => campaignsApi);
 
@@ -355,11 +356,29 @@ describe("Sequence tab: hyper-personalized campaigns", () => {
         api.getLatestPersonalizationPreviews.mockResolvedValue(goodBatch());
         return goodBatch();
       });
+      campaignsApi.listSequencePreviewRecipients.mockResolvedValue({
+        source: "AUDIENCE",
+        items: [
+          { audience_member_id: "m1", lead_id: "l1", email: "sarah@acme.test", first_name: "Sarah", last_name: null, company: "Acme", variables: {} },
+          { audience_member_id: "m2", lead_id: "l2", email: "james@nova.test", first_name: "James", last_name: null, company: "Nova", variables: {} },
+        ],
+        total: 2,
+        next_cursor: null,
+      });
       const { user } = setup();
       expect(await screen.findByText("Not approved yet")).toBeInTheDocument();
       await user.click(await screen.findByRole("button", { name: "Generate samples" }));
+      // Nothing is generated until the user picks exactly one lead.
+      const confirm = await screen.findByRole("button", { name: "Generate sample" });
+      expect(confirm).toBeDisabled();
+      expect(api.createPersonalizationPreviews).not.toHaveBeenCalled();
+      await user.click(await screen.findByRole("radio", { name: /James/ }));
+      await user.click(confirm);
       await waitFor(() => expect(api.createPersonalizationPreviews).toHaveBeenCalled());
-      expect(api.createPersonalizationPreviews.mock.calls[0][2]).toEqual({ batch_id: "batch-new" });
+      expect(api.createPersonalizationPreviews.mock.calls[0][2]).toEqual({
+        batch_id: "batch-new",
+        audience_member_ids: ["m2"],
+      });
       expect(await screen.findByText("Quick idea for Acme")).toBeInTheDocument();
     });
 

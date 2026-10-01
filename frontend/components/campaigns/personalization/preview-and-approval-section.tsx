@@ -10,6 +10,8 @@ import type { PersonalizationState, RoleCode } from "@/types/domain";
 type Hook = ReturnType<typeof usePersonalizationState>;
 
 type Props = {
+  workspaceId: string | null | undefined;
+  campaignId: string;
   state: PersonalizationState;
   personalization: Pick<Hook, "preview" | "approveMutation" | "approveError">;
   role: RoleCode | undefined;
@@ -21,6 +23,8 @@ type Props = {
 
 /** Sample previews and the manager approval, shown inline under the emails. */
 export function PreviewAndApprovalSection({
+  workspaceId,
+  campaignId,
   state,
   personalization,
   role,
@@ -41,6 +45,8 @@ export function PreviewAndApprovalSection({
         </Alert>
       ) : null}
       <SamplePreviewPanel
+        workspaceId={workspaceId}
+        campaignId={campaignId}
         batch={preview.batch}
         loading={preview.query.isLoading}
         loadError={preview.query.error}
@@ -48,7 +54,7 @@ export function PreviewAndApprovalSection({
         blockedReason={blockedReason}
         generating={preview.generate.isPending}
         generateError={preview.generate.error}
-        onGenerate={() => preview.generate.mutate()}
+        onGenerate={(audienceMemberId) => preview.generate.mutateAsync(audienceMemberId)}
       />
       <ApprovalBar
         approval={state.approval}
