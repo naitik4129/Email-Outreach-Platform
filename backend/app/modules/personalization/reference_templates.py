@@ -339,21 +339,6 @@ class ReferenceTemplateService:
             if config.company
             else None
         )
-        context = DraftContext(
-            objective=config,
-            company=config.company,
-            expected_positions=plan.expected_positions,
-            allowed_variables=frozenset(ALLOWED_VARIABLES),
-            context_emails=plan.context_emails,
-        )
-        neighbours = tuple(
-            {
-                "position": e.position,
-                "subject": e.subject,
-                "text": e.body_text[:_CONTEXT_TEXT_CHARS],
-            }
-            for e in plan.context_emails
-        )
         current = (
             {
                 "position": plan.current_email.position,
@@ -366,9 +351,16 @@ class ReferenceTemplateService:
         deadline = self._clock() + self.settings.personalization_draft_deadline_seconds
         max_attempts = self.settings.personalization_max_attempts
         retry_codes: tuple[str, ...] = ()
+        retry_by_position: dict[int, tuple[str, ...]] = {}
         last_codes: tuple[str, ...] = ()
         transient_left = _TRANSIENT_RETRIES
         attempt = 0
+        # Emails that already passed every check are kept; a retry rewrites only
+        # the ones that failed, so one weak email can't sink the whole sequence
+        # three times in a row. Kept emails become context for the rewrite, so the
+        # same cross-email rules (distinct subjects, no repeated pitch) still apply.
+        accepted: dict[int, ValidatedStep] = {}
+        pending = plan.expected_positions
 
         model = self._model_factory()
         try:
@@ -379,16 +371,39 @@ class ReferenceTemplateService:
                 ):
                     raise map_model_error(ModelTimeout())
                 attempt += 1
+                context_emails = plan.context_emails + tuple(
+                    ContextEmail(
+                        position=position,
+                        subject=kept.subject,
+                        body_text="\n\n".join(kept.paragraphs),
+                    )
+                    for position, kept in sorted(accepted.items())
+                )
+                context = DraftContext(
+                    objective=config,
+                    company=config.company,
+                    expected_positions=pending,
+                    allowed_variables=frozenset(ALLOWED_VARIABLES),
+                    context_emails=context_emails,
+                )
                 request = SequenceDraftRequest(
                     workspace_ref=workspace_ref,
                     objective=config.objective_core(),
                     company=company,
-                    steps=plan.blueprint,
+                    steps=tuple(b for b in plan.blueprint if b.position in pending),
                     allowed_variables=ALLOWED_VARIABLES,
-                    context_emails=neighbours,
+                    context_emails=tuple(
+                        {
+                            "position": e.position,
+                            "subject": e.subject,
+                            "text": e.body_text[:_CONTEXT_TEXT_CHARS],
+                        }
+                        for e in context_emails
+                    ),
                     user_instructions=plan.instructions,
                     current_email=current,
                     retry_codes=retry_codes,
+                    retry_by_position=retry_by_position,
                     email_count=plan.email_count,
                 )
                 try:
@@ -397,6 +412,7 @@ class ReferenceTemplateService:
                     # A rejected attempt, like a validation failure.
                     last_codes = (exc.code,)
                     retry_codes = ()
+                    retry_by_position = {}
                     if attempt >= max_attempts:
                         if isinstance(exc, ModelRefusal):
                             raise map_model_error(exc) from exc
@@ -417,13 +433,27 @@ class ReferenceTemplateService:
                 validation = validate_draft(result.output, context)
                 if validation.ok:
                     return DraftOutcome(
-                        steps=validation.steps,
+                        steps=tuple(
+                            sorted(
+                                (*accepted.values(), *validation.steps),
+                                key=lambda step: step.position,
+                            )
+                        ),
                         theme=result.output.theme[:200],
                         model=result.model,
                         attempts=attempt,
                     )
                 last_codes = validation.codes
                 retry_codes = validation.codes
+                for step in validation.steps:
+                    if not validation.by_position.get(step.position):
+                        accepted[step.position] = step
+                pending = tuple(p for p in plan.expected_positions if p not in accepted)
+                retry_by_position = {
+                    position: codes
+                    for position, codes in validation.by_position.items()
+                    if codes
+                }
         finally:
             close = getattr(model, "close", None)
             if callable(close):

@@ -444,6 +444,17 @@ def _output(*steps: DraftedStep) -> SequenceDraftOutput:
     return SequenceDraftOutput(theme="t", steps=tuple(steps))
 
 
+def _only_requested(*steps: DraftedStep):
+    """A scripted model that, like a real one, writes only the emails it is asked
+    for (a retry asks for just the ones that failed)."""
+
+    def respond(request) -> SequenceDraftOutput:
+        wanted = {blueprint.position for blueprint in request.steps}
+        return _output(*(step for step in steps if step.position in wanted))
+
+    return respond
+
+
 class TestValidationAndRetry:
     def test_a_rejected_attempt_is_retried_with_codes_only(self) -> None:
         model = FakeModel(
@@ -455,6 +466,38 @@ class TestValidationAndRetry:
         first, second = model.draft_requests
         assert first.retry_codes == () and "body_too_short" in second.retry_codes
         assert "Short." not in repr(second)  # the rejected output is never sent back
+
+    def test_a_retry_rewrites_only_the_emails_that_failed(self) -> None:
+        defaults = FakeModel().default_draft(
+            SimpleNamespace(
+                objective=PersonalizationConfig.model_validate(CONFIG).objective_core(),
+                steps=tuple(SimpleNamespace(position=i, role="r") for i in (1, 2)),
+            )  # type: ignore[arg-type]
+        )
+        good_first, good_second = defaults.steps
+        # attempt 1: email 1 is fine, email 2 is far too short;
+        # attempt 2 (asked for email 2 only): a proper email 2
+        model = FakeModel(
+            draft_script=[
+                _output(good_first, _bad_step(2)),
+                _output(good_second),
+            ]
+        )
+        env = _service(model=model)
+        _, outcome, _ = _generate(env, follow_up_count=1)
+
+        assert outcome.attempts == 2
+        first, second = model.draft_requests
+        assert [s.position for s in first.steps] == [1, 2]
+        assert [s.position for s in second.steps] == [2]
+        # the kept email is shown as context, and only the failed one is blamed
+        assert second.context_emails[0]["position"] == 1
+        assert set(second.retry_by_position) == {2}
+        assert "body_too_short" in second.retry_by_position[2]
+        # both emails are written, the kept one untouched
+        assert [step.position for step in outcome.steps] == [1, 2]
+        assert outcome.steps[0].subject == good_first.subject
+        assert len(env.sequences.added) == 2
 
     def test_exhausted_attempts_write_nothing_and_report_codes(self) -> None:
         bad = _output(_bad_step(1), _bad_step(2))
@@ -487,7 +530,7 @@ class TestValidationAndRetry:
                 steps=tuple(SimpleNamespace(position=i, role="r") for i in (1, 2)),
             )  # type: ignore[arg-type]
         )
-        tainted = _output(
+        tainted = _only_requested(
             DraftedStep(
                 1,
                 "r",
@@ -537,7 +580,9 @@ class TestValidationAndRetry:
                 3,
             )
             env = _service(
-                model=FakeModel(draft_script=[_output(step, first.steps[1])] * 3)
+                model=FakeModel(
+                    draft_script=[_only_requested(step, first.steps[1])] * 3
+                )
             )
             with pytest.raises(AppError) as info:
                 _generate(env, follow_up_count=1)
@@ -560,7 +605,9 @@ class TestValidationAndRetry:
             0,
         )
         env = _service(
-            model=FakeModel(draft_script=[_output(first.steps[0], filler)] * 3)
+            model=FakeModel(
+                draft_script=[_only_requested(first.steps[0], filler)] * 3
+            )
         )
         with pytest.raises(AppError) as info:
             _generate(env, follow_up_count=1)

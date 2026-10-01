@@ -210,6 +210,8 @@ type Options = {
   sequence?: unknown;
   approval?: PersonalizationState["approval"];
   enabled?: boolean;
+  // Replaces the capabilities answer, to model it arriving late or failing.
+  capabilities?: () => Promise<unknown>;
 };
 
 function setup(options: Options = {}) {
@@ -232,11 +234,15 @@ function setup(options: Options = {}) {
     version: 1,
   });
   campaignsApi.getSequence.mockResolvedValue(sequence);
-  api.getPersonalizationCapabilities.mockResolvedValue({
-    enabled,
-    model: "m",
-    ai_drafting_available: ai,
-  });
+  if (options.capabilities) {
+    api.getPersonalizationCapabilities.mockImplementation(options.capabilities);
+  } else {
+    api.getPersonalizationCapabilities.mockResolvedValue({
+      enabled,
+      model: "m",
+      ai_drafting_available: ai,
+    });
+  }
   api.getPersonalization.mockResolvedValue(
     stateWith({ config, config_version: config ? 3 : null, approval }),
   );
@@ -280,6 +286,40 @@ describe("Sequence tab: hyper-personalized campaigns", () => {
     it("explains when the feature is not enabled for this deployment", async () => {
       setup({ enabled: false });
       expect(await screen.findByText(/not enabled for this deployment/i)).toBeInTheDocument();
+    });
+
+    it("waits for the AI answer before choosing the AI or manual setup", async () => {
+      // personalization state arrives first; capabilities arrive later
+      let answer: (value: unknown) => void = () => undefined;
+      setup({
+        config: null,
+        capabilities: () => new Promise((resolve) => (answer = resolve)),
+      });
+      await screen.findByLabelText("Step 1: Email");
+      expect(screen.queryByRole("region", { name: "Campaign setup" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/AI drafting isn.t available/i)).not.toBeInTheDocument();
+
+      answer({ enabled: true, model: "m", ai_drafting_available: true });
+      // Opens on the company step, not stuck on the objective.
+      expect(await screen.findByLabelText("Website")).toBeEnabled();
+    });
+
+    it("does not claim AI is unavailable when the check itself failed, and recovers on retry", async () => {
+      let calls = 0;
+      const { user } = setup({
+        config: null,
+        capabilities: async () => {
+          calls += 1;
+          if (calls === 1) throw new ApiError("The service is busy.", 503, "service_unavailable", null);
+          return { enabled: true, model: "m", ai_drafting_available: true };
+        },
+      });
+      expect(await screen.findByText(/couldn.t check whether AI writing is available/i)).toBeInTheDocument();
+      expect(screen.queryByText(/AI drafting isn.t available/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Campaign setup" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByLabelText("Website")).toBeEnabled();
     });
 
     it("shows a saved setup collapsed, with an Edit action", async () => {

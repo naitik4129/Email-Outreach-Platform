@@ -203,6 +203,9 @@ class SequenceDraftRequest:
     user_instructions: str | None = None
     current_email: Mapping[str, object] | None = None
     retry_codes: tuple[str, ...] = ()
+    # Retry only: which email each failed check belongs to (position -> codes), so
+    # the model fixes the right email instead of guessing.
+    retry_by_position: Mapping[int, tuple[str, ...]] = field(default_factory=dict)
     # Emails in the whole sequence (0 = steps + context_emails); the length
     # decides which email is the closing one.
     email_count: int = 0

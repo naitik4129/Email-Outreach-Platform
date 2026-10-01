@@ -29,6 +29,7 @@ from app.modules.personalization.ports import (
 )
 from app.modules.personalization.prompt_builder import build_chat_messages, build_data
 from app.modules.personalization.reference_validator import (
+    ContextEmail,
     DraftContext,
     validate_draft,
 )
@@ -68,6 +69,19 @@ class TestStepBrief:
     def test_the_first_email_is_under_about_a_hundred_words(self) -> None:
         assert step_brief(1, 4).max_words <= 100
         assert step_brief(2, 4).max_words < step_brief(1, 4).max_words
+
+    def test_every_brief_aims_inside_its_limits_and_names_its_layout(self) -> None:
+        for position in range(1, 6):
+            brief = step_brief(position, 5)
+            low, high = brief.aim_words
+            assert brief.min_words < low < high < brief.max_words
+            assert brief.shape  # a layout the shape rules accept
+
+    def test_every_follow_up_is_told_to_keep_the_call_to_action(self) -> None:
+        # The validator requires the CTA in every email, so no brief may tell the
+        # model to ask something unrelated to it.
+        for position in range(2, 6):
+            assert "call to action" in step_brief(position, 5).instruction
 
     def test_a_per_lead_email_may_not_grow_far_beyond_its_reference(self) -> None:
         assert max_words_for_reference(80) == 108
@@ -213,6 +227,36 @@ class TestDraftingPlaybook:
         (email,) = draft_prompt.build_data(request)["emails_to_write"]
         assert email["job"] == "close"
 
+    def test_the_call_to_action_words_the_validator_checks_are_sent(self) -> None:
+        data = draft_prompt.build_data(self._request())
+        words = data["call_to_action_key_words"]
+        assert "conversation" in words and "open" in words
+        assert data["call_to_action_use_at_least"] == -(-len(words) // 2)
+        assert "call_to_action_links" not in data
+
+    def test_a_call_to_action_link_is_sent_instead_of_words(self) -> None:
+        objective = {**self._request().objective, "cta": "Book here https://acme.example/demo"}
+        data = draft_prompt.build_data(self._request(objective=objective))
+        assert data["call_to_action_links"] == ["https://acme.example/demo"]
+        assert "call_to_action_key_words" not in data
+
+    def test_each_email_gets_a_target_length_and_a_layout(self) -> None:
+        emails = draft_prompt.build_data(self._request())["emails_to_write"]
+        for email in emails:
+            low, high = email["aim_for_words"]
+            assert email["word_range"][0] < low < high < email["word_range"][1]
+            assert email["shape"]
+
+    def test_a_retry_names_the_email_each_problem_belongs_to(self) -> None:
+        request = self._request(
+            retry_codes=("body_too_short", "missing_cta"),
+            retry_by_position={2: ("body_too_short",), 3: ("missing_cta",)},
+        )
+        problems = draft_prompt.build_data(request)["fix_these_problems"]
+        assert [p["position"] for p in problems] == [2, 3]
+        assert "word_range" in problems[0]["problems"][0]
+        assert "call to action" in problems[1]["problems"][0].lower()
+
     def test_the_fake_draft_is_a_valid_playbook_sequence(self) -> None:
         request = self._request(email_count=4)
         output = FakeModel().default_draft(request)
@@ -285,3 +329,57 @@ class TestReferenceValidator:
         assert (
             "body_too_long" not in self._validate(long_close, position=1, total=3).codes
         )
+
+    def test_problems_are_reported_per_email(self) -> None:
+        request = SequenceDraftRequest(
+            workspace_ref="ws",
+            objective=PersonalizationConfig.model_validate(CONFIG).objective_core(),
+            company=None,
+            steps=(StepBlueprint(1, "r1"), StepBlueprint(2, "r2")),
+            allowed_variables=("first_name", "company"),
+            email_count=2,
+        )
+        good_first, good_second = FakeModel().default_draft(request).steps
+        short_second = replace(good_second, paragraphs=("Hi {{first_name|there}},",))
+        verdict = validate_draft(
+            SequenceDraftOutput("t", (good_first, short_second)),
+            DraftContext(
+                objective=PersonalizationConfig.model_validate(CONFIG),
+                company=None,
+                expected_positions=(1, 2),
+                allowed_variables=frozenset({"first_name", "company"}),
+            ),
+        )
+        assert "body_too_short" in verdict.by_position[2]
+        assert verdict.by_position[1] == ()  # blamed on the weak email only
+
+    def test_a_kept_neighbour_with_placeholders_still_counts_as_a_repeated_subject(
+        self,
+    ) -> None:
+        cfg = PersonalizationConfig.model_validate(CONFIG)
+        step = DraftedStep(
+            2,
+            "r",
+            "Quick idea for {{company|your team}}",
+            (
+                "Hi {{first_name|there}},",
+                "A different angle on slow manual prospecting for revenue teams.",
+                "Would you be open to a quick conversation?",
+            ),
+            "",
+            0,
+        )
+        neighbour = ContextEmail(
+            1, "Quick idea for {{company|your team}}", "Hi {{first_name|there}},"
+        )
+        verdict = validate_draft(
+            SequenceDraftOutput("t", (step,)),
+            DraftContext(
+                objective=cfg,
+                company=None,
+                expected_positions=(2,),
+                allowed_variables=frozenset({"first_name", "company"}),
+                context_emails=(neighbour,),
+            ),
+        )
+        assert "subject_repeated" in verdict.codes

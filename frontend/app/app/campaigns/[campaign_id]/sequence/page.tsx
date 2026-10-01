@@ -14,6 +14,7 @@ import { SequenceTimeline } from "@/components/campaigns/sequence/sequence-timel
 import { CampaignSetupPanel } from "@/components/campaigns/sequence/setup/campaign-setup-panel";
 import { useReferenceGeneration } from "@/components/campaigns/sequence/use-reference-generation";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api-client";
 import {
   addSequenceStep,
@@ -304,7 +305,29 @@ export default function CampaignSequencePage() {
       {isHyper && personalization.stateQuery.isError ? (
         <Alert variant="error">{errorMessage(personalization.stateQuery.error)}</Alert>
       ) : null}
-      {isHyper && personalizationState ? (
+      {/* The setup panel picks its starting step (AI wizard or manual objective) once,
+          when it mounts. Mounting it before we know whether AI is available would
+          lock it into manual mode, so it waits for the capabilities answer. */}
+      {isHyper && personalizationState && !capabilities ? (
+        personalization.capabilitiesQuery.isError ? (
+          <Alert variant="warning">
+            <p>We couldn&apos;t check whether AI writing is available. This is usually temporary.</p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              loading={personalization.capabilitiesQuery.isFetching}
+              onClick={() => void personalization.capabilitiesQuery.refetch()}
+            >
+              Try again
+            </Button>
+          </Alert>
+        ) : (
+          <LoadingBlock />
+        )
+      ) : null}
+      {isHyper && personalizationState && capabilities ? (
         <CampaignSetupPanel
           workspaceId={activeWorkspaceId ?? ""}
           campaignId={campaignId}

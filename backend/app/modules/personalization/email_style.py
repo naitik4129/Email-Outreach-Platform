@@ -68,6 +68,18 @@ class StepBrief:
     instruction: str
     min_words: int
     max_words: int
+    # The paragraph layout that satisfies shape_codes for this job.
+    shape: str = ""
+
+    @property
+    def aim_words(self) -> tuple[int, int]:
+        """A target window inside the limits. Models write to the edge they are
+        given, so aiming at the middle keeps them clear of both limits."""
+        span = self.max_words - self.min_words
+        return (
+            self.min_words + round(span * 0.25),
+            self.min_words + round(span * 0.75),
+        )
 
 
 _INTRO = StepBrief(
@@ -80,16 +92,19 @@ _INTRO = StepBrief(
     ),
     min_words=40,
     max_words=100,
+    shape="4 paragraphs: greeting, hook, value, ask",
 )
 _NEW_ANGLE = StepBrief(
     job="new_angle",
     instruction=(
         "A follow-up from a different angle than the first email: lead with a "
-        "different problem or outcome and ask a different question. Do not "
-        "introduce the company again and do not repeat the earlier pitch."
+        "different problem or outcome and ask a different question that still "
+        "leads to the call to action. Do not introduce the company again and do "
+        "not repeat the earlier pitch."
     ),
     min_words=25,
     max_words=80,
+    shape="3 or 4 paragraphs: greeting, the new point, then the question",
 )
 _PROOF = StepBrief(
     job="proof",
@@ -97,30 +112,33 @@ _PROOF = StepBrief(
         "A follow-up that makes it concrete: a short example of how the offer "
         "works or the result it aims for, using only what the objective or company "
         "details say (never invent customers, numbers or results). End with a "
-        "question."
+        "question that leads to the call to action."
     ),
     min_words=25,
     max_words=80,
+    shape="3 or 4 paragraphs: greeting, the concrete example, then the question",
 )
 _INSIGHT = StepBrief(
     job="insight",
     instruction=(
         "A follow-up that shares one useful, specific observation about the "
         "reader's problem, ties it to the offer in one line, then asks a light "
-        "question."
+        "question that leads to the call to action."
     ),
     min_words=25,
     max_words=80,
+    shape="3 or 4 paragraphs: greeting, the observation, then the question",
 )
 _CLOSE = StepBrief(
     job="close",
     instruction=(
         "A short, friendly last note: it may not be a priority right now, restate "
-        "the one benefit in a single line, and ask whether to close the loop or "
-        "who the right person is."
+        "the one benefit in a single line, and end with the call to action as a "
+        "light question (it may also ask who the right person is)."
     ),
     min_words=15,
     max_words=50,
+    shape="3 paragraphs: greeting, one line on the benefit, then the question",
 )
 
 

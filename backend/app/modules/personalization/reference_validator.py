@@ -13,6 +13,7 @@ rendered reference itself.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from app.modules.personalization.config_schema import (
@@ -92,6 +93,9 @@ class ValidatedStep:
 class DraftValidation:
     codes: tuple[str, ...]
     steps: tuple[ValidatedStep, ...] = field(default_factory=tuple)
+    # Each email's own problems (position -> codes); empty tuple = that email is
+    # fine on its own. Lets a retry rewrite only the emails that failed.
+    by_position: Mapping[int, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -145,10 +149,14 @@ def clamp_wait_days(value: int) -> int:
 
 def validate_draft(output: SequenceDraftOutput, ctx: DraftContext) -> DraftValidation:
     codes: list[str] = []
+    step_codes: list[str] = []
+    by_position: dict[int, tuple[str, ...]] = {}
 
     def flag(code: str) -> None:
         if code not in codes:
             codes.append(code)
+        if code not in step_codes:
+            step_codes.append(code)
 
     drafted = sorted(output.steps, key=lambda s: s.position)
     if tuple(s.position for s in drafted) != tuple(sorted(ctx.expected_positions)):
@@ -170,12 +178,20 @@ def validate_draft(output: SequenceDraftOutput, ctx: DraftContext) -> DraftValid
     validated: list[ValidatedStep] = []
     # (position, normalized subject, body word shingles) of every email seen so
     # far in sequence order, including untouched neighbours.
+    # Rendered the same way as the draft under test: stored emails still carry their
+    # {{variable|fallback}} placeholders, and comparing raw against rendered text
+    # would never match.
     others = [
-        (e.position, normalize_subject(e.subject), word_shingles(e.body_text))
+        (
+            e.position,
+            normalize_subject(_render_placeholders(e.subject)),
+            word_shingles(_render_placeholders(e.body_text)),
+        )
         for e in ctx.context_emails
     ]
 
     for index, step in enumerate(drafted):
+        step_codes.clear()
         subject = (step.subject or "").strip()
         preheader = (step.preheader or "").strip()
         paragraphs = tuple(p.strip() for p in step.paragraphs if p and p.strip())
@@ -261,6 +277,7 @@ def validate_draft(output: SequenceDraftOutput, ctx: DraftContext) -> DraftValid
         if not html_to_text(fragment):
             flag("body_too_short")
 
+        by_position[step.position] = tuple(step_codes)
         is_last = index == len(drafted) - 1
         validated.append(
             ValidatedStep(
@@ -273,7 +290,9 @@ def validate_draft(output: SequenceDraftOutput, ctx: DraftContext) -> DraftValid
             )
         )
 
-    return DraftValidation(codes=tuple(codes), steps=tuple(validated))
+    return DraftValidation(
+        codes=tuple(codes), steps=tuple(validated), by_position=by_position
+    )
 
 
 def default_wait_days(gap_index: int) -> int:
