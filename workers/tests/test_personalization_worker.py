@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import workers.personalization as personalization
+from sqlalchemy.exc import OperationalError
 from workers.scheduler import SchedulerRuntime
 
 from app.core.config import Settings, reset_settings_cache
@@ -139,6 +140,82 @@ class TestGeneratePreviewsTask:
         ):
             personalization.generate_previews.run(WS, CAMPAIGN, batch)
         assert str(runner.run_batch.call_args.kwargs["batch_id"]) == batch
+
+
+class TestGeneratePreviewsFailures:
+    """A person watches this batch, so it must always end."""
+
+    def _run(self, runner, *, retries=0):
+        settings = _settings(personalization_enabled=True, personalization_model="m")
+        task = personalization.generate_previews
+        task.push_request(retries=retries)
+        try:
+            with (
+                patch.object(Settings, "current", return_value=settings),
+                patch.object(personalization, "build_model", return_value=MagicMock()),
+                patch.object(
+                    personalization, "build_preview_runner", return_value=runner
+                ),
+            ):
+                task.run(WS, CAMPAIGN, str(uuid.uuid4()))
+        finally:
+            task.pop_request()
+
+    def _db_down(self) -> OperationalError:
+        return OperationalError("SELECT 1", {}, Exception("max clients reached"))
+
+    def test_a_busy_database_is_retried_without_giving_up_on_the_batch(self) -> None:
+        runner = MagicMock()
+        runner.run_batch.side_effect = self._db_down()
+        task = personalization.generate_previews
+        with (
+            patch.object(task, "retry", side_effect=RuntimeError("retrying")) as retry,
+            pytest.raises(RuntimeError, match="retrying"),
+        ):
+            self._run(runner)
+        assert retry.call_args.kwargs["countdown"] == 15
+        assert retry.call_args.kwargs["max_retries"] == 4
+        runner.fail_unfinished.assert_not_called()
+
+    def test_retries_back_off(self) -> None:
+        runner = MagicMock()
+        runner.run_batch.side_effect = self._db_down()
+        task = personalization.generate_previews
+        with (
+            patch.object(task, "retry", side_effect=RuntimeError("retrying")) as retry,
+            pytest.raises(RuntimeError),
+        ):
+            self._run(runner, retries=2)
+        assert retry.call_args.kwargs["countdown"] == 60
+
+    def test_after_the_last_retry_the_unfinished_samples_are_failed(self) -> None:
+        runner = MagicMock()
+        runner.run_batch.side_effect = self._db_down()
+        task = personalization.generate_previews
+        with patch.object(task, "retry") as retry, pytest.raises(OperationalError):
+            self._run(runner, retries=4)
+        retry.assert_not_called()
+        assert runner.fail_unfinished.call_args.kwargs["codes"] == [
+            "generation_unavailable"
+        ]
+
+    def test_any_other_failure_ends_the_batch_at_once_and_is_not_hidden(self) -> None:
+        runner = MagicMock()
+        runner.run_batch.side_effect = ValueError("bug")
+        task = personalization.generate_previews
+        with patch.object(task, "retry") as retry, pytest.raises(ValueError, match="bug"):
+            self._run(runner)
+        retry.assert_not_called()
+        runner.fail_unfinished.assert_called_once()
+
+    def test_failing_to_mark_the_batch_does_not_replace_the_original_error(
+        self,
+    ) -> None:
+        runner = MagicMock()
+        runner.run_batch.side_effect = ValueError("bug")
+        runner.fail_unfinished.side_effect = self._db_down()
+        with pytest.raises(ValueError, match="bug"):
+            self._run(runner)
 
 
 class TestSchedulerSweep:

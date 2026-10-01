@@ -48,6 +48,8 @@ const DESCRIPTIONS: Record<string, string> = {
   provider_404: "The configured AI model was not found.",
   objective_invalid: "The campaign objective is missing or invalid.",
   work_item_unavailable: "The message could not be prepared.",
+  generation_unavailable:
+    "The sample writer was unavailable, so this sample was not written. Generate new samples.",
   daily_cap_reached: "The daily generation limit was reached; it will retry.",
   // Reference drafting (the AI writing your emails from the objective)
   subject_invalid: "A subject line was missing, too long or not a single line.",

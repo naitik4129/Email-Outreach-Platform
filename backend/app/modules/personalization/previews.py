@@ -221,6 +221,24 @@ class PreviewRunner:
             )
         summary.ok += 1
 
+    def fail_unfinished(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        batch_id: UUID,
+        codes: list[str],
+    ) -> int:
+        """Give up on a batch: every sample not yet written is marked FAILED with
+        `codes` (the user can generate new ones)."""
+        with self._db.transaction() as repo:
+            return repo.fail_pending_previews(
+                workspace_id=workspace_id,
+                campaign_id=campaign_id,
+                batch_id=batch_id,
+                failure_codes=codes,
+            )
+
     def _finish_failed(
         self,
         workspace_id: UUID,

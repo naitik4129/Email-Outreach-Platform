@@ -12,6 +12,10 @@ import { ApiError } from "@/lib/api-client";
 import type { PreviewBatch, PreviewItem } from "@/types/domain";
 import { LoadingBlock } from "@/components/ui/skeleton";
 
+// A sample batch normally finishes within a couple of minutes; the server itself
+// gives up on a failing one after about four.
+const STALLED_AFTER_MS = 6 * 60 * 1000;
+
 type Props = {
   batch: PreviewBatch | null;
   loading: boolean;
@@ -109,6 +113,14 @@ export function SamplePreviewPanel({
   const groups = batch ? groupByRecipient(batch.items) : [];
   const failed = batch ? batch.items.filter((i) => i.state === "FAILED").length : 0;
   const blocked = !canGenerate || Boolean(blockedReason);
+  // The page polls while samples are written by a background worker. If that worker
+  // is down or crashed nothing ever finishes them, so after a while stop claiming
+  // progress and let the person start over.
+  const stalled =
+    batch !== null &&
+    batch !== undefined &&
+    !batch.complete &&
+    Date.now() - new Date(batch.created_at).getTime() > STALLED_AFTER_MS;
 
   return (
     <section
@@ -129,7 +141,7 @@ export function SamplePreviewPanel({
         {canGenerate ? (
           <Button
             variant={batch ? "outline" : "primary"}
-            disabled={blocked || generating || (batch ? !batch.complete : false)}
+            disabled={blocked || generating || (batch ? !batch.complete && !stalled : false)}
             onClick={() => setPickerOpen(true)}
             title={blockedReason ?? undefined}
           >
@@ -178,11 +190,18 @@ export function SamplePreviewPanel({
         </Alert>
       ) : null}
 
-      {batch && !batch.complete ? (
+      {batch && !batch.complete && !stalled ? (
         <p className="inline-flex items-center gap-2 text-sm text-sky-700" role="status">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Writing samples…
         </p>
+      ) : null}
+      {stalled ? (
+        <Alert variant="warning">
+          These samples are taking much longer than expected. The sample writer may be busy
+          or unavailable. Try generating new samples, and contact support if this keeps
+          happening.
+        </Alert>
       ) : null}
       {batch && batch.complete && failed > 0 ? (
         <Alert variant="warning">

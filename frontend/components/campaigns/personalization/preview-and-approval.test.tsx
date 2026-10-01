@@ -198,10 +198,25 @@ describe("SamplePreviewPanel", () => {
     expect(screen.getByText(/not enough data to personalize/i)).toBeInTheDocument();
   });
 
+  it("stops claiming progress when samples were never finished, and allows starting over", () => {
+    panel({
+      batch: batch({
+        complete: false,
+        all_ok: false,
+        created_at: new Date(Date.now() - 7 * 60 * 1000).toISOString(),
+        items: [item({ state: "PENDING", subject: null, body_html: null, facts: [] })],
+      }),
+    });
+    expect(screen.queryByText("Writing samples…")).not.toBeInTheDocument();
+    expect(screen.getByText(/taking much longer than expected/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate new samples" })).toBeEnabled();
+  });
+
   it("shows progress while samples are still being written and blocks regenerating", () => {
     panel({
       batch: batch({
         complete: false,
+        created_at: new Date().toISOString(),
         all_ok: false,
         items: [item({ state: "PENDING", subject: null, body_html: null, facts: [] })],
       }),

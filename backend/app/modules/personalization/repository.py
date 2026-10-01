@@ -798,6 +798,36 @@ class PersonalizationRepository:
             .all()
         )
 
+    def fail_pending_previews(
+        self,
+        *,
+        workspace_id: UUID,
+        campaign_id: UUID,
+        batch_id: UUID,
+        failure_codes: Sequence[str],
+    ) -> int:
+        """End every still-PENDING preview of a batch as FAILED, so the page stops
+        waiting for work that will not happen. Only PENDING rows are touched, so
+        samples that were finished stay."""
+        result = self.session.execute(
+            text(
+                """
+                UPDATE personalization_previews
+                SET state = 'FAILED', failure_codes = :failure_codes,
+                    completed_at = pg_catalog.transaction_timestamp()
+                WHERE workspace_id = :workspace_id AND campaign_id = :campaign_id
+                  AND batch_id = :batch_id AND state = 'PENDING'
+                """
+            ),
+            {
+                "workspace_id": str(workspace_id),
+                "campaign_id": str(campaign_id),
+                "batch_id": str(batch_id),
+                "failure_codes": list(failure_codes),
+            },
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
     def finish_preview(
         self,
         *,
