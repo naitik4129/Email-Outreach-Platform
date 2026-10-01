@@ -42,9 +42,6 @@ export const bulkEraseLeads = (ws: string, ids: string[], confirm: string) =>
 export const bulkPurgeLeadLists = (ws: string, ids: string[], confirm: string) =>
   bulkPost(ws, "/lead-lists/bulk-purge", ids, confirm);
 
-export const purgeTemplate = (ws: string, id: string, confirm: string) =>
-  post(ws, `/templates/${id}/purge`, confirm);
-
 export const purgeLeadList = (ws: string, id: string, confirm: string) =>
   post(ws, `/lead-lists/${id}/purge`, confirm);
 

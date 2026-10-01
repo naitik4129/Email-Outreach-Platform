@@ -12,7 +12,6 @@ import {
   ChevronDown,
   Contact,
   CreditCard,
-  FileText,
   HelpCircle,
   Inbox,
   LayoutDashboard,
@@ -59,7 +58,6 @@ const navigationGroups: NavGroup[] = [
     items: [
       { href: "/app/campaigns", label: "Campaigns", icon: Send },
       { href: "/app/inbox", label: "Inbox", icon: Inbox },
-      { href: "/app/templates", label: "Templates", icon: FileText },
     ],
   },
   {

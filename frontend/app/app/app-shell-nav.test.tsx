@@ -80,7 +80,6 @@ describe("AppShell navigation", () => {
         "/app/leads",
         "/app/leads/lists",
         "/app/inbox",
-        "/app/templates",
         "/app/team",
       ].sort(),
     );
