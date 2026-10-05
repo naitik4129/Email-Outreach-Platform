@@ -15,7 +15,7 @@ from app.core.crypto import (
     encrypt_credentials,
     encrypt_verifier,
 )
-from app.core.errors import AppError
+from app.core.errors import PROVIDER_AUTH_REJECTED_STATUS, AppError
 from app.modules.mailboxes.providers.base import (
     EnvelopeAttachment,
     OutboundMessageEnvelope,
@@ -1264,7 +1264,7 @@ class MailboxService:
                     "auth_failure",
                     "Mailbox credentials expired and no refresh token available. "
                     "Reconnect required.",
-                    status_code=401,
+                    status_code=PROVIDER_AUTH_REJECTED_STATUS,
                 )
 
             try:

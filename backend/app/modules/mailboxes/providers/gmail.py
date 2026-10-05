@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import Settings
-from app.core.errors import AppError
+from app.core.errors import PROVIDER_AUTH_REJECTED_STATUS, AppError
 from app.modules.mailboxes.providers.base import (
     ClassifiedProviderError,
     ConnectionValidationResult,
@@ -236,7 +236,11 @@ class GmailProvider(EmailProvider):
             raise AppError(
                 "auth_failure" if classified.requires_reconnect else "provider_error",
                 classified.safe_message,
-                status_code=401 if classified.requires_reconnect else 502,
+                status_code=(
+                    PROVIDER_AUTH_REJECTED_STATUS
+                    if classified.requires_reconnect
+                    else 502
+                ),
             )
 
         payload = resp.json()
@@ -279,7 +283,11 @@ class GmailProvider(EmailProvider):
             raise AppError(
                 "provider_error",
                 f"Failed to retrieve Gmail identity: {classified.safe_message}",
-                status_code=401 if classified.requires_reconnect else 502,
+                status_code=(
+                    PROVIDER_AUTH_REJECTED_STATUS
+                    if classified.requires_reconnect
+                    else 502
+                ),
             )
 
         payload = resp.json()
@@ -606,7 +614,11 @@ class GmailProvider(EmailProvider):
     ) -> SyncPageResult:
         access_token = credential.get("access_token")
         if not access_token:
-            raise AppError("auth_failure", "Missing access token for Gmail sync", status_code=401)
+            raise AppError(
+                "auth_failure",
+                "Missing access token for Gmail sync",
+                status_code=PROVIDER_AUTH_REJECTED_STATUS,
+            )
 
         client = self._get_client()
         headers = {"Authorization": f"Bearer {access_token}"}
