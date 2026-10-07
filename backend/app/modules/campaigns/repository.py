@@ -101,6 +101,24 @@ class CampaignRepository:
         )
         return row
 
+    def get_workspace_defaults(self, *, workspace_id: UUID) -> dict[str, Any]:
+        """The workspace's `defaults` JSON (footer settings are under `compliance`)."""
+        row = (
+            self.session.execute(
+                text("SELECT defaults FROM workspaces WHERE id = :workspace_id"),
+                {"workspace_id": str(workspace_id)},
+            )
+            .mappings()
+            .first()
+        )
+        value = row["defaults"] if row else None
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                value = None
+        return value if isinstance(value, dict) else {}
+
     def list_campaigns(
         self,
         *,

@@ -413,6 +413,9 @@ class MailboxService:
                 health_state="UNKNOWN",
                 generation=generation,
             )
+            self.repo.ensure_default_sending_limit(
+                workspace_id=flow_workspace_id, mailbox_id=mailbox_id
+            )
 
             self.repo.insert_mailbox_connection(
                 connection_id=uuid4(),
@@ -723,6 +726,9 @@ class MailboxService:
                 health_state="UNKNOWN",
                 generation=generation,
             )
+            self.repo.ensure_default_sending_limit(
+                workspace_id=flow_workspace_id, mailbox_id=mailbox_id
+            )
 
             self.repo.insert_mailbox_connection(
                 connection_id=uuid4(),
@@ -902,6 +908,9 @@ class MailboxService:
             connection_state="CONNECTING",
             health_state="UNKNOWN",
             generation=generation,
+        )
+        self.repo.ensure_default_sending_limit(
+            workspace_id=workspace_id, mailbox_id=mailbox_id
         )
 
         self.repo.insert_mailbox_connection(

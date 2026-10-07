@@ -28,6 +28,8 @@ import {
   type ImapSettings,
 } from "@/components/mailboxes/imap-settings-fields";
 import { ProviderBadge, providerSubtext } from "@/components/mailboxes/provider-badge";
+import { SafetyHoldsCard } from "@/components/mailboxes/safety-holds-card";
+import { SendingLimitsCard } from "@/components/mailboxes/sending-limits-card";
 import { ApiError } from "@/lib/api-client";
 import {
   disconnectMailbox,
@@ -629,6 +631,14 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
         </div>
       ) : null}
 
+      {activeWorkspaceId ? (
+        <SafetyHoldsCard
+          workspaceId={activeWorkspaceId}
+          mailboxId={mailboxId}
+          canManage={mayManage}
+        />
+      ) : null}
+
       {/* Status & Diagnostics grid */}
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-card">
@@ -686,6 +696,14 @@ export function MailboxDetailClient({ mailboxId: propId }: { mailboxId?: string 
           </p>
         </div>
       </div>
+
+      {activeWorkspaceId ? (
+        <SendingLimitsCard
+          workspaceId={activeWorkspaceId}
+          mailboxId={mailboxId}
+          canManage={mayManage}
+        />
+      ) : null}
 
       {/* Controlled Test Email Section */}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-card space-y-5">

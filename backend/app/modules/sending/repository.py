@@ -252,6 +252,27 @@ class SendingRepository:
         )
         return [dict(r) for r in rows]
 
+    def get_workspace_defaults(self, *, workspace_id: UUID) -> dict[str, Any]:
+        """The workspace's `defaults` JSON (footer settings live under
+        `compliance`). Empty when absent or not an object."""
+        _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
+        row = (
+            self.session.execute(
+                text("SELECT defaults FROM public.workspaces WHERE id = :ws"),
+                {"ws": str(workspace_id)},
+            )
+            .mappings()
+            .first()
+        )
+        value = row["defaults"] if row else None
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                value = None
+        return value if isinstance(value, dict) else {}
+
     def get_mailbox_connection(
         self, *, workspace_id: UUID, mailbox_id: UUID, generation: int
     ) -> dict[str, Any] | None:
@@ -429,6 +450,64 @@ class SendingRepository:
             },
         )
         return result.rowcount > 0
+
+    def defer_for_capacity(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID,
+        dispatch_generation: int,
+        due_at: datetime,
+    ) -> bool:
+        """Hand a claimed message back to the scheduler to try again at `due_at`.
+
+        Used when the message cannot be sent yet but nothing is wrong with it (the
+        mailbox is at its limit, or held). Without this a denied message would sit
+        QUEUED until its claim lease expired and then be claimed again at once.
+
+        Only a still-QUEUED message of this claim that has no attempt is touched, so
+        a message that reached the provider is never moved. `due_at` is kept at or
+        after `next_retry_at` for a retrying message (messages_retry_state_check).
+        The generation is bumped so that a late duplicate of the task that made this
+        deferral is recognised as stale and ignored: at the old generation it would
+        pass the generation check, find the message SCHEDULED instead of QUEUED, and
+        have it permanently skipped. The claim's outbox delivery was already
+        published; the next claim opens a new one (semantic key
+        `{message}:{dispatch_generation + 1}`).
+        """
+        _safe_set_role(self.session, "app_worker_send")
+        _safe_set_workspace(self.session, workspace_id)
+        result = self.session.execute(
+            text(
+                """
+                UPDATE public.messages
+                SET status = dispatch_origin,
+                    dispatch_origin = NULL,
+                    claim_expires_at = NULL,
+                    dispatch_generation = dispatch_generation + 1,
+                    due_at = CASE WHEN next_retry_at IS NOT NULL
+                                       AND next_retry_at > :due_at
+                                  THEN next_retry_at ELSE :due_at END,
+                    version = version + 1
+                WHERE workspace_id = :ws AND id = :mid
+                  AND status = 'QUEUED'
+                  AND dispatch_generation = :gen
+                  AND dispatch_origin IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM public.message_attempts a
+                      WHERE a.workspace_id = :ws AND a.message_id = :mid
+                        AND a.dispatch_generation = :gen
+                  )
+                """
+            ),
+            {
+                "ws": str(workspace_id),
+                "mid": str(message_id),
+                "gen": dispatch_generation,
+                "due_at": due_at,
+            },
+        )
+        return bool(getattr(result, "rowcount", 0))
 
     # -------------------------------------------------------------------------
     # Authorization transaction: claim + debit + transition

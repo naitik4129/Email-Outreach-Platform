@@ -22,6 +22,7 @@ from app.modules.personalization.config_schema import parse_config
 from app.modules.personalization.context_builder import build_context
 from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 from app.modules.templates.variables import validate_template_content
+from app.modules.unsubscribe.compliance import read_compliance, unsubscribe_ready
 
 _HIGH_EXCLUSION_RATE_THRESHOLD = 0.5
 # How many audience members are sampled to estimate how many leads have too little
@@ -76,6 +77,7 @@ class PreflightService:
         self._check_mailboxes(context, campaign_id, errors, warnings)
         self._check_audience(context, campaign_id, errors, warnings)
         self._check_settings(campaign, errors)
+        self._check_compliance(context, errors)
 
         return PreflightResult(ready=len(errors) == 0, errors=errors, warnings=warnings)
 
@@ -390,5 +392,33 @@ class PreflightService:
                     code="settings_missing",
                     message="Configure a sending schedule for this campaign.",
                     field_path="settings",
+                )
+            )
+
+    def _check_compliance(
+        self, context: WorkspaceContext, errors: list[PreflightIssue]
+    ) -> None:
+        """Every email carries an unsubscribe link and the sender's postal address
+        in its footer, so neither can be missing when a campaign starts."""
+        if not unsubscribe_ready(Settings.current()):
+            errors.append(
+                PreflightIssue(
+                    code="unsubscribe_not_configured",
+                    message="Unsubscribe links are not set up on this server, so "
+                    "no campaign email can be sent. Ask whoever runs the platform "
+                    "to set UNSUBSCRIBE_BASE_URL and UNSUBSCRIBE_SIGNING_KEY.",
+                    field_path="compliance",
+                )
+            )
+        info = read_compliance(
+            self.repo.get_workspace_defaults(workspace_id=context.workspace_id)
+        )
+        if not info.postal_address:
+            errors.append(
+                PreflightIssue(
+                    code="postal_address_required",
+                    message="Add your business postal address in Workspace "
+                    "settings. It is shown in the footer of every email.",
+                    field_path="compliance.postal_address",
                 )
             )

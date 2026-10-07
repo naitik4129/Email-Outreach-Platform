@@ -439,6 +439,33 @@ export type SmtpUpdateInput = {
   imap_password?: string;
 };
 
+// A reason a mailbox is not sending (backend/app/modules/safety/holds_service.py).
+export type SafetyHold = {
+  id: string;
+  kind: "HIGH_BOUNCE_RATE" | "RESYNC" | "OTHER";
+  status: "ACTIVE" | "RESOLVED";
+  reason: string;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+// How much one mailbox may send (backend/app/modules/rate_limit/policy_service.py).
+export type MailboxLimits = {
+  // null when the mailbox has no limit row: it cannot send until one is set.
+  daily_cap: number | null;
+  min_spacing_seconds: number | null;
+  configured: boolean;
+  default_daily_cap: number;
+  default_min_spacing_seconds: number;
+  max_daily_cap: number;
+  max_spacing_seconds: number;
+};
+
+export type MailboxLimitsInput = {
+  daily_cap: number;
+  min_spacing_seconds: number;
+};
+
 export type MailboxTestSendResult = {
   message_id: string;
   status: "SENT" | "FAILED" | "UNKNOWN_OUTCOME";

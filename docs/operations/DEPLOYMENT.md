@@ -196,6 +196,14 @@ backend that classifies pixel hits (the code writes its new `message_events` col
 human-like hits count as opens; scanner/prefetch hits are stored as evidence. It deliberately does
 not backfill: opens recorded before it were never classified, so they stop counting in analytics.
 
+**Go-live limits and hold release (migration 0038).** Additive and idempotent; review its header,
+then apply it **before deploying** this version of the backend. It lets managers set a mailbox's
+sending limit and release a safety hold, and it gives every existing mailbox a default limit of
+50 emails per rolling 24 hours, at least 60 seconds apart (new mailboxes get the same from the
+`MAILBOX_DEFAULT_*` settings). Code deployed before it fails safe: a mailbox without a limit never
+sends (messages are deferred with reason `mailbox_limits_missing`). No script here applies it;
+apply it yourself like the others.
+
 Finish with `unset DB`.
 
 ### 5.2 Storage bucket
@@ -262,6 +270,7 @@ Only if you connect to a brand-new, empty database should you create one with
 
 ```bash
 openssl rand -hex 24     # → PLATFORM_OPERATOR_KEY
+openssl rand -hex 32     # → UNSUBSCRIBE_SIGNING_KEY (keep it forever; see 6.2)
 ```
 
 Copy values between your computer and the server through a password manager or `scp`, never
@@ -322,6 +331,8 @@ MAILBOX_ENCRYPTION_KEY="THE_64_CHARACTER_VALUE_FROM_6.1"
 MAILBOX_ENCRYPTION_KEY_ID="v1"
 
 # The built-in default is operator@example.com,admin@example.com; always override it.
+# With SENDING_WORKER_ENABLED=true in production the backend refuses to start while it
+# still holds a placeholder (example.com/org/net) address.
 PLATFORM_OPERATOR_EMAILS="you@yourcompany.com"
 PLATFORM_OPERATOR_KEY="THE_48_CHARACTER_VALUE_FROM_6.1"
 
@@ -365,6 +376,22 @@ TRACKING_SIGNING_KEY=""
 # A pixel fetch sooner than this after sending is a delivery-time scanner or
 # prefetch, not a person, and is not counted as an open.
 OPEN_TRACKING_MIN_DELAY_SECONDS=60
+
+# Mandatory unsubscribe (docs/adr/0019). Every campaign email carries a signed one-click
+# unsubscribe link and a List-Unsubscribe header. Campaign email is never sent without
+# both values, a campaign cannot be activated without them, and with
+# SENDING_WORKER_ENABLED=true the backend will not start. UNSUBSCRIBE_BASE_URL is the
+# public address of THIS app (links are {address}/api/v1/unsubscribe/...). Generate the
+# key with openssl rand -hex 32 and NEVER change it: links in emails already sent stop working.
+UNSUBSCRIBE_BASE_URL="https://YOUR_DOMAIN"
+UNSUBSCRIBE_SIGNING_KEY="THE_64_CHARACTER_VALUE_FROM_6.1"
+
+# Sending limits for a newly connected mailbox (editable per mailbox in the app, 1-500 per day).
+# Raise slowly: a new mailbox with no history is judged harshly by Gmail and Outlook.
+MAILBOX_DEFAULT_DAILY_CAP=50
+MAILBOX_DEFAULT_MIN_SPACING_SECONDS=60
+# The scheduler claims no more messages than this are waiting for a send worker.
+SCHEDULER_MAX_OUTSTANDING_CLAIMS=200
 
 # Provider webhooks stay disabled (HTTP 503) until their secret is set. They are
 # also blocked at Caddy; polling works without them.
@@ -569,9 +596,59 @@ In the browser, in order:
 5. Create a small **campaign** using that list and mailbox. The review page must show no blocking
    problems. Do not activate it yet.
 
+### Go-live preflight (read-only)
+
+Before turning sending on, run the preflight. It changes nothing and sends nothing; it prints one
+line per check and exits non-zero if something would stop real campaigns from working.
+
+```bash
+cd ~/outly
+docker compose run --rm backend python -m app.core.preflight
+```
+
+It checks, among others: `SENDING_WORKER_ENABLED` and `SCHEDULER_ENABLED`, the unsubscribe
+settings, `MAILBOX_ENCRYPTION_KEY`, placeholder operator emails, Redis, the rate controller being
+`READY`, that migration 0038 is applied and the database grants the app needs exist, and that every
+connected mailbox has a daily limit. Fix every `FAIL`. A `WARN` is worth reading: for example
+`SEQUENCE_PROGRESSION_ENABLED=false` means **only the first email of each sequence is sent**.
+The database checks need the owner/migration database user (one that bypasses row-level security);
+with any other user they are reported as unverified rather than guessed.
+
+### Rehearsal before real leads
+
+The preflight proves the configuration. These steps prove the live providers, and nothing here can
+be automated. Do them with **your own addresses** and a low limit (the default 50/day is fine):
+
+1. Set the workspace **postal address** (Dashboard, Email footer). A campaign cannot be activated
+   without it.
+2. Send a controlled test from each connected mailbox (Gmail, Outlook, SMTP) to an inbox you own
+   and check that it arrives. The controlled test is a plain delivery check and has no footer.
+3. Activate a campaign of 3-5 of your own addresses and open one of its emails. The footer must
+   show your postal address and an unsubscribe link, and the plain-text view must be the real
+   message (not "requires an HTML-capable email client"). In Gmail, **Show original** should list
+   `List-Unsubscribe` and `List-Unsubscribe-Post`. Outlook (Microsoft Graph) mailboxes carry the
+   footer link only, not the header.
+4. Watch `docker compose logs -f worker-send`: emails go out one at a time, at least the mailbox
+   spacing apart.
+5. Click the unsubscribe link in one of those emails and confirm on the page. The address must
+   then appear in Suppression, and no further email may be sent to it.
+6. Add one deliberately nonexistent address in a second small campaign. After a few minutes the
+   delivery-failure notice must show up as a bounce (Dashboard, Deliverability). Bounces are only
+   detected on mailboxes with reply detection enabled.
+7. Reply to one of your test emails. Within a few minutes it must appear in **Inbox** and that
+   lead's follow-ups must stop.
+8. Open the mailbox page: **Sending limits** shows the limit, and no hold is active.
+
+Automatic protection: if a mailbox's bounce rate over the last 7 days goes above 5% (with at least
+20 emails sent) it is **held**. It stops sending until a manager releases the hold on its page,
+after looking at why the list bounced. Reply sync places the hold, every few minutes. Spam
+complaints are not measured (no provider feedback loop is wired), so a complaint rate is not acted
+on.
+
 ### Enable real sending
 
-Only after steps 1–5 work. From here emails are **really sent** from connected mailboxes.
+Only after steps 1-5 above work, the preflight has no `FAIL`, and the rehearsal is done. From here
+emails are **really sent** from connected mailboxes.
 
 ```bash
 cd ~/outly

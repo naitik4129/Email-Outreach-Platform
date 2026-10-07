@@ -114,6 +114,17 @@ class SchedulerRepository:
         ).all()
         return [(UUID(str(ws)), UUID(str(cid))) for ws, cid in rows]
 
+    def count_outstanding_claims(self) -> int:
+        """Messages the scheduler has claimed that no send worker has finished
+        with yet (status QUEUED), across all workspaces. Uses
+        messages_claim_expiry_idx."""
+        _safe_set_role(self.session, "app_scheduler")
+        _safe_set_workspace(self.session, None)
+        count = self.session.execute(
+            text("SELECT count(*) FROM messages WHERE status = 'QUEUED'")
+        ).scalar()
+        return int(count or 0)
+
     def find_due_messages(
         self,
         *,

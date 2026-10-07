@@ -12,7 +12,7 @@ jobs:
         working-directory: backend
     env:
       APP_ENV: test
-      DATABASE_URL: sqlite+pysqlite:///:memory:
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
       REDIS_URL: redis://localhost:6379/0
       SUPABASE_URL: https://test-project.supabase.co
       SUPABASE_JWT_SECRET: test-secret
@@ -29,11 +29,34 @@ jobs:
       # automatically against the project owner's real database on every push.
       - run: python -m pytest --ignore=tests/integration
 
+  # The unit tests above run on SQLite, which has no row-level security, roles or
+  # grants. These run the same code against a real throwaway PostgreSQL (the
+  # `pgserver` package, no Docker) with every migration applied, so a policy or
+  # grant that is missing or wrong fails here instead of in production.
+  backend-real-postgres:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      REDIS_URL: redis://localhost:6379/0
+      SUPABASE_URL: https://test-project.supabase.co
+      SUPABASE_JWT_SECRET: test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]" pgserver
+      - run: python -m pytest tests/test_*real_db.py -p no:cacheprovider
+
   workers:
     runs-on: ubuntu-latest
     env:
       APP_ENV: test
-      DATABASE_URL: sqlite+pysqlite:///:memory:
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
       REDIS_URL: redis://localhost:6379/0
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
     steps:
@@ -72,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_ENV: test
-      DATABASE_URL: sqlite+pysqlite:///:memory:
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4

@@ -47,6 +47,18 @@ class SchedulerService:
         Returns (discovered_count, claimed_count).
         """
         limit = batch_size or self.settings.scheduler_batch_size
+
+        # Backpressure: a claim lasts scheduler_claim_lease_seconds, so claiming
+        # faster than the send workers finish only makes claims expire unused.
+        # Claim no more than there is room for.
+        room = self.settings.scheduler_max_outstanding_claims - (
+            self.repository.count_outstanding_claims()
+        )
+        if room <= 0:
+            logger.info("Scheduler holding back: too many outstanding claims")
+            return 0, 0
+        limit = min(limit, room)
+
         candidates = self.repository.find_due_messages(
             limit=limit * 2,  # Fetch slightly wider candidate pool for fairness filtering
             authoritative_now=authoritative_now,

@@ -108,6 +108,10 @@ class OutboundMessageEnvelope:
     body_text: str | None = None
     rfc_message_id: str | None = None
     attachments: tuple[EnvelopeAttachment, ...] = ()
+    # Extra RFC 5322 headers (name, value), e.g. List-Unsubscribe. Written by the
+    # raw-MIME providers (Gmail, SMTP). Microsoft Graph's JSON send only accepts
+    # custom headers starting with "x-", so that adapter does not send them.
+    extra_headers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

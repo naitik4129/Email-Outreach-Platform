@@ -449,6 +449,7 @@ class CampaignWorkerRepository:
                     SELECT c.start_at, c.activated_audience_id, c.campaign_type,
                            c.activated_sequence_id, sv.timezone, sv.weekday_set,
                            sv.window_start_local, sv.window_end_local,
+                           sv.daily_limit,
                            ss.id AS first_step_id
                     FROM campaigns c
                     JOIN campaign_settings_versions sv
@@ -493,6 +494,43 @@ class CampaignWorkerRepository:
             .all()
         )
         return list(rows)
+
+    def list_mailbox_limit_policies(
+        self, *, workspace_id: UUID, mailbox_ids: list[UUID]
+    ) -> dict[UUID, list[dict[str, int]]]:
+        """Each mailbox's MAILBOX-kind limit rows, for spreading a campaign's
+        messages (see campaigns/pacing.py). A mailbox with none is absent."""
+        if not mailbox_ids:
+            return {}
+        _safe_set_role(self.session, "app_worker_general")
+        rows = (
+            self.session.execute(
+                text(
+                    """
+                    SELECT mailbox_id, window_seconds, limit_value, min_spacing_seconds
+                    FROM tenant_rate_policies
+                    WHERE workspace_id = :workspace_id AND kind = 'MAILBOX'
+                      AND unit = 'MESSAGE' AND mailbox_id = ANY(:mailbox_ids)
+                    """
+                ),
+                {
+                    "workspace_id": str(workspace_id),
+                    "mailbox_ids": [str(m) for m in mailbox_ids],
+                },
+            )
+            .mappings()
+            .all()
+        )
+        result: dict[UUID, list[dict[str, int]]] = {}
+        for row in rows:
+            result.setdefault(UUID(str(row["mailbox_id"])), []).append(
+                {
+                    "window_seconds": int(row["window_seconds"]),
+                    "limit_value": int(row["limit_value"]),
+                    "min_spacing_seconds": int(row["min_spacing_seconds"] or 0),
+                }
+            )
+        return result
 
     def fetch_accepted_audience_members_chunk(
         self,
@@ -716,10 +754,14 @@ class CampaignWorkerRepository:
                            m.step_id, e.frozen_variables, e.frozen_destination,
                            ss.email_subject, ss.email_body_html, ss.email_preheader,
                            mb.original_address AS sender_address,
-                           mb.sender_display_name AS sender_name
+                           mb.sender_display_name AS sender_name,
+                           am.capture_ordinal
                     FROM messages m
                     JOIN campaign_enrollments e
                       ON e.workspace_id = m.workspace_id AND e.id = m.enrollment_id
+                    JOIN campaign_audience_members am
+                      ON am.workspace_id = e.workspace_id
+                     AND am.id = e.audience_member_id
                     JOIN sequence_steps ss
                       ON ss.workspace_id = m.workspace_id AND ss.id = m.step_id
                     JOIN mailboxes mb

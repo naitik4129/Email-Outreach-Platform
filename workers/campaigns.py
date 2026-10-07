@@ -15,8 +15,9 @@ from app.db.context import set_transaction_context
 from app.db.session import SessionLocal
 from app.modules.campaigns.mailbox_assignment import assign_mailbox_for_recipient
 from app.modules.campaigns.message_rendering import render_step_content
+from app.modules.campaigns.pacing import DuePlanner, MailboxPacing, pacing_from_policies
 from app.modules.campaigns.progression import ProgressionService
-from app.modules.campaigns.scheduling import project_into_window
+from app.modules.campaigns.scheduling import WindowCalendar
 from app.modules.campaigns.worker_repository import CampaignWorkerRepository
 from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 from app.modules.suppression.checks import is_address_suppressed
@@ -39,6 +40,46 @@ def _classify_member(lead: dict[str, Any]) -> tuple[str, str | None]:
     if lead["is_suppressed"]:
         return "EXCLUDED", "suppressed"
     return "ACCEPTED", None
+
+
+def _build_due_planner(
+    repo: CampaignWorkerRepository,
+    ctx: Any,
+    workspace_id: UUID,
+    campaign_id: UUID,
+) -> DuePlanner:
+    """The planner that gives each first email its own time in the campaign's
+    sending windows, within its mailbox's daily cap."""
+    settings = Settings.current()
+    default = MailboxPacing(
+        daily_cap=settings.mailbox_default_daily_cap,
+        min_spacing_seconds=settings.mailbox_default_min_spacing_seconds,
+    )
+    mailbox_ids = [
+        UUID(str(r["mailbox_id"]))
+        for r in repo.list_eligible_campaign_mailboxes(
+            workspace_id=workspace_id, campaign_id=campaign_id
+        )
+    ]
+    policies = repo.list_mailbox_limit_policies(
+        workspace_id=workspace_id, mailbox_ids=mailbox_ids
+    )
+    return DuePlanner(
+        WindowCalendar(
+            ctx["start_at"],
+            timezone=ctx["timezone"],
+            weekday_set=ctx["weekday_set"],
+            window_start_local=ctx["window_start_local"],
+            window_end_local=ctx["window_end_local"],
+        ),
+        mailbox_count=len(mailbox_ids),
+        campaign_daily_limit=ctx["daily_limit"],
+        pacing_by_mailbox={
+            mailbox_id: pacing_from_policies(policies.get(mailbox_id, []), default)
+            for mailbox_id in mailbox_ids
+        },
+        default=default,
+    )
 
 
 @celery_app.task(
@@ -552,14 +593,15 @@ def render_messages_chunk(
                 hyper=hyper,
             )
             personalization = Settings.current() if hyper else None
+            planner = _build_due_planner(repo, ctx, ws_uuid, campaign_uuid)
 
             for row in rows:
-                due_at = project_into_window(
-                    lower_bound_utc=ctx["start_at"],
-                    timezone=ctx["timezone"],
-                    weekday_set=ctx["weekday_set"],
-                    window_start_local=ctx["window_start_local"],
-                    window_end_local=ctx["window_end_local"],
+                # Each message gets its own time, so a mailbox is never asked
+                # for more than its daily cap (see campaigns/pacing.py).
+                due_at = planner.due_at(
+                    mailbox_id=UUID(str(row["mailbox_id"])),
+                    capture_ordinal=int(row["capture_ordinal"]),
+                    message_id=UUID(str(row["id"])),
                 )
                 if personalization is not None:
                     # Hyper-personalized (ADR-0011): the message stays PLANNED

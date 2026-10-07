@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -37,6 +38,7 @@ from app.modules.mailboxes.providers.base import (
 from app.modules.mailboxes.providers.message_builder import generate_message_id
 from app.modules.mailboxes.providers.registry import ProviderRegistry
 from app.modules.rate_limit.limiter import RedisRateLimiter
+from app.modules.rate_limit.policy_service import has_mailbox_volume_cap
 from app.modules.rate_limit.repository import RatePolicyRepository
 from app.modules.rate_limit.schemas import (
     RateLimitDenied,
@@ -58,12 +60,43 @@ from app.modules.tracking.pixel import (
     open_pixel_url,
     open_tracking_ready,
 )
+from app.modules.unsubscribe.compliance import (
+    ComplianceInfo,
+    build_footer_html,
+    build_footer_text,
+    html_to_text,
+    inject_footer,
+    read_compliance,
+    unsubscribe_headers,
+    unsubscribe_ready,
+    unsubscribe_url,
+)
 
 logger = logging.getLogger(__name__)
 
 CAPACITY_UNIT = "MESSAGE"
 AUTHORIZATION_WINDOW_SECONDS = 30
 CREDENTIAL_REFRESH_SAFETY_MARGIN = timedelta(minutes=5)
+# A message that cannot go yet is handed back to the scheduler for a time inside
+# this range, plus up to 10% jitter so a burst does not come back in one tick.
+MIN_DEFERRAL = timedelta(seconds=30)
+MAX_DEFERRAL = timedelta(hours=24)
+SAFETY_HOLD_RETRY = timedelta(minutes=15)
+DEFERRAL_JITTER_FRACTION = 0.1
+
+
+def deferral_delay(retry_after_seconds: float | None) -> timedelta:
+    """How long to wait before offering a deferred message to the scheduler again.
+
+    `retry_after_seconds` is the limiter's estimate of when capacity frees up (None
+    when it has none): clamped to 30 s..24 h, then spread by up to 10%.
+    """
+    base = MIN_DEFERRAL
+    if retry_after_seconds is not None:
+        base = timedelta(seconds=retry_after_seconds)
+    base = min(max(base, MIN_DEFERRAL), MAX_DEFERRAL)
+    jitter = base.total_seconds() * DEFERRAL_JITTER_FRACTION * random.random()
+    return base + timedelta(seconds=jitter)
 
 
 class SendingService:
@@ -143,6 +176,10 @@ class SendingService:
             # the scheduler will reconsider it naturally. No destructive
             # state change here.
             self._audit(ctx, action="message.send_deferred", reason=exc.terminal_reason)
+            if isinstance(exc, gates.SafetyHoldRejected):
+                # A held mailbox stays held until a person releases it: retry
+                # in 15 minutes instead of churning through claim leases.
+                self._hand_back(ctx, SAFETY_HOLD_RETRY)
             self.session.commit()
             logger.info(
                 "Send deferred (temporary gate rejection)",
@@ -157,14 +194,43 @@ class SendingService:
             # mismatch) -- terminal SKIPPED, never sent.
             return self._skip(ctx, exc.terminal_reason)
 
-        return self._authorize_and_send(ctx, payload)
+        compliance: ComplianceInfo | None = None
+        if ctx.purpose == "CAMPAIGN":
+            # Checked before any capacity is reserved: an email without a working
+            # opt-out is never sent, and never costs a reservation either.
+            if not unsubscribe_ready(self.settings):
+                self._audit(
+                    ctx,
+                    action="message.send_deferred",
+                    reason="unsubscribe_not_configured",
+                )
+                self._hand_back(ctx, SAFETY_HOLD_RETRY)
+                self.session.commit()
+                logger.error(
+                    "Campaign send deferred: UNSUBSCRIBE_BASE_URL and "
+                    "UNSUBSCRIBE_SIGNING_KEY must both be set",
+                    extra={"message_id": str(message_id)},
+                )
+                return SendOutcome(
+                    message_id=message_id,
+                    outcome="DEFERRED",
+                    reason="unsubscribe_not_configured",
+                )
+            compliance = read_compliance(
+                self.repository.get_workspace_defaults(workspace_id=ctx.workspace_id)
+            )
+
+        return self._authorize_and_send(ctx, payload, compliance)
 
     # -------------------------------------------------------------------------
     # Rate reservation + authorization transaction
     # -------------------------------------------------------------------------
 
     def _authorize_and_send(
-        self, ctx: LoadedSendContext, payload: SendTaskPayload
+        self,
+        ctx: LoadedSendContext,
+        payload: SendTaskPayload,
+        compliance: ComplianceInfo | None = None,
     ) -> SendOutcome:
         policies = self.rate_policy_repository.resolve_applicable_policies(
             workspace_id=ctx.workspace_id,
@@ -174,6 +240,27 @@ class SendingService:
             provider_account_id=ctx.mailbox_provider_account_id,
             unit=CAPACITY_UNIT,
         )
+
+        if ctx.purpose == "CAMPAIGN" and not has_mailbox_volume_cap(policies):
+            # Fail closed: a mailbox without a daily cap must never send
+            # unlimited. A person has to give it one (Mailboxes > limits).
+            self._audit(
+                ctx, action="message.send_deferred", reason="mailbox_limits_missing"
+            )
+            self._hand_back(ctx, SAFETY_HOLD_RETRY)
+            self.session.commit()
+            logger.error(
+                "Campaign send deferred: mailbox has no daily sending limit",
+                extra={
+                    "message_id": str(ctx.message_id),
+                    "mailbox_id": str(ctx.mailbox_id),
+                },
+            )
+            return SendOutcome(
+                message_id=ctx.message_id,
+                outcome="DEFERRED",
+                reason="mailbox_limits_missing",
+            )
 
         try:
             expected_generation = self.rate_limiter.current_generation()
@@ -203,6 +290,10 @@ class SendingService:
             )
         except RateLimitDenied as exc:
             self.session.rollback()
+            # Back to the scheduler for when capacity frees up, instead of
+            # sitting QUEUED until the claim lease expires and being claimed again.
+            self._hand_back(ctx, deferral_delay(exc.denial.retry_after_seconds))
+            self.session.commit()
             logger.info(
                 "Rate limit capacity denied; deferring send",
                 extra={
@@ -247,7 +338,9 @@ class SendingService:
         attempt_id, fresh_ctx, cred_gen = outcome
         if fresh_ctx.retry_count > 0:
             record_retry_executed(fresh_ctx.mailbox_provider)
-        return self._invoke_provider_and_finalize(attempt_id, fresh_ctx, cred_gen)
+        return self._invoke_provider_and_finalize(
+            attempt_id, fresh_ctx, cred_gen, compliance
+        )
 
     def _run_authorization_transaction(
         self,
@@ -353,7 +446,11 @@ class SendingService:
     # -------------------------------------------------------------------------
 
     def _invoke_provider_and_finalize(
-        self, attempt_id: UUID, ctx: LoadedSendContext, credential_generation: int
+        self,
+        attempt_id: UUID,
+        ctx: LoadedSendContext,
+        credential_generation: int,
+        compliance: ComplianceInfo | None = None,
     ) -> SendOutcome:
         provider = ProviderRegistry.get(ctx.mailbox_provider)
 
@@ -392,14 +489,17 @@ class SendingService:
         # must carry one we know. Generated once and persisted with the result;
         # a retry after a lost commit reuses the stored value.
         rfc_message_id = ctx.rfc_message_id or generate_message_id(from_address)
+        body_html, body_text, extra_headers = self._compose_outbound(ctx, compliance)
         envelope = OutboundMessageEnvelope(
             to_address=ctx.frozen_destination or "",
             from_address=from_address,
             from_name=ctx.frozen_sender_name or ctx.mailbox_sender_display_name,
             subject=ctx.content_subject or "",
-            body_html=self._with_open_pixel(ctx),
+            body_html=body_html,
+            body_text=body_text,
             rfc_message_id=rfc_message_id,
             attachments=attachments,
+            extra_headers=extra_headers,
         )
 
         try:
@@ -639,19 +739,31 @@ class SendingService:
 
         return credential, credential_generation
 
-    def _with_open_pixel(self, ctx: LoadedSendContext) -> str:
-        """The rendered body plus the open-tracking pixel, when configured.
+    def _compose_outbound(
+        self, ctx: LoadedSendContext, compliance: ComplianceInfo | None
+    ) -> tuple[str, str | None, tuple[tuple[str, str], ...]]:
+        """The HTML body, plain-text alternative and extra headers to send.
 
-        Added here, at send time, and not at render time: the rendered body is
-        a frozen, digest-verified snapshot that must not change.
+        The single place every campaign email gets its unsubscribe link, footer,
+        List-Unsubscribe headers and (when configured) open-tracking pixel. It is
+        added here, at send time, and not at render time: the rendered body is a
+        frozen, digest-verified snapshot that must not change, and there are
+        several render paths that a render-time footer could miss.
         """
         body = ctx.content_body_html or ""
-        settings = Settings.current()
-        if not body or ctx.purpose != "CAMPAIGN" or not open_tracking_ready(settings):
-            return body
-        return inject_open_pixel(
-            body, open_pixel_url(settings, ctx.workspace_id, ctx.message_id)
-        )
+        if not body or ctx.purpose != "CAMPAIGN":
+            return body, None, ()
+
+        settings = self.settings
+        link = unsubscribe_url(settings, ctx.workspace_id, ctx.message_id)
+        info = compliance or ComplianceInfo()
+        text = html_to_text(body) + "\n\n" + build_footer_text(link, info)
+        html = inject_footer(body, build_footer_html(link, info))
+        if open_tracking_ready(settings):
+            html = inject_open_pixel(
+                html, open_pixel_url(settings, ctx.workspace_id, ctx.message_id)
+            )
+        return html, text, unsubscribe_headers(link)
 
     def _finalize_send_result(
         self,
@@ -878,6 +990,18 @@ class SendingService:
         )
         return SendOutcome(
             message_id=ctx.message_id, outcome="SKIPPED", reason=terminal_reason
+        )
+
+    def _hand_back(self, ctx: LoadedSendContext, delay: timedelta) -> None:
+        """Return this claimed message to the scheduler, due after `delay`.
+
+        Joins the caller's transaction: the caller commits.
+        """
+        self.repository.defer_for_capacity(
+            workspace_id=ctx.workspace_id,
+            message_id=ctx.message_id,
+            dispatch_generation=ctx.dispatch_generation,
+            due_at=datetime.now(UTC) + delay,
         )
 
     def _audit(
