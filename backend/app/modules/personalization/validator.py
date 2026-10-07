@@ -9,9 +9,11 @@ stable failure codes. Pure and I/O free.
 from __future__ import annotations
 
 import html
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from app.modules.personalization.config_schema import PersonalizationConfig
 from app.modules.personalization.email_style import (
@@ -90,7 +92,12 @@ CODE_GUIDANCE: dict[str, str] = {
     ),
     "missing_must_mention": "Include every must_mention phrase from the objective.",
     "never_say_violation": "Do not use any never_say phrase from the objective.",
-    "cta_missing": "Keep the call to action from the objective.",
+    "cta_missing": (
+        "Keep the call to action from the objective: include every link in "
+        "call_to_action_links, or at least call_to_action_use_at_least of the "
+        "call_to_action_key_words, spelled exactly as listed. A follow-up needs "
+        "them too, in its closing question."
+    ),
     "reference_intent_lost": (
         "Stay close to the message, offer and structure of the reference email."
     ),
@@ -151,6 +158,22 @@ def assemble_body_html(
         pieces.append(html.escape(paragraph[cursor:], quote=True))
         rendered.append("<p>" + "".join(pieces).replace("\n", "<br>") + "</p>")
     return "".join(rendered)
+
+
+def cta_requirements(cta: str) -> dict[str, Any]:
+    """What the CTA check below looks for, as prompt data (each link, or at least
+    half of the key words), so the model does not have to guess how a call to
+    action is checked. Shared by reference drafting and per-lead generation."""
+    links = sorted(extract_urls(cta))
+    words = sorted(significant_tokens(cta))
+    if links:
+        return {"call_to_action_links": links}
+    if len(words) >= 2:
+        return {
+            "call_to_action_key_words": words,
+            "call_to_action_use_at_least": math.ceil(len(words) * CTA_OVERLAP_MIN),
+        }
+    return {}
 
 
 def _objective_text(objective: PersonalizationConfig) -> str:
