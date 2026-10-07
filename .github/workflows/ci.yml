@@ -63,6 +63,8 @@ jobs:
       APP_ENV: test
       DATABASE_URL: "sqlite+pysqlite:///:memory:"
       REDIS_URL: redis://localhost:6379/0
+      SUPABASE_URL: https://test-project.supabase.co
+      SUPABASE_JWT_SECRET: test-secret
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
     steps:
       - uses: actions/checkout@v4
