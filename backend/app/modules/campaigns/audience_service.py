@@ -120,6 +120,11 @@ class AudienceService:
             total_count=total_count,
         )
 
+        # The worker claims the job by reading it; if it ran before this request
+        # committed it would find nothing, drop the task, and leave the capture
+        # gate held on these lists forever (blocking edits and lead deletes).
+        self.session.commit()
+
         self._dispatch_capture_task(
             workspace_id=context.workspace_id,
             campaign_id=campaign_id,
@@ -306,6 +311,7 @@ class AudienceService:
         job = self.repo.get_capture_job_for_audience(
             workspace_id=context.workspace_id, audience_id=UUID(str(audience["id"]))
         )
+        manifest = audience["selection_manifest"] or {}
         counts = None
         if audience["status"] in ("READY", "FAILED"):
             counts = self.repo.get_audience_member_counts(
@@ -327,4 +333,6 @@ class AudienceService:
             accepted_count=counts["accepted"] if counts else None,
             excluded_count=counts["excluded"] if counts else None,
             error_reason=job["error_reason"] if job else None,
+            selected_list_ids=manifest.get("lists", []),
+            selected_lead_ids=manifest.get("leads", []),
         )

@@ -662,6 +662,8 @@ export type CampaignAudience = {
   accepted_count: number | null;
   excluded_count: number | null;
   error_reason: string | null;
+  selected_list_ids: string[];
+  selected_lead_ids: string[];
 };
 
 // archived_lead/suppressed are exact; invalid_address_estimate is a residual

@@ -764,6 +764,8 @@ Select the recipients intended for the campaign.
 
 - choose lead list
 - choose supported recipient collection
+- import leads from a CSV straight into the campaign (repeatable; each file is
+  added to the current selection)
 - review candidate recipient count
 
 ## Important UI Distinction

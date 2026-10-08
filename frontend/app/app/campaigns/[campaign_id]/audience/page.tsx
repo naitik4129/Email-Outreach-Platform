@@ -3,16 +3,18 @@
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Users, XCircle } from "lucide-react";
+import { CheckCircle2, FileUp, Loader2, Users, XCircle } from "lucide-react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AudienceCsvImportDialog } from "@/components/campaigns/audience-csv-import-dialog";
 import { ApiError } from "@/lib/api-client";
 import {
   abandonAudience,
   commitAudience,
   getAudienceExclusions,
+  getCampaign,
   getCommittedAudience,
   selectAudience,
 } from "@/lib/campaigns-api";
@@ -205,6 +207,7 @@ export default function CampaignAudiencePage() {
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const audienceKey = ["workspace", activeWorkspaceId, "campaigns", campaignId, "audience"];
 
@@ -217,6 +220,12 @@ export default function CampaignAudiencePage() {
     enabled: Boolean(activeWorkspaceId && campaignId),
     refetchInterval: (query) =>
       query.state.data?.status === "CAPTURING" ? 2000 : false,
+  });
+
+  const campaignQuery = useQuery({
+    queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId],
+    queryFn: () => getCampaign(activeWorkspaceId as string, campaignId),
+    enabled: Boolean(activeWorkspaceId && campaignId),
   });
 
   const listsQuery = useQuery({
@@ -244,6 +253,15 @@ export default function CampaignAudiencePage() {
 
   const invalidateAudience = () =>
     queryClient.invalidateQueries({ queryKey: audienceKey });
+
+  // A CSV import changes the audience, the campaign's readiness and the lists.
+  const refreshAfterImport = () => {
+    queryClient.invalidateQueries({
+      queryKey: ["workspace", activeWorkspaceId, "campaigns", campaignId],
+    });
+    queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "lead-lists"] });
+    queryClient.invalidateQueries({ queryKey: ["workspace", activeWorkspaceId, "leads"] });
+  };
 
   const selectMutation = useMutation({
     mutationFn: () => {
@@ -287,12 +305,20 @@ export default function CampaignAudiencePage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-slate-900">Audience</h2>
-        <p className="text-sm text-slate-500">
-          Select the leads or lists you intend to include. Suppression and
-          eligibility are re-checked again before anything sends.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Audience</h2>
+          <p className="text-sm text-slate-500">
+            Select the leads or lists you intend to include. Suppression and
+            eligibility are re-checked again before anything sends.
+          </p>
+        </div>
+        {canSelectNew && activeWorkspaceId && campaignQuery.data?.status === "DRAFT" ? (
+          <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
+            <FileUp className="mr-1.5 h-4 w-4" aria-hidden="true" />
+            Import from CSV
+          </Button>
+        ) : null}
       </div>
 
       {actionError && <Alert variant="error">{actionError}</Alert>}
@@ -424,6 +450,17 @@ export default function CampaignAudiencePage() {
           </div>
         </div>
       )}
+
+      {activeWorkspaceId && campaignQuery.data ? (
+        <AudienceCsvImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          workspaceId={activeWorkspaceId}
+          campaignId={campaignId}
+          campaignName={campaignQuery.data.name}
+          onChanged={refreshAfterImport}
+        />
+      ) : null}
     </div>
   );
 }

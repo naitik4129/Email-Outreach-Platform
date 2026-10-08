@@ -300,6 +300,10 @@ class AudienceOut(BaseModel):
     accepted_count: int | None = None
     excluded_count: int | None = None
     error_reason: str | None = None
+    # What this revision was captured from, so a client can add to it (the next
+    # capture replaces the selection rather than extending it).
+    selected_list_ids: list[UUID] = Field(default_factory=list)
+    selected_lead_ids: list[UUID] = Field(default_factory=list)
 
 
 class AudienceExclusionBreakdown(BaseModel):
