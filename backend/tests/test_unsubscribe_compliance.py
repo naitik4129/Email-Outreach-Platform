@@ -228,7 +228,7 @@ class TestMimeAssembly:
 
 
 class TestCampaignPreflight:
-    """Activation is blocked until the footer can be built and is compliant."""
+    """Activation is blocked until a signed unsubscribe link can be built."""
 
     @staticmethod
     def _errors(defaults: dict, settings: Settings | None = None) -> list[str]:
@@ -252,11 +252,9 @@ class TestCampaignPreflight:
     def test_ready_with_an_address_and_unsubscribe_configured(self) -> None:
         assert self._errors({"compliance": {"postal_address": "1 Main St"}}) == []
 
-    def test_a_missing_postal_address_blocks_activation(self) -> None:
-        assert self._errors({}) == ["postal_address_required"]
-        assert self._errors({"compliance": {"postal_address": "   "}}) == [
-            "postal_address_required"
-        ]
+    def test_the_footer_settings_are_optional(self) -> None:
+        assert self._errors({}) == []
+        assert self._errors({"compliance": {"postal_address": "   "}}) == []
 
     def test_unconfigured_unsubscribe_blocks_activation(self) -> None:
         bare = Settings.current().model_copy(
@@ -265,14 +263,11 @@ class TestCampaignPreflight:
         codes = self._errors({"compliance": {"postal_address": "1 Main St"}}, bare)
         assert codes == ["unsubscribe_not_configured"]
 
-    def test_both_problems_are_reported_together(self) -> None:
+    def test_unconfigured_unsubscribe_blocks_even_without_footer_settings(self) -> None:
         bare = Settings.current().model_copy(
             update={"unsubscribe_base_url": "", "unsubscribe_signing_key": ""}
         )
-        assert self._errors({}, bare) == [
-            "unsubscribe_not_configured",
-            "postal_address_required",
-        ]
+        assert self._errors({}, bare) == ["unsubscribe_not_configured"]
 
 
 class TestSavingComplianceSettings:

@@ -50,15 +50,15 @@ describe("readCompliance", () => {
 describe("EmailFooterSettings", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("tells the user a postal address is still needed", () => {
+  it("says the footer is optional when nothing is set", () => {
     renderIt(workspace());
-    expect(screen.getByText(/no postal address yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/emails end with just the unsubscribe link/i)).toBeInTheDocument();
   });
 
   it("shows the saved address", () => {
     renderIt(workspace({ compliance: { postal_address: "12 MG Road\nBengaluru" } }));
     expect(screen.getByText(/12 MG Road/)).toBeInTheDocument();
-    expect(screen.queryByText(/no postal address yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/emails end with just the unsubscribe link/i)).not.toBeInTheDocument();
   });
 
   it("saves the address and keeps every other workspace default", async () => {
@@ -82,15 +82,20 @@ describe("EmailFooterSettings", () => {
     );
   });
 
-  it("will not save an empty address", async () => {
+  it("saves with an empty address", async () => {
+    updateWorkspace.mockResolvedValue(workspace());
     const user = userEvent.setup();
     renderIt(workspace());
 
     await user.click(screen.getByRole("button", { name: /edit email footer/i }));
     await user.click(screen.getByRole("button", { name: /save footer/i }));
 
-    expect(await screen.findByText(/enter the postal address/i)).toBeInTheDocument();
-    expect(updateWorkspace).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(updateWorkspace).toHaveBeenCalledWith("ws-1", {
+        defaults: { compliance: { postal_address: "", footer_text: "" } },
+        expected_version: 3,
+      }),
+    );
   });
 
   it("is read-only without permission", () => {

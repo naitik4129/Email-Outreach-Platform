@@ -619,12 +619,12 @@ with any other user they are reported as unverified rather than guessed.
 The preflight proves the configuration. These steps prove the live providers, and nothing here can
 be automated. Do them with **your own addresses** and a low limit (the default 50/day is fine):
 
-1. Set the workspace **postal address** (Dashboard, Email footer). A campaign cannot be activated
-   without it.
+1. Optionally set the workspace **postal address** and footer message (Dashboard, Email footer).
+   Neither is required to activate a campaign; the unsubscribe link is always added.
 2. Send a controlled test from each connected mailbox (Gmail, Outlook, SMTP) to an inbox you own
    and check that it arrives. The controlled test is a plain delivery check and has no footer.
 3. Activate a campaign of 3-5 of your own addresses and open one of its emails. The footer must
-   show your postal address and an unsubscribe link, and the plain-text view must be the real
+   show an unsubscribe link (and your postal address, if you set one), and the plain-text view must be the real
    message (not "requires an HTML-capable email client"). In Gmail, **Show original** should list
    `List-Unsubscribe` and `List-Unsubscribe-Post`. Outlook (Microsoft Graph) mailboxes carry the
    footer link only, not the header.

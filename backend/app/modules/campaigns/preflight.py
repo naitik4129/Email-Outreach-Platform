@@ -22,7 +22,7 @@ from app.modules.personalization.config_schema import parse_config
 from app.modules.personalization.context_builder import build_context
 from app.modules.personalization.version import CAMPAIGN_TYPE_HYPER
 from app.modules.templates.variables import validate_template_content
-from app.modules.unsubscribe.compliance import read_compliance, unsubscribe_ready
+from app.modules.unsubscribe.compliance import unsubscribe_ready
 
 _HIGH_EXCLUSION_RATE_THRESHOLD = 0.5
 # How many audience members are sampled to estimate how many leads have too little
@@ -398,8 +398,9 @@ class PreflightService:
     def _check_compliance(
         self, context: WorkspaceContext, errors: list[PreflightIssue]
     ) -> None:
-        """Every email carries an unsubscribe link and the sender's postal address
-        in its footer, so neither can be missing when a campaign starts."""
+        """Every email carries a signed unsubscribe link, so a campaign cannot start
+        without the server being able to build one. The workspace's postal address
+        and footer message are optional and never block a start."""
         if not unsubscribe_ready(Settings.current()):
             errors.append(
                 PreflightIssue(
@@ -408,17 +409,5 @@ class PreflightService:
                     "no campaign email can be sent. Ask whoever runs the platform "
                     "to set UNSUBSCRIBE_BASE_URL and UNSUBSCRIBE_SIGNING_KEY.",
                     field_path="compliance",
-                )
-            )
-        info = read_compliance(
-            self.repo.get_workspace_defaults(workspace_id=context.workspace_id)
-        )
-        if not info.postal_address:
-            errors.append(
-                PreflightIssue(
-                    code="postal_address_required",
-                    message="Add your business postal address in Workspace "
-                    "settings. It is shown in the footer of every email.",
-                    field_path="compliance.postal_address",
                 )
             )

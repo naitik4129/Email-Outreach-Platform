@@ -24,7 +24,6 @@ const schema = z.object({
   postal_address: z
     .string()
     .trim()
-    .min(1, "Enter the postal address to show in your emails")
     .max(POSTAL_ADDRESS_MAX, `At most ${POSTAL_ADDRESS_MAX} characters`),
   footer_text: z.string().trim().max(FOOTER_TEXT_MAX, `At most ${FOOTER_TEXT_MAX} characters`),
 });
@@ -97,8 +96,8 @@ export function EmailFooterSettings({
         <div>
           <h2 className="text-base font-semibold text-slate-900">Email footer</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Every campaign email ends with an unsubscribe link and your postal address. A campaign
-            cannot start until the address is set.
+            Every campaign email ends with an unsubscribe link. Your postal address and a footer
+            message are optional and shown above it when set.
           </p>
         </div>
         {canManage && !editing ? (
@@ -127,7 +126,7 @@ export function EmailFooterSettings({
             className="space-y-3"
             onSubmit={handleSubmit((values) => mutation.mutate(values))}
           >
-            <Field id="footer-postal-address" label="Postal address" error={errors.postal_address?.message}>
+            <Field id="footer-postal-address" label="Postal address (optional)" error={errors.postal_address?.message}>
               <textarea
                 rows={3}
                 disabled={isSubmitting}
@@ -156,14 +155,16 @@ export function EmailFooterSettings({
               </Button>
             </div>
           </form>
-        ) : current.postal_address ? (
+        ) : current.postal_address || current.footer_text ? (
           <div className="space-y-1 text-sm text-slate-900">
-            <p className="whitespace-pre-line">{current.postal_address}</p>
+            {current.postal_address ? (
+              <p className="whitespace-pre-line">{current.postal_address}</p>
+            ) : null}
             {current.footer_text ? <p className="text-slate-500">{current.footer_text}</p> : null}
           </div>
         ) : (
-          <p className="text-sm font-medium text-amber-700">
-            No postal address yet. Add one before you start a campaign.
+          <p className="text-sm text-slate-500">
+            No postal address or footer message set. Emails end with just the unsubscribe link.
           </p>
         )}
       </div>
