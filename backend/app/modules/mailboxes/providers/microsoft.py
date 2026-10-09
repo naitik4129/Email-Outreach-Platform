@@ -45,12 +45,16 @@ MAIL_SEND_SCOPE = "https://graph.microsoft.com/Mail.Send"
 # reveals the Message-ID and conversation id that replies and bounces refer to,
 # and the same scope covers reading the Inbox for reply synchronization.
 MAIL_READWRITE_SCOPE = "https://graph.microsoft.com/Mail.ReadWrite"
+# get_identity() calls Graph /me, which answers 403 to a token that carries
+# only Mail.* scopes; User.Read is the minimal scope that allows it.
+USER_READ_SCOPE = "https://graph.microsoft.com/User.Read"
 
 MICROSOFT_DEFAULT_SCOPES = [
     "openid",
     "profile",
     "email",
     "offline_access",
+    USER_READ_SCOPE,
     MAIL_SEND_SCOPE,
     MAIL_READWRITE_SCOPE,
 ]
